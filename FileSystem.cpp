@@ -381,7 +381,7 @@ void FileSystem::dumpDir(const char* dir) {
 	// CBA Using copy constructor to obtain File*
 	File* file = new File(FS.open(file_path, mode));
 	RNS::FileStream stream(new FileStream(file));
-	if (file == null || !(*file)) {
+	if (file == nullptr || !(*file)) {
 		ERRORF("open_file: failed to open output file %s", file_path);
 		return {RNS::Type::NONE};
 	}

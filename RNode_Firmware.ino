@@ -84,10 +84,12 @@ public:
 	LoRaInterface() : RNS::InterfaceImpl("LoRaInterface") {
 		_IN = true;
 		_OUT = true;
+		_HW_MTU = 508;
 	}
 	LoRaInterface(const char *name) : RNS::InterfaceImpl(name) {
 		_IN = true;
 		_OUT = true;
+		_HW_MTU = 508;
 	}
 	virtual ~LoRaInterface() {
 		_name = "deleted";
@@ -125,8 +127,8 @@ protected:
         }
 
     }
-    // CBA Call base method to handle internal housekeeping
-    InterfaceImpl::send_outgoing(data);
+    // Perform post-send housekeeping
+    InterfaceImpl::handle_outgoing(data);
   }
 };
 
