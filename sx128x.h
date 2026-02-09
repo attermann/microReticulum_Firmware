@@ -1,8 +1,5 @@
-// Copyright (c) Sandeep Mistry. All rights reserved.
+// Copyright Sandeep Mistry, Mark Qvist and Jacob Eva.
 // Licensed under the MIT license.
-
-// Modifications and additions copyright 2023 by Mark Qvist
-// Obviously still under the MIT license.
 
 #ifndef SX128X_H
 #define SX128X_H
@@ -11,17 +8,16 @@
 #include <SPI.h>
 #include "Modem.h"
 
-#define LORA_DEFAULT_SS_PIN    10
-#define LORA_DEFAULT_RESET_PIN 9
-#define LORA_DEFAULT_DIO0_PIN  2
+#define LORA_DEFAULT_SS_PIN     10
+#define LORA_DEFAULT_RESET_PIN  9
+#define LORA_DEFAULT_DIO0_PIN   2
 #define LORA_DEFAULT_RXEN_PIN  -1
 #define LORA_DEFAULT_TXEN_PIN  -1
 #define LORA_DEFAULT_BUSY_PIN  -1
-
-#define PA_OUTPUT_RFO_PIN      0
-#define PA_OUTPUT_PA_BOOST_PIN 1
-
-#define RSSI_OFFSET 157
+#define LORA_MODEM_TIMEOUT_MS   15E3
+#define PA_OUTPUT_RFO_PIN       0
+#define PA_OUTPUT_PA_BOOST_PIN  1
+#define RSSI_OFFSET             157
 
 class sx128x : public Stream {
 public:
@@ -29,12 +25,14 @@ public:
 
   int begin(unsigned long frequency);
   void end();
+  void reset();
 
   int beginPacket(int implicitHeader = false);
   int endPacket();
 
   int parsePacket(int size = 0);
   int packetRssi();
+  int packetRssi(uint8_t pkt_snr_raw);
   int currentRssi();
   uint8_t packetRssiRaw();
   uint8_t currentRssiRaw();
@@ -55,21 +53,24 @@ public:
   void onReceive(void(*callback)(int));
 
   void receive(int size = 0);
-  void idle();
+  void standby();
   void sleep();
 
   bool preInit();
   uint8_t getTxPower();
   void setTxPower(int level, int outputPin = PA_OUTPUT_PA_BOOST_PIN);
   uint32_t getFrequency();
-  void setFrequency(unsigned long frequency);
+  void setFrequency(uint32_t frequency);
   void setSpreadingFactor(int sf);
-  long getSignalBandwidth();
-  void setSignalBandwidth(long sbw);
+  uint8_t getSpreadingFactor();
+  uint32_t getSignalBandwidth();
+  void setSignalBandwidth(uint32_t sbw);
   void setCodingRate4(int denominator);
-  void setPreambleLength(long length);
+  uint8_t getCodingRate4();
+  void setPreambleLength(long preamble_symbols);
   void setSyncWord(int sw);
-  uint8_t modemStatus();
+  bool dcd();
+  void clearIRQStatus();
   void enableCrc();
   void disableCrc();
   void enableTCXO();
@@ -83,14 +84,11 @@ public:
   void executeOpcodeRead(uint8_t opcode, uint8_t *buffer, uint8_t size);
   void writeBuffer(const uint8_t* buffer, size_t size);
   void readBuffer(uint8_t* buffer, size_t size);
-  void setPacketParams(uint32_t preamble, uint8_t headermode, uint8_t length, uint8_t crc);
+  void setPacketParams(uint32_t target_preamble_symbols, uint8_t headermode, uint8_t payload_length, uint8_t crc);
   void setModulationParams(uint8_t sf, uint8_t bw, uint8_t cr);
 
-  // deprecated
   void crc() { enableCrc(); }
   void noCrc() { disableCrc(); }
-
-  byte random();
 
   void setPins(int ss = LORA_DEFAULT_SS_PIN, int reset = LORA_DEFAULT_RESET_PIN, int dio0 = LORA_DEFAULT_DIO0_PIN, int busy = LORA_DEFAULT_BUSY_PIN, int rxen = LORA_DEFAULT_RXEN_PIN, int txen = LORA_DEFAULT_TXEN_PIN);
   void setSPIFrequency(uint32_t frequency);
@@ -101,6 +99,7 @@ private:
   void explicitHeaderMode();
   void implicitHeaderMode();
 
+  bool getPacketValidity();
   void handleDio0Rise();
 
   uint8_t readRegister(uint16_t address);
@@ -135,8 +134,11 @@ private:
   int _fifo_rx_addr_ptr;
   uint8_t _packet[256];
   bool _preinit_done;
+  bool _tcxo;
+  bool _radio_online;
   int _rxPacketLength;
-  void (*_onReceive)(int);
+  uint32_t _bitrate;
+  void (*_receive_callback)(int);
 };
 
 extern sx128x sx128x_modem;

@@ -40,9 +40,52 @@ Uploading to devices requires access to the `rnodeconf` utility included in the 
 
 Instructions for command line builds and packaging for firmware distribution.
 
+## PlatformIO Command Line
+
+Clean all environments (boards):
+```
+pio run -t clean
+```
+
+Full Clean (including libdeps) all environments (boards):
+```
+pio run -t fullclean
+```
+
+Build a single environment (board):
+```
+pio run -e ttgo-t-beam
+pio run -e wiscore_rak4631
+```
+
+Build and upload a single environment (board):
+```
+pio run -e ttgo-t-beam -t upload
+pio run -e wiscore_rak4631 -t upload
+```
+
+Build and package a single environment (board):
+```
+pio run -e ttgo-t-beam -t package
+pio run -e wiscore_rak4631 -t package
+```
+
+Build all environments (boards):
+```
+pio run
+```
+
+Build and package all environments (boards):
+```
+pio run -t package
+```
+
+Write version info:
+  python release_hashes.py > Release/release.json
+
 ## Roadmap
 
-- [ ] Extend KISS interface to support config/control of the integrated stack
+- [ ] Extend KISS interface to support config/control of the integrated microReticulum stack
 - [ ] Add interface for easy customization of firmware
 - [ ] Add power management and sleep states to extend battery runtime
 - [x] Add build targets for NRF52 boards

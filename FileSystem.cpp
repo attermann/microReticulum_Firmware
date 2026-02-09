@@ -350,7 +350,6 @@ void FileSystem::dumpDir(const char* dir) {
 		return {RNS::Type::NONE};
 	}
 	File* file = new File(FS);
-	RNS::FileStream stream(new FileStream(file));
 	if (!file->open(file_path, mode)) {
 		ERRORF("open_file: failed to open output file %s", file_path);
 		return {RNS::Type::NONE};
@@ -361,7 +360,7 @@ void FileSystem::dumpDir(const char* dir) {
 	//	file->truncate(0);
 	//}
 	TRACEF("open_file: successfully opened file %s", file_path);
-	return stream;
+	return RNS::FileStream(new FileStream(file));
 #else
 	const char* mode;
 	if (file_mode == RNS::FileStream::MODE_READ) {
@@ -380,7 +379,6 @@ void FileSystem::dumpDir(const char* dir) {
 	TRACEF("open_file: opening file %s in mode %s", file_path, mode);
 	// CBA Using copy constructor to obtain File*
 	File* file = new File(FS.open(file_path, mode));
-	RNS::FileStream stream(new FileStream(file));
 	if (file == nullptr || !(*file)) {
 		ERRORF("open_file: failed to open output file %s", file_path);
 		return {RNS::Type::NONE};

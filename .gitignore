@@ -7,3 +7,5 @@ Release/*.zip
 Release/*.json
 Console/build
 build/*
+.pio/*
+.vscode/*

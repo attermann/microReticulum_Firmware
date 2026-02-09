@@ -1,8 +1,5 @@
-// Copyright (c) Sandeep Mistry. All rights reserved.
+// Copyright Sandeep Mistry, Mark Qvist and Jacob Eva.
 // Licensed under the MIT license.
-
-// Modifications and additions copyright 2023 by Mark Qvist
-// Obviously still under the MIT license.
 
 #ifndef SX1276_H
 #define SX1276_H
@@ -21,6 +18,11 @@
 
 #define RSSI_OFFSET 157
 
+// Modem status flags
+#define SIG_DETECT 0x01
+#define SIG_SYNCED 0x02
+#define RX_ONGOING 0x04
+
 class sx127x : public Stream {
 public:
   sx127x();
@@ -33,6 +35,7 @@ public:
 
   int parsePacket(int size = 0);
   int packetRssi();
+  int packetRssi(uint8_t pkt_snr_raw);
   int currentRssi();
   uint8_t packetRssiRaw();
   uint8_t currentRssiRaw();
@@ -65,9 +68,9 @@ public:
   long getSignalBandwidth();
   void setSignalBandwidth(long sbw);
   void setCodingRate4(int denominator);
-  void setPreambleLength(long length);
+  void setPreambleLength(long preamble_symbols);
   void setSyncWord(uint8_t sw);
-  uint8_t modemStatus();
+  bool dcd();
   void enableCrc();
   void disableCrc();
   void enableTCXO();

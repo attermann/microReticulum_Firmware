@@ -1,8 +1,5 @@
-// Copyright (c) Sandeep Mistry. All rights reserved.
+// Copyright Sandeep Mistry, Mark Qvist and Jacob Eva.
 // Licensed under the MIT license.
-
-// Modifications and additions copyright 2023 by Mark Qvist
-// Obviously still under the MIT license.
 
 #include "Boards.h"
 
@@ -11,7 +8,7 @@
 
 #if MCU_VARIANT == MCU_ESP32
   #if MCU_VARIANT == MCU_ESP32 and !defined(CONFIG_IDF_TARGET_ESP32S3)
-    #include "soc/rtc_wdt.h"
+    #include "hal/wdt_hal.h"
   #endif
   #define ISR_VECT IRAM_ATTR
 #else
@@ -81,10 +78,7 @@ extern SPIClass SPI;
 sx127x::sx127x() :
   _spiSettings(8E6, MSBFIRST, SPI_MODE0),
   _ss(LORA_DEFAULT_SS_PIN), _reset(LORA_DEFAULT_RESET_PIN), _dio0(LORA_DEFAULT_DIO0_PIN),
-  _frequency(0),
-  _packetIndex(0),
-  _preinit_done(false),
-  _onReceive(NULL) { setTimeout(0); }
+  _frequency(0), _packetIndex(0), _preinit_done(false), _onReceive(NULL) { setTimeout(0); }
 
 void sx127x::setSPIFrequency(uint32_t frequency) { _spiSettings = SPISettings(frequency, MSBFIRST, SPI_MODE0); }
 void sx127x::setPins(int ss, int reset, int dio0, int busy) { _ss = ss; _reset = reset; _dio0 = dio0; _busy = busy; }
@@ -92,7 +86,6 @@ uint8_t ISR_VECT sx127x::readRegister(uint8_t address) { return singleTransfer(a
 void sx127x::writeRegister(uint8_t address, uint8_t value) { singleTransfer(address | 0x80, value); }
 void sx127x::standby() { writeRegister(REG_OP_MODE_7X, MODE_LONG_RANGE_MODE_7X | MODE_STDBY_7X); }
 void sx127x::sleep() { writeRegister(REG_OP_MODE_7X, MODE_LONG_RANGE_MODE_7X | MODE_SLEEP_7X); }
-uint8_t sx127x::modemStatus() { return readRegister(REG_MODEM_STAT_7X); }
 void sx127x::setSyncWord(uint8_t sw) { writeRegister(REG_SYNC_WORD_7X, sw); }
 void sx127x::enableCrc() { writeRegister(REG_MODEM_CONFIG_2_7X, readRegister(REG_MODEM_CONFIG_2_7X) | 0x04); }
 void sx127x::disableCrc() { writeRegister(REG_MODEM_CONFIG_2_7X, readRegister(REG_MODEM_CONFIG_2_7X) & 0xfb); }
@@ -106,7 +99,12 @@ void sx127x::flush() { }
 bool sx127x::preInit() {
   pinMode(_ss, OUTPUT);
   digitalWrite(_ss, HIGH);
-  SPI.begin();
+  
+  #if BOARD_MODEL == BOARD_T3S3
+    SPI.begin(pin_sclk, pin_miso, pin_mosi, pin_cs);
+  #else
+    SPI.begin();
+  #endif
 
   // Check modem version
   uint8_t version;
@@ -118,7 +116,6 @@ bool sx127x::preInit() {
   }
 
   if (version != 0x12) { return false; }
-
   _preinit_done = true;
   return true;
 }
@@ -139,8 +136,6 @@ uint8_t ISR_VECT sx127x::singleTransfer(uint8_t address, uint8_t value) {
 int sx127x::begin(long frequency) {
   if (_reset != -1) {
     pinMode(_reset, OUTPUT);
-
-    // Perform reset
     digitalWrite(_reset, LOW);
     delay(10);
     digitalWrite(_reset, HIGH);
@@ -148,19 +143,16 @@ int sx127x::begin(long frequency) {
   }
 
   if (_busy != -1) { pinMode(_busy, INPUT); }
-
-  if (!_preinit_done) {
-    if (!preInit()) { return false; }
-  }
+  if (!_preinit_done) { if (!preInit()) { return false; } }
 
   sleep();
   setFrequency(frequency);
 
-  // set base addresses
+  // Set base addresses
   writeRegister(REG_FIFO_TX_BASE_ADDR_7X, 0);
   writeRegister(REG_FIFO_RX_BASE_ADDR_7X, 0);
 
-  // set LNA boost and auto AGC
+  // Set LNA boost and auto AGC
   writeRegister(REG_LNA_7X, readRegister(REG_LNA_7X) | 0x03);
   writeRegister(REG_MODEM_CONFIG_3_7X, 0x04);
 
@@ -173,20 +165,13 @@ int sx127x::begin(long frequency) {
   return 1;
 }
 
-void sx127x::end() {
-  sleep();
-  SPI.end();
-  _preinit_done = false;
-}
+void sx127x::end() { sleep(); SPI.end(); _preinit_done = false; }
 
 int sx127x::beginPacket(int implicitHeader) {
   standby();
 
-  if (implicitHeader) {
-    implicitHeaderMode();
-  } else {
-    explicitHeaderMode();
-  }
+  if (implicitHeader) { implicitHeaderMode(); }
+  else { explicitHeaderMode(); }
 
   // Reset FIFO address and payload length
   writeRegister(REG_FIFO_ADDR_PTR_7X, 0);
@@ -209,6 +194,14 @@ int sx127x::endPacket() {
   return 1;
 }
 
+bool sx127x::dcd() {
+  bool carrier_detected = false;
+  uint8_t status = readRegister(REG_MODEM_STAT_7X);
+  if ((status & SIG_DETECT) == SIG_DETECT) { carrier_detected = true; }
+  if ((status & SIG_SYNCED) == SIG_SYNCED) { carrier_detected = true; }
+  return carrier_detected;
+}
+
 uint8_t sx127x::currentRssiRaw() {
     uint8_t rssi = readRegister(REG_RSSI_VALUE_7X);
     return rssi;
@@ -225,30 +218,42 @@ uint8_t sx127x::packetRssiRaw() {
     return pkt_rssi_value;
 }
 
+int ISR_VECT sx127x::packetRssi(uint8_t pkt_snr_raw) {
+  int pkt_rssi = (int)readRegister(REG_PKT_RSSI_VALUE_7X) - RSSI_OFFSET;
+  int pkt_snr = ((int8_t)pkt_snr_raw)*0.25;
+
+  if (_frequency < 820E6) pkt_rssi -= 7;
+
+  if (pkt_snr < 0) {
+      pkt_rssi += pkt_snr;
+  } else {
+      // Slope correction is (16/15)*pkt_rssi,
+      // this estimation looses one floating point
+      // operation, and should be precise enough.
+      pkt_rssi = (int)(1.066 * pkt_rssi);
+  }
+  return pkt_rssi;
+}
+
 int ISR_VECT sx127x::packetRssi() {
-    int pkt_rssi = (int)readRegister(REG_PKT_RSSI_VALUE_7X) - RSSI_OFFSET;
-    int pkt_snr = packetSnr();
+  int pkt_rssi = (int)readRegister(REG_PKT_RSSI_VALUE_7X) - RSSI_OFFSET;
+  int pkt_snr = packetSnr();
 
-    if (_frequency < 820E6) pkt_rssi -= 7;
+  if (_frequency < 820E6) pkt_rssi -= 7;
 
-    if (pkt_snr < 0) {
-        pkt_rssi += pkt_snr;
-    } else {
-        // Slope correction is (16/15)*pkt_rssi,
-        // this estimation looses one floating point
-        // operation, and should be precise enough.
-        pkt_rssi = (int)(1.066 * pkt_rssi);
-    }
-    return pkt_rssi;
+  if (pkt_snr < 0) { pkt_rssi += pkt_snr; }
+  else {
+      // Slope correction is (16/15)*pkt_rssi,
+      // this estimation looses one floating point
+      // operation, and should be precise enough.
+      pkt_rssi = (int)(1.066 * pkt_rssi);
+  }
+  return pkt_rssi;
 }
 
-uint8_t ISR_VECT sx127x::packetSnrRaw() {
-    return readRegister(REG_PKT_SNR_VALUE_7X);
-}
+uint8_t ISR_VECT sx127x::packetSnrRaw() { return readRegister(REG_PKT_SNR_VALUE_7X); }
 
-float ISR_VECT sx127x::packetSnr() {
-    return ((int8_t)readRegister(REG_PKT_SNR_VALUE_7X)) * 0.25;
-}
+float ISR_VECT sx127x::packetSnr() { return ((int8_t)readRegister(REG_PKT_SNR_VALUE_7X)) * 0.25; }
 
 long sx127x::packetFrequencyError() {
   int32_t freqError = 0;
@@ -271,17 +276,13 @@ long sx127x::packetFrequencyError() {
 size_t sx127x::write(uint8_t byte) { return write(&byte, sizeof(byte)); }
 
 size_t sx127x::write(const uint8_t *buffer, size_t size) {
-    int currentLength = readRegister(REG_PAYLOAD_LENGTH_7X);
-    if ((currentLength + size) > MAX_PKT_LENGTH) {
-        size = MAX_PKT_LENGTH - currentLength;
-    }
+  int currentLength = readRegister(REG_PAYLOAD_LENGTH_7X);
+  if ((currentLength + size) > MAX_PKT_LENGTH) { size = MAX_PKT_LENGTH - currentLength; }
 
-    for (size_t i = 0; i < size; i++) {
-        writeRegister(REG_FIFO_7X, buffer[i]);
-    }
+  for (size_t i = 0; i < size; i++) { writeRegister(REG_FIFO_7X, buffer[i]); }
+  writeRegister(REG_PAYLOAD_LENGTH_7X, currentLength + size);
 
-    writeRegister(REG_PAYLOAD_LENGTH_7X, currentLength + size);
-    return size;
+  return size;
 }
 
 int ISR_VECT sx127x::available() { return (readRegister(REG_RX_NB_BYTES_7X) - _packetIndex); }
@@ -446,19 +447,23 @@ void sx127x::setCodingRate4(int denominator) {
   writeRegister(REG_MODEM_CONFIG_1_7X, (readRegister(REG_MODEM_CONFIG_1_7X) & 0xf1) | (cr << 1));
 }
 
-void sx127x::setPreambleLength(long length) { 
+void sx127x::setPreambleLength(long preamble_symbols) {
+  long length = preamble_symbols - 4;
   writeRegister(REG_PREAMBLE_MSB_7X, (uint8_t)(length >> 8));
   writeRegister(REG_PREAMBLE_LSB_7X, (uint8_t)(length >> 0));
 }
 
+extern bool lora_low_datarate;
 void sx127x::handleLowDataRate() {
   int sf = (readRegister(REG_MODEM_CONFIG_2_7X) >> 4);
   if ( long( (1<<sf) / (getSignalBandwidth()/1000)) > 16) {
     // Set auto AGC and LowDataRateOptimize
     writeRegister(REG_MODEM_CONFIG_3_7X, (1<<3)|(1<<2));
+    lora_low_datarate = true;
   } else {
     // Only set auto AGC
     writeRegister(REG_MODEM_CONFIG_3_7X, (1<<2));
+    lora_low_datarate = false;
   }
 }
 

@@ -1,8 +1,5 @@
-// Copyright (c) Sandeep Mistry. All rights reserved.
+// Copyright Sandeep Mistry, Mark Qvist and Jacob Eva.
 // Licensed under the MIT license.
-
-// Modifications and additions copyright 2023 by Mark Qvist
-// Obviously still under the MIT license.
 
 #ifndef SX126X_H
 #define SX126X_H
@@ -17,6 +14,7 @@
 #define LORA_DEFAULT_RXEN_PIN  -1
 #define LORA_DEFAULT_TXEN_PIN  -1
 #define LORA_DEFAULT_BUSY_PIN  -1
+#define LORA_MODEM_TIMEOUT_MS 20E3
 
 #define PA_OUTPUT_RFO_PIN      0
 #define PA_OUTPUT_PA_BOOST_PIN 1
@@ -35,6 +33,7 @@ public:
 
   int parsePacket(int size = 0);
   int packetRssi();
+  int packetRssi(uint8_t pkt_snr_raw);
   int currentRssi();
   uint8_t packetRssiRaw();
   uint8_t currentRssiRaw();
@@ -57,6 +56,7 @@ public:
   void receive(int size = 0);
   void standby();
   void sleep();
+  void reset(void);
 
   bool preInit();
   uint8_t getTxPower();
@@ -67,9 +67,9 @@ public:
   long getSignalBandwidth();
   void setSignalBandwidth(long sbw);
   void setCodingRate4(int denominator);
-  void setPreambleLength(long length);
+  void setPreambleLength(long preamble_symbols);
   void setSyncWord(uint16_t sw);
-  uint8_t modemStatus();
+  bool dcd();
   void enableCrc();
   void disableCrc();
   void enableTCXO();
@@ -82,7 +82,7 @@ public:
   void executeOpcodeRead(uint8_t opcode, uint8_t *buffer, uint8_t size);
   void writeBuffer(const uint8_t* buffer, size_t size);
   void readBuffer(uint8_t* buffer, size_t size);
-  void setPacketParams(long preamble, uint8_t headermode, uint8_t length, uint8_t crc);
+  void setPacketParams(long preamble_symbols, uint8_t headermode, uint8_t payload_length, uint8_t crc);
 
   void setModulationParams(uint8_t sf, uint8_t bw, uint8_t cr, int ldro);
 
@@ -112,7 +112,6 @@ private:
   void handleLowDataRate();
   void optimizeModemSensitivity();
 
-  void reset(void);
   void calibrate(void);
   void calibrate_image(long frequency);
 

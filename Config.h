@@ -1,4 +1,4 @@
-// Copyright (C) 2023, Mark Qvist
+// Copyright (C) 2024, Mark Qvist
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 	#define CONFIG_H
 
 	#define MAJ_VERS  0x01
-	#define MIN_VERS  0x48
+	#define MIN_VERS  0x55
 
 	#define MODE_HOST 0x11
 	#define MODE_TNC  0x12
@@ -40,6 +40,17 @@
 	bool bt_enabled = false;
 	bool bt_allow_pairing = false;
 
+	#define WR_CHANNEL_DEFAULT 1
+	#define WR_WIFI_OFF        0x00
+	#define WR_WIFI_STA        0x01
+	#define WR_WIFI_AP         0x02
+	#define WR_STATE_NA        0xff
+	#define WR_STATE_OFF       0x00
+	#define WR_STATE_ON        0x01
+	#define WR_STATE_CONNECTED 0x02
+	uint8_t wr_state = WR_STATE_OFF;
+	uint8_t wr_channel = WR_CHANNEL_DEFAULT;
+
 	#define M_FRQ_S 27388122
 	#define M_FRQ_R 27388061
 	bool console_active = false;
@@ -54,6 +65,7 @@
     bool mw_radio_online = false;
 
 	#define eeprom_addr(a) (a+EEPROM_OFFSET)
+	#define config_addr(a) (a+CONFIG_OFFSET)
 
     #if (MODEM == SX1262 || MODEM == SX1280) && defined(NRF52840_XXAA)
         SPIClass spiModem(NRF_SPIM2, pin_miso, pin_sclk, pin_mosi);
@@ -67,28 +79,60 @@
 	const int  rssi_offset = 157;
 
 	// Default LoRa settings
-	const int lora_rx_turnaround_ms = 66;
-	const int lora_post_tx_yield_slots = 6;
-	uint32_t post_tx_yield_timeout = 0;
-	#define LORA_PREAMBLE_SYMBOLS_HW  4
-	#define LORA_PREAMBLE_SYMBOLS_MIN 18
-	#define LORA_PREAMBLE_TARGET_MS   15
-	#define LORA_CAD_SYMBOLS 3
-	int csma_slot_ms = 50;
-	float csma_p_min = 0.1;
-	float csma_p_max = 0.8;
-	uint8_t csma_p = 0;
+	#define PHY_HEADER_LORA_SYMBOLS    20
+	#define PHY_CRC_LORA_BITS          16
+	#define LORA_PREAMBLE_SYMBOLS_MIN  18
+	#define LORA_PREAMBLE_TARGET_MS    24
+	#define LORA_PREAMBLE_FAST_DELTA   18
+	#define LORA_FAST_THRESHOLD_BPS    30E3
+	#define LORA_LIMIT_THRESHOLD_BPS   60E3
+	#define LORA_GUARD_THRESHOLD_BPS   14E3
+	#define LORA_FAST_GUARD_MS         48
+	long lora_preamble_symbols      =  LORA_PREAMBLE_SYMBOLS_MIN;
+	long lora_preamble_time_ms      =  0;
+	long lora_header_time_ms        =  0;
+	float lora_symbol_time_ms       =  0.0;
+	float lora_symbol_rate          =  0.0;
+	float lora_us_per_byte          =  0.0;
+	bool lora_low_datarate          =  false;
+	bool lora_limit_rate            =  false;
+	bool lora_guard_rate            =  false;
 
-	int  lora_sf   	           = 0;
-	int  lora_cr               = 5;
-	int  lora_txp              = 0xFF;
-	uint32_t lora_bw           = 0;
-	uint32_t lora_freq         = 0;
-	uint32_t lora_bitrate      = 0;
-	long lora_preamble_symbols = 6;
-	float lora_symbol_time_ms  = 0.0;
-	float lora_symbol_rate     = 0.0;
-	float lora_us_per_byte     = 0.0;
+	// CSMA Parameters
+	#define CSMA_SIFS_MS               0
+	#define CSMA_POST_TX_YIELD_SLOTS   3
+	#define CSMA_SLOT_MAX_MS           100
+	#define CSMA_SLOT_MIN_MS           24
+	#define CSMA_SLOT_MIN_FAST_DELTA   18
+	#define CSMA_SLOT_SYMBOLS          12
+	#define CSMA_CW_BANDS              4
+	#define CSMA_CW_MIN                0
+	#define CSMA_CW_PER_BAND_WINDOWS   15
+	#define CSMA_BAND_1_MAX_AIRTIME    7
+	#define CSMA_BAND_N_MIN_AIRTIME    85
+	#define CSMA_INFR_THRESHOLD_DB     11
+	#define CSMA_RFENV_RECAL_MS        2500
+	#define CSMA_RFENV_RECAL_LIMIT_DB -83
+	bool interference_detected      =  false;
+	bool avoid_interference         =  true;
+	int csma_slot_ms                =  CSMA_SLOT_MIN_MS;
+	unsigned long difs_ms           =  CSMA_SIFS_MS + 2*csma_slot_ms;
+	unsigned long difs_wait_start   = -1;
+	unsigned long cw_wait_start     = -1;
+	unsigned long cw_wait_target    = -1;
+	unsigned long cw_wait_passed    =  0;
+	int csma_cw                     = -1;
+	uint8_t cw_band                 =  1;
+	uint8_t cw_min                  =  0;
+	uint8_t cw_max                  =  CSMA_CW_PER_BAND_WINDOWS;
+
+	// LoRa settings
+	int  lora_sf   	                =  0;
+	int  lora_cr                    =  5;
+	int  lora_txp                   =  0xFF;
+	uint32_t lora_bw                =  0;
+	uint32_t lora_freq              =  0;
+	uint32_t lora_bitrate           =  0;
 
 	// Operational variables
 	bool radio_locked  = true;
@@ -100,18 +144,22 @@
 	bool pmu_ready     = false;
 	bool promisc       = false;
 	bool implicit      = false;
+	bool memory_low    = false;
 	uint8_t implicit_l = 0;
 
 	uint8_t op_mode   = MODE_HOST;
 	uint8_t model     = 0x00;
 	uint8_t hwrev     = 0x00;
 
+	#define NOISE_FLOOR_SAMPLES 128
+	int     noise_floor     = -292;
     int     current_rssi    = -292;
 	int		last_rssi		= -292;
 	uint8_t last_rssi_raw   = 0x00;
 	uint8_t last_snr_raw	= 0x80;
 	uint8_t seq				= 0xFF;
 	uint16_t read_len		= 0;
+	uint16_t host_write_len = 0;
 
 	// Incoming packet buffer
 	uint8_t pbuf[MTU];
@@ -163,15 +211,11 @@
 	uint32_t last_status_update = 0;
 	uint32_t last_dcd = 0;
 
-	// Status flags
-	const uint8_t SIG_DETECT = 0x01;
-	const uint8_t SIG_SYNCED = 0x02;
-	const uint8_t RX_ONGOING = 0x04;
-
     // Power management
+    #define BATTERY_STATE_UNKNOWN     0x00
     #define BATTERY_STATE_DISCHARGING 0x01
-    #define BATTERY_STATE_CHARGING 0x02
-    #define BATTERY_STATE_CHARGED 0x03
+    #define BATTERY_STATE_CHARGING    0x02
+    #define BATTERY_STATE_CHARGED     0x03
     bool battery_installed = false;
     bool battery_indeterminate = false;
     bool external_power = false;
@@ -181,15 +225,18 @@
     uint8_t battery_state = 0x00;
     uint8_t display_intensity = 0xFF;
     uint8_t display_addr = 0xFF;
+    volatile bool display_updating = false;
+    bool display_blanking_enabled = false;
     bool display_diagnostics = true;    
     bool device_init_done = false;
     bool eeprom_ok = false;
     bool firmware_update_mode = false;
+    bool serial_in_frame = false;
 
 	// Boot flags
 	#define START_FROM_BOOTLOADER 0x01
-	#define START_FROM_POWERON 0x02
-	#define START_FROM_BROWNOUT 0x03
-	#define START_FROM_JTAG 0x04
+	#define START_FROM_POWERON    0x02
+	#define START_FROM_BROWNOUT   0x03
+	#define START_FROM_JTAG       0x04
 
 #endif
