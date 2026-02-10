@@ -1,0 +1,1 @@
+{"type": "library", "name": "Crypto", "version": "0.4.0+sha.36c953c", "spec": {"owner": null, "id": null, "name": "arduinolibs", "requirements": null, "uri": "git+https://github.com/attermann/arduinolibs.git"}}

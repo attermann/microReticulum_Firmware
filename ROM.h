@@ -26,7 +26,9 @@
 	#define PRODUCT_T32_21 0xB1
 	#define PRODUCT_H32_V2 0xC0
 	#define PRODUCT_H32_V3 0xC1
+	#define PRODUCT_HWSL_V1 0xC5
     #define PRODUCT_RAK4631 0x10
+    #define PRODUCT_XIAO_NRF52840 0x11
     #define MODEL_11 0x11
     #define MODEL_12 0x12
 	#define MODEL_A1 0xA1
@@ -47,6 +49,8 @@
 	#define MODEL_C9 0xC9
 	#define MODEL_C5 0xC5
 	#define MODEL_CA 0xCA
+	#define MODEL_CB 0xCB
+	#define MODEL_CC 0xCC
 	#define MODEL_E4 0xE4
 	#define MODEL_E9 0xE9
 	#define MODEL_E3 0xE3

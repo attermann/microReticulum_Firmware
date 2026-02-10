@@ -42,6 +42,8 @@
   #define BOARD_RNODE_NG_22   0x42
   #define BOARD_GENERIC_NRF52 0x50
   #define BOARD_RAK4631       0x51
+  #define BOARD_XIAO_NRF52840 0x52
+  #define BOARD_HWSL_V1       0x43
 
   #if defined(__AVR_ATmega1284P__)
     #define PLATFORM PLATFORM_AVR
@@ -63,6 +65,8 @@
   #ifndef MODEM
     #if BOARD_MODEL == BOARD_RAK4631
       #define MODEM SX1262
+    #elif BOARD_MODEL == BOARD_XIAO_NRF52840
+      #define MODEM SX1262
     #elif BOARD_MODEL == BOARD_GENERIC_NRF52
       #define MODEM SX1262
     #else
@@ -80,7 +84,7 @@
   #define HAS_INPUT false
   #define HAS_SLEEP false
   #define PIN_DISP_SLEEP -1
-  #define VALIDATE_FIRMWARE true
+  #define VALIDATE_FIRMWARE false
 
   #if defined(ENABLE_TCXO)
       #define HAS_TCXO true
@@ -100,7 +104,7 @@
     #define CONFIG_QUEUE_MAX_LENGTH 200
     #define EEPROM_SIZE 4096
     #define EEPROM_OFFSET EEPROM_SIZE-EEPROM_RESERVED
-  
+
   #elif MCU_VARIANT == MCU_2560
     const int pin_cs = 5;
     const int pin_reset = 4;
@@ -290,6 +294,22 @@
       const int pin_miso = 11;
       const int pin_sclk = 9;
 
+    #elif BOARD_MODEL == BOARD_HWSL_V1
+      // Heltec Wireless Stick Lite V1 (ESP32-PICO-D4 + SX1276)
+      #define HAS_BLUETOOTH true
+      #define HAS_CONSOLE true
+      #define HAS_EEPROM true
+      #define HAS_DISPLAY false
+      #define HAS_PMU false
+      #define HAS_NP false
+      #define HAS_SD false
+
+      const int pin_cs = 18;
+      const int pin_reset = 14;
+      const int pin_dio = 26;
+      const int pin_led_rx = 25;
+      const int pin_led_tx = 25;
+
     #elif BOARD_MODEL == BOARD_RNODE_NG_20
       #define HAS_DISPLAY true
       #define HAS_BLUETOOTH true
@@ -374,7 +394,7 @@
 
       const int pin_dio = 33;
       const int pin_busy = 34;
-      
+
       const int pin_np = 38;
       const int pin_dac = 25;
       const int pin_adc = 1;
@@ -396,7 +416,7 @@
     #else
       #error An unsupported ESP32 board was selected. Cannot compile RNode firmware.
     #endif
-  
+
   #elif MCU_VARIANT == MCU_NRF52
     #if BOARD_MODEL == BOARD_RAK4631
       #define HAS_EEPROM false
@@ -430,6 +450,57 @@
       const int pin_dio = 47;
       const int pin_led_rx = LED_BLUE;
       const int pin_led_tx = LED_GREEN;
+      const int pin_tcxo_enable = -1;
+
+    #elif BOARD_MODEL == BOARD_XIAO_NRF52840
+      #define HAS_EEPROM false
+      #define HAS_DISPLAY false
+      #define HAS_BLUETOOTH false
+      #undef HAS_BLE
+      #define HAS_BLE true
+      #define HAS_CONSOLE false
+      #define HAS_PMU false
+      #define HAS_NP false
+      #define HAS_SD false
+      #undef HAS_TCXO
+      #define HAS_TCXO true
+      #define HAS_RF_SWITCH_RX_TX true
+      #undef HAS_BUSY
+      #define HAS_BUSY true
+      #define DIO2_AS_RF_SWITCH true
+      #define CONFIG_UART_BUFFER_SIZE 6144
+      #define CONFIG_QUEUE_SIZE 6144
+      #define CONFIG_QUEUE_MAX_LENGTH 200
+      #define EEPROM_SIZE 296
+      #define EEPROM_OFFSET EEPROM_SIZE-EEPROM_RESERVED
+      #define BLE_MANUFACTURER "Seeed Studio"
+      #define BLE_MODEL "XIAO nRF52840"
+
+      // XIAO nRF52840 onboard LEDs are active-low
+      // (LOW turns LED on, HIGH turns LED off)
+      #define LED_ON LOW
+      #define LED_OFF HIGH
+
+      // Low Power Mode Support
+      #undef HAS_SLEEP
+      #define HAS_SLEEP true
+      #define HAS_LOWPOWER true
+      #define PIN_WAKEUP 1          // DIO1 from radio (Arduino D1)
+      #define WAKEUP_LEVEL HIGH     // DIO1 goes high on interrupt
+
+      // Pin mapping for XIAO nRF52840 + Wio-SX1262 kit
+      // Using Arduino digital pin numbers (D0-D10), not raw GPIO
+      // The Arduino framework maps these via g_ADigitalPinMap
+      const int pin_rxen = 5;      // D5 → P0.05 (RF_SW)
+      const int pin_reset = 2;     // D2 → P0.28 (RST)
+      const int pin_cs = 4;        // D4 → P0.04 (NSS)
+      const int pin_sclk = 8;      // D8 → P1.13 (SCK)
+      const int pin_mosi = 10;     // D10 → P1.15 (MOSI)
+      const int pin_miso = 9;      // D9 → P1.14 (MISO)
+      const int pin_busy = 3;      // D3 → P0.29 (BUSY)
+      const int pin_dio = 1;       // D1 → P0.03 (DIO1/IRQ)
+      const int pin_led_rx = LED_RED;
+      const int pin_led_tx = LED_RED;
       const int pin_tcxo_enable = -1;
 
     #else

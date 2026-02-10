@@ -7,3 +7,4 @@ Release/*.zip
 Release/*.json
 Console/build
 build/*
+.venv

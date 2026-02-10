@@ -288,6 +288,17 @@ bool bt_passkey_callback(uint16_t conn_handle, uint8_t const passkey[6], bool ma
 void bt_connect_callback(uint16_t conn_handle) {
     bt_state = BT_STATE_CONNECTED;
     cable_state = CABLE_STATE_DISCONNECTED;
+    
+    // Request power-optimized connection parameters
+    #if defined(HAS_LOWPOWER) && HAS_LOWPOWER == true
+        // Request slower connection interval for power saving
+        // Parameters: conn_interval (1.25ms units), slave_latency, sup_timeout (10ms units)
+        BLEConnection* conn = Bluefruit.Connection(conn_handle);
+        if (conn) {
+            // Interval: 400 = 500ms, Latency: 4 events, Timeout: 400 = 4s
+            conn->requestConnectionParameter(400, 4, 400);
+        }
+    #endif
 }
 
 void bt_disconnect_callback(uint16_t conn_handle, uint8_t reason) {
@@ -347,6 +358,19 @@ void bt_start() {
     SerialBT.begin();
 
     blebas.begin();
+
+    // Power-optimized advertising configuration
+    // Use slower advertising interval for power saving
+    #if defined(HAS_LOWPOWER) && HAS_LOWPOWER == true
+      // Advertising interval in 0.625ms units
+      // 1600 = 1000ms, 3200 = 2000ms
+      Bluefruit.Advertising.setInterval(1600, 3200);
+      // Reduce TX power for advertising
+      Bluefruit.setTxPower(0);
+    #else
+      // Default faster advertising
+      Bluefruit.Advertising.setInterval(160, 320);  // 100-200ms
+    #endif
 
     // non-connectable advertising
     Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);

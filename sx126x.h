@@ -58,6 +58,13 @@ public:
   void standby();
   void sleep();
 
+  // Low Power RX Duty Cycle Mode
+  void setRxDutyCycle(uint32_t rxPeriodUs, uint32_t sleepPeriodUs);
+  void startRxDutyCycle();
+  void stopRxDutyCycle();
+  bool isRxDutyCycleEnabled();
+  void setRxDutyCycleParams(uint8_t sf, long bw, uint16_t preambleSymbols);
+
   bool preInit();
   uint8_t getTxPower();
   void setTxPower(int level, int outputPin = PA_OUTPUT_PA_BOOST_PIN);
@@ -139,6 +146,11 @@ private:
   uint8_t _packet[255];
   bool _preinit_done;
   void (*_onReceive)(int);
+  
+  // RX Duty Cycle state
+  bool _rxDutyCycleEnabled;
+  uint32_t _rxPeriodUs;
+  uint32_t _sleepPeriodUs;
 };
 
 extern sx126x sx126x_modem;

@@ -215,6 +215,11 @@ extern RNS::Reticulum reticulum;
 			void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
 			void led_tx_on()  { digitalWrite(pin_led_tx, HIGH); }
 			void led_tx_off() { digitalWrite(pin_led_tx, LOW); }
+	#elif BOARD_MODEL == BOARD_HWSL_V1
+			void led_rx_on()  { digitalWrite(pin_led_rx, HIGH); }
+			void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
+			void led_tx_on()  { digitalWrite(pin_led_tx, HIGH); }
+			void led_tx_off() { digitalWrite(pin_led_tx, LOW); }
 	#elif BOARD_MODEL == BOARD_LORA32_V2_1
 		void led_rx_on()  { digitalWrite(pin_led_rx, HIGH); }
 		void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
@@ -237,6 +242,12 @@ extern RNS::Reticulum reticulum;
 		void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
 		void led_tx_on()  { digitalWrite(pin_led_tx, HIGH); }
 		void led_tx_off() { digitalWrite(pin_led_tx, LOW); }
+    #elif BOARD_MODEL == BOARD_XIAO_NRF52840
+		// XIAO nRF52840 LEDs are active LOW
+		void led_rx_on()  { digitalWrite(pin_led_rx, LOW); }
+		void led_rx_off() {	digitalWrite(pin_led_rx, HIGH); }
+		void led_tx_on()  { digitalWrite(pin_led_tx, LOW); }
+		void led_tx_off() { digitalWrite(pin_led_tx, HIGH); }
     #endif
 #endif
 
@@ -1087,6 +1098,9 @@ void setTXPower() {
 		if (model == MODEL_C4) LoRa->setTxPower(lora_txp, PA_OUTPUT_PA_BOOST_PIN);
 		if (model == MODEL_C9) LoRa->setTxPower(lora_txp, PA_OUTPUT_PA_BOOST_PIN);
 
+		if (model == MODEL_CB) LoRa->setTxPower(lora_txp, PA_OUTPUT_PA_BOOST_PIN);
+		if (model == MODEL_CC) LoRa->setTxPower(lora_txp, PA_OUTPUT_PA_BOOST_PIN);
+
 		if (model == MODEL_E4) LoRa->setTxPower(lora_txp, PA_OUTPUT_PA_BOOST_PIN);
 		if (model == MODEL_E9) LoRa->setTxPower(lora_txp, PA_OUTPUT_PA_BOOST_PIN);
 		if (model == MODEL_E3) LoRa->setTxPower(lora_txp, PA_OUTPUT_PA_BOOST_PIN);
@@ -1150,13 +1164,20 @@ void promisc_disable() {
 
 		if (InternalFS.exists(EEPROM_FILE)) {
 			if (file.open(EEPROM_FILE, FILE_O_WRITE)) {
-                // File was successfully opened for writing
-                return true;
-            }
-            // File exists but couldn't be opeend for writing so reformat filesystem
-            if (!InternalFS.format()) {
-                // FileSystem format failed so fail
-                return false;
+                // Check if file size matches expected EEPROM_SIZE
+                if (file.size() == EEPROM_SIZE) {
+                    // File was successfully opened for writing
+                    return true;
+                }
+                // File size mismatch (firmware changed EEPROM_SIZE), recreate
+                file.close();
+                InternalFS.remove(EEPROM_FILE);
+            } else {
+                // File exists but couldn't be opened for writing so reformat filesystem
+                if (!InternalFS.format()) {
+                    // FileSystem format failed so fail
+                    return false;
+                }
             }
 		}
 
@@ -1332,9 +1353,9 @@ bool eeprom_product_valid() {
 	#if PLATFORM == PLATFORM_AVR
 	if (rval == PRODUCT_RNODE || rval == PRODUCT_HMBRW) {
 	#elif PLATFORM == PLATFORM_ESP32
-	if (rval == PRODUCT_RNODE || rval == BOARD_RNODE_NG_20 || rval == BOARD_RNODE_NG_21 || rval == PRODUCT_HMBRW || rval == PRODUCT_TBEAM || rval == PRODUCT_T32_10 || rval == PRODUCT_T32_20 || rval == PRODUCT_T32_21 || rval == PRODUCT_H32_V2 || rval == PRODUCT_H32_V3) {
+	if (rval == PRODUCT_RNODE || rval == BOARD_RNODE_NG_20 || rval == BOARD_RNODE_NG_21 || rval == PRODUCT_HMBRW || rval == PRODUCT_TBEAM || rval == PRODUCT_T32_10 || rval == PRODUCT_T32_20 || rval == PRODUCT_T32_21 || rval == PRODUCT_H32_V2 || rval == PRODUCT_H32_V3 || rval == PRODUCT_HWSL_V1) {
 	#elif PLATFORM == PLATFORM_NRF52
-	if (rval == PRODUCT_RAK4631 || rval == PRODUCT_HMBRW) {
+	if (rval == PRODUCT_RAK4631 || rval == PRODUCT_XIAO_NRF52840 || rval == PRODUCT_HMBRW) {
 	#else
 	if (false) {
 	#endif
@@ -1372,7 +1393,11 @@ bool eeprom_model_valid() {
 	if (model == MODEL_C4 || model == MODEL_C9) {
 	#elif BOARD_MODEL == BOARD_HELTEC32_V3
 	if (model == MODEL_C5 || model == MODEL_CA) {
+	#elif BOARD_MODEL == BOARD_HWSL_V1
+	if (model == MODEL_CB || model == MODEL_CC) {
     #elif BOARD_MODEL == BOARD_RAK4631
+    if (model == MODEL_11 || model == MODEL_12) {
+    #elif BOARD_MODEL == BOARD_XIAO_NRF52840
     if (model == MODEL_11 || model == MODEL_12) {
 	#elif BOARD_MODEL == BOARD_HUZZAH32
 	if (model == MODEL_FF) {

@@ -145,6 +145,13 @@
 		float longterm_airtime = 0.0;
 		#define current_airtime_bin(void) (millis()%AIRTIME_LONGTERM_MS)/AIRTIME_BINLEN_MS
 	#endif
+
+	// Low Power Mode Configuration
+	#if defined(HAS_LOWPOWER) && HAS_LOWPOWER == true
+		// Extended preamble for RX duty cycle mode
+		// Longer preamble ensures receiver wakes during preamble transmission
+		#define LORA_PREAMBLE_SYMBOLS_LOWPOWER 32
+	#endif
 	float st_airtime_limit = 0.0;
 	float lt_airtime_limit = 0.0;
 	bool airtime_lock = false;

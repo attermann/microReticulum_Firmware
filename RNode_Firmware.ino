@@ -44,6 +44,9 @@ SPIClass SDSPI(HSPI);
   #include <esp_task_wdt.h>
 #endif
 
+// Low Power Management
+#include "LowPower.h"
+
 // WDT timeout
 #define WDT_TIMEOUT 60  // seconds
 
@@ -258,11 +261,11 @@ void setup() {
   #endif
   randomSeed(seed_val);
 
-  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_RNODE_NG_22
+  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_RNODE_NG_22 && BOARD_MODEL != BOARD_XIAO_NRF52840
   // Some boards need to wait until the hardware UART is set up before booting
-  // the full firmware. In the case of the RAK4631, the line below will wait
-  // until a serial connection is actually established with a master. Thus, it
-  // is disabled on this platform.
+  // the full firmware. In the case of the RAK4631 and XIAO nRF52840, the line
+  // below will wait until a serial connection is actually established with a
+  // master. Thus, it is disabled on these platforms.
     while (!Serial);
   #endif
 
@@ -520,6 +523,18 @@ void setup() {
 }
 
 void lora_receive() {
+  #if defined(HAS_LOWPOWER) && HAS_LOWPOWER == true && MODEM == SX1262
+    // Use RX duty cycle mode if enabled for power saving
+    const PowerConfig* config = lowpower_get_config();
+    if (config != NULL && config->use_rx_duty_cycle && low_power_initialized) {
+      // Configure RX duty cycle based on current LoRa parameters
+      LoRa->setRxDutyCycleParams(lora_sf, lora_bw, lora_preamble_symbols);
+      LoRa->startRxDutyCycle();
+      return;
+    }
+  #endif
+  
+  // Standard continuous receive mode
   if (!implicit) {
     LoRa->receive();
   } else {
@@ -702,6 +717,15 @@ bool startRadio() {
         LoRa->enableCrc();
 
         LoRa->onReceive(receive_callback);
+
+        // Initialize low power mode (after radio is configured)
+        #if defined(HAS_LOWPOWER) && HAS_LOWPOWER == true
+          lowpower_init();
+          // Set balanced mode by default for transport nodes
+          if (op_mode == MODE_TNC) {
+            lowpower_set_mode(POWER_MODE_BALANCED);
+          }
+        #endif
 
         lora_receive();
 
@@ -1654,6 +1678,19 @@ void loop() {
     input_read();
   #endif
 
+  // Low Power Sleep - Allow MCU to enter low power mode between loop iterations
+  // This is critical for power saving on battery-powered devices
+  #if defined(HAS_LOWPOWER) && HAS_LOWPOWER == true && MCU_VARIANT == MCU_NRF52
+    // Only sleep if radio is online and we're not actively processing
+    if (radio_online && !packet_ready && queue_height == 0 && !serial_buffering) {
+      const PowerConfig* config = lowpower_get_config();
+      if (config != NULL && config->main_loop_sleep_ms > 0) {
+        // FreeRTOS delay() enables tickless idle for power saving
+        delay(config->main_loop_sleep_ms);
+      }
+    }
+  #endif
+
   // Feed WDT
 #if MCU_VARIANT == MCU_ESP32
   esp_task_wdt_reset();
@@ -1672,8 +1709,26 @@ void sleep_now() {
       pinMode(PIN_DISP_SLEEP, OUTPUT);
       digitalWrite(PIN_DISP_SLEEP, DISP_SLEEP_LEVEL);
     #endif
-    esp_sleep_enable_ext0_wakeup(PIN_WAKEUP, WAKEUP_LEVEL);
-    esp_deep_sleep_start();
+    
+    #if MCU_VARIANT == MCU_ESP32
+      esp_sleep_enable_ext0_wakeup(PIN_WAKEUP, WAKEUP_LEVEL);
+      esp_deep_sleep_start();
+    #elif MCU_VARIANT == MCU_NRF52
+      // For nRF52, we use System OFF mode for deep sleep
+      // Configure wake on DIO1 (radio interrupt)
+      // Note: This will reset the device on wake
+      #if defined(PIN_WAKEUP)
+        nrf_gpio_cfg_sense_input(g_ADigitalPinMap[PIN_WAKEUP], 
+                                 NRF_GPIO_PIN_PULLDOWN, 
+                                 NRF_GPIO_PIN_SENSE_HIGH);
+      #endif
+      // Put radio to sleep first
+      if (radio_online) {
+        LoRa->sleep();
+      }
+      // Enter System OFF (deep sleep)
+      sd_power_system_off();
+    #endif
   #endif
 }
 

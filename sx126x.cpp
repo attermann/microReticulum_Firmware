@@ -48,6 +48,7 @@
 #define OP_RX_TX_FALLBACK_MODE_6X   0x93
 #define OP_REGULATOR_MODE_6X        0x96
 #define OP_CALIBRATE_IMAGE_6X       0x98
+#define OP_RX_DUTY_CYCLE_6X         0x94
 
 #define MASK_CALIBRATE_ALL          0x7f
 
@@ -117,7 +118,10 @@ sx126x::sx126x() :
   _fifo_rx_addr_ptr(0),
   _packet({0}),
   _preinit_done(false),
-  _onReceive(NULL)
+  _onReceive(NULL),
+  _rxDutyCycleEnabled(false),
+  _rxPeriodUs(0),
+  _sleepPeriodUs(0)
 {
   // overide Stream timeout value
   setTimeout(0);
@@ -713,6 +717,83 @@ void sx126x::sleep()
 {
     uint8_t byte = 0x00;
     executeOpcode(OP_SLEEP_6X, &byte, 1);
+    _rxDutyCycleEnabled = false;
+}
+
+// Low Power RX Duty Cycle Mode Implementation
+// The SX1262 has built-in RX duty cycling with internal 64kHz RC timer
+// Radio automatically cycles between RX and Sleep modes
+void sx126x::setRxDutyCycle(uint32_t rxPeriodUs, uint32_t sleepPeriodUs) {
+    _rxPeriodUs = rxPeriodUs;
+    _sleepPeriodUs = sleepPeriodUs;
+}
+
+void sx126x::startRxDutyCycle() {
+    if (_rxPeriodUs == 0 || _sleepPeriodUs == 0) {
+        // Use default values based on current modulation params
+        setRxDutyCycleParams(_sf, getSignalBandwidth(), _preambleLength);
+    }
+    
+    // Ensure we're in explicit header mode for duty cycle
+    explicitHeaderMode();
+    
+    // Enable RX antenna
+    if (_rxen != -1) {
+        rxAntEnable();
+    }
+    
+    // Convert microseconds to 15.625µs steps (64kHz clock)
+    // Period in steps = Period_us / 15.625
+    // Multiply by 64 and divide by 1000 to avoid floating point
+    uint32_t rxPeriod = (_rxPeriodUs * 64) / 1000;
+    uint32_t sleepPeriod = (_sleepPeriodUs * 64) / 1000;
+    
+    uint8_t buf[6];
+    buf[0] = (rxPeriod >> 16) & 0xFF;
+    buf[1] = (rxPeriod >> 8) & 0xFF;
+    buf[2] = rxPeriod & 0xFF;
+    buf[3] = (sleepPeriod >> 16) & 0xFF;
+    buf[4] = (sleepPeriod >> 8) & 0xFF;
+    buf[5] = sleepPeriod & 0xFF;
+    
+    executeOpcode(OP_RX_DUTY_CYCLE_6X, buf, 6);
+    _rxDutyCycleEnabled = true;
+}
+
+void sx126x::stopRxDutyCycle() {
+    standby();
+    _rxDutyCycleEnabled = false;
+}
+
+bool sx126x::isRxDutyCycleEnabled() {
+    return _rxDutyCycleEnabled;
+}
+
+// Calculate optimal RX duty cycle parameters based on LoRa settings
+// RX window must be at least 2 symbols to detect preamble
+// Sleep period should be less than preamble length to not miss packets
+void sx126x::setRxDutyCycleParams(uint8_t sf, long bw, uint16_t preambleSymbols) {
+    // Calculate symbol time in microseconds
+    // Symbol time = 2^SF / BW (in seconds)
+    // For us: symbol_time_us = (2^SF * 1000000) / BW
+    uint32_t symbolTimeUs = ((uint32_t)1 << sf) * 1000000UL / bw;
+    
+    // RX window: 2 symbols + TCXO warmup time (5ms for Wio-SX1262)
+    // We add extra margin for TCXO stabilization
+    uint32_t tcxoWarmupUs = 5000;  // 5ms for TCXO
+    _rxPeriodUs = (2 * symbolTimeUs) + tcxoWarmupUs;
+    
+    // Sleep period: (preamble_symbols - 2) * symbol_time
+    // This ensures we wake up during the preamble
+    if (preambleSymbols > 4) {
+        _sleepPeriodUs = (preambleSymbols - 3) * symbolTimeUs;
+    } else {
+        _sleepPeriodUs = symbolTimeUs;  // Minimum sleep
+    }
+    
+    // Ensure minimum values
+    if (_rxPeriodUs < 5000) _rxPeriodUs = 5000;      // Min 5ms RX
+    if (_sleepPeriodUs < 1000) _sleepPeriodUs = 1000; // Min 1ms sleep
 }
 
 void sx126x::enableTCXO() {
@@ -722,6 +803,8 @@ void sx126x::enableTCXO() {
     #elif BOARD_MODEL == BOARD_TBEAM
       uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
     #elif BOARD_MODEL == BOARD_RNODE_NG_22
+      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
+    #elif BOARD_MODEL == BOARD_XIAO_NRF52840
       uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
     #endif
     executeOpcode(OP_DIO3_TCXO_CTRL_6X, buf, 4);

@@ -4,6 +4,10 @@ import shutil
 
 Import("env")
 
+# Helper: detect nRF52-compatible platforms (includes Seeed's XIAO nRF52840)
+def is_nrf52_platform(platform_str):
+    return platform_str == "nordicnrf52" or "platform-seeedboards" in platform_str
+
 env.Replace(PROGNAME="rnode_firmware_%s" % env.GetProjectOption("custom_variant"))
 print("PROGNAME:", env.subst("$PROGNAME"))
 
@@ -33,7 +37,7 @@ if (platform == "espressif32"):
         title="Package",
         description="Package esp32 firmware for delivery"
     )
-elif (platform == "nordicnrf52"):
+elif (is_nrf52_platform(platform)):
     # remove --specs=nano.specs to allow exceptions to work
     if '--specs=nano.specs' in env['LINKFLAGS']:
         env['LINKFLAGS'].remove('--specs=nano.specs')
@@ -70,7 +74,7 @@ def post_upload(source, target, env):
         firmware_hash(source, env)
         # firmware pacakaging is incomplete due to missing console image
         #firmware_package(env)
-    elif (platform == "nordicnrf52"):
+    elif (is_nrf52_platform(platform)):
         time.sleep(5)
         # device provisioning is incomplete and only currently appropriate for 915MHz RAK4631
         #device_provision(env)
@@ -116,7 +120,7 @@ def device_provision(env):
         if (board == "ttgo-t-beam"):
             print("Provisioning t-beam device...")
             env.Execute("rnodeconf --product e0 --model e9 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
-    elif (platform == "nordicnrf52"):
+    elif (is_nrf52_platform(platform)):
         if (board == "wiscore_rak4631"):
             print("Provisioning rak4631 device...")
             env.Execute("rnodeconf --product 10 --model 12 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
@@ -127,7 +131,7 @@ def firmware_hash(source, env):
     source_file = source[0].get_abspath()
     platform = env.GetProjectOption("platform")
     print("Platform:", platform)
-    if (platform == "nordicnrf52"):
+    if (is_nrf52_platform(platform)):
         build_dir = env.subst("$BUILD_DIR")
         env.Execute("cd " + build_dir + "; unzip -o " + source_file + " " + env.subst("$PROGNAME") + ".bin")
         #source_file.replace(".zip", ".bin")
@@ -187,6 +191,6 @@ def firmware_package(env):
         zip_cmd += build_dir + "/" + env.subst("$PROGNAME") + ".bootloader "
         zip_cmd += build_dir + "/" + env.subst("$PROGNAME") + ".partitions "
         env.Execute(zip_cmd)
-    elif (platform == "nordicnrf52"):
+    elif (is_nrf52_platform(platform)):
         env.Execute("cp " + build_dir + "/" + env.subst("$PROGNAME") + ".zip " + project_dir + "/Release/.")
     env.Execute("python " + project_dir + "/release_hashes.py > " + project_dir + "/Release/release.json")

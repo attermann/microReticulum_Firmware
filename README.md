@@ -2,6 +2,8 @@
 
 Fork of RNode_Firmware with integration of the [microReticulum](https://github.com/attermann/microReticulum) Network Stack to implement a completeley self-contained standalone Reticulum node.
 
+> **Custom Board Support:** For build, flash, and provisioning instructions for the **Seeed XIAO nRF52840 + Wio-SX1262** and **Heltec Wireless Stick Lite V1** boards, see [CUSTOM_BOARDS.md](CUSTOM_BOARDS.md).
+
 ## Installation
 
 This firmware can be easily installed on devices in the same way as RNode using the new `fw-url` switch to `rnodeconf` which allows firmware images to be pulled from an alternate repository. RNS may need to be updated to the latest version to use this new switch.
@@ -48,4 +50,3 @@ Instructions for command line builds and packaging for firmware distribution.
 - [x] Add build targets for NRF52 boards
 
 Please open an Issue if you have trouble building ior using the API, and feel free to start a new Discussion for anything else.
-
