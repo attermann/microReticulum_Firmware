@@ -829,16 +829,20 @@ void draw_disp_area() {
   } else {
     if (!disp_ext_fb or bt_ssp_pin != 0) {
       if (radio_online && display_diagnostics) {
-        disp_area.fillRect(0,8,disp_area.width(),37, SSD1306_BLACK); disp_area.fillRect(0,37,disp_area.width(),27, SSD1306_WHITE);
-        disp_area.setFont(SMALL_FONT); disp_area.setTextWrap(false); disp_area.setTextColor(SSD1306_WHITE); disp_area.setTextSize(1);
-
+#ifdef HAS_RNS
         // CBA
         //if (reticulum && reticulum.transport_enabled()) {
         if (op_mode == MODE_TNC) {
           // CBA Indicate that this is a Transport node
-          disp_area.setCursor(2, 4);
-          disp_area.print("TTTTTTTTTT");
+          disp_area.fillRect(0,0,disp_area.width(),7, SSD1306_WHITE);
+          disp_area.setFont(SMALL_FONT); disp_area.setTextWrap(false); disp_area.setTextColor(SSD1306_BLACK); disp_area.setTextSize(1);
+          disp_area.setCursor(4, 5);
+          disp_area.print("TRANSPORT");
         }
+#endif
+
+        disp_area.fillRect(0,8,disp_area.width(),37, SSD1306_BLACK); disp_area.fillRect(0,37,disp_area.width(),27, SSD1306_WHITE);
+        disp_area.setFont(SMALL_FONT); disp_area.setTextWrap(false); disp_area.setTextColor(SSD1306_WHITE); disp_area.setTextSize(1);
 
         disp_area.setCursor(2, 13);
         disp_area.print("On");

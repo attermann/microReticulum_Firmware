@@ -110,6 +110,11 @@ public:
 		_name = "deleted";
 	}
 protected:
+	virtual void handle_incoming(const RNS::Bytes& data) {
+    TRACEF("LoRaInterface.handle_incoming: (%u bytes) data: %s", data.size(), data.toHex().c_str());
+    TRACE("LoRaInterface.handle_incoming: sending packet to rns...");
+    InterfaceImpl::handle_incoming(data);
+  }
 	virtual void send_outgoing(const RNS::Bytes& data) {
     // CBA NOTE header will be addded later by transmit function
     TRACEF("LoRaInterface.send_outgoing: (%u bytes) data: %s", data.size(), data.toHex().c_str());
@@ -603,11 +608,11 @@ void setup() {
       HEAD("RNS is READY!", RNS::LOG_TRACE);
       if (op_mode == MODE_TNC) {
         HEAD("RNS transport mode is ENABLED", RNS::LOG_TRACE);
-        TRACE(std::string("Frequency: " + std::to_string(lora_freq)) + " Hz");
-        TRACE(std::string("Bandwidth: " + std::to_string(lora_bw)) + " Hz");
-        TRACE(std::string("TX Power: " + std::to_string(lora_txp)) + " dBm");
-        TRACE(std::string("Spreading Factor: " + std::to_string(lora_sf)));
-        TRACE(std::string("Coding Rate: " + std::to_string(lora_sf)));
+        TRACEF("Frequency: %d Hz", lora_freq);
+        TRACEF("Bandwidth: %d Hz", lora_bw);
+        TRACEF("TX Power: %d dBm", lora_txp);
+        TRACEF("Spreading Factor: %d", lora_sf);
+        TRACEF("Coding Rate: %d", lora_cr);
       }
       else {
         HEAD("RNS transport mode is DISABLED", RNS::LOG_INFO);
@@ -639,12 +644,20 @@ void lora_receive() {
 inline void kiss_write_packet() {
 
 #ifdef HAS_RNS
+  TRACEF("Received %d byte packet", read_len);
   // CBA send packet received over LoRa to RNS in addition to connected client
   // CBA RESERVE
   //RNS::Bytes data();
   RNS::Bytes data(512);
-  for (uint16_t i = 0; i < read_len; i++) {
-    data << pbuf[i];
+  for (uint16_t i = 0; i < host_write_len; i++) {
+    #if MCU_VARIANT == MCU_NRF52
+      portENTER_CRITICAL();
+      uint8_t byte = pbuf[i];
+      portEXIT_CRITICAL();
+    #else
+      uint8_t byte = pbuf[i];
+    #endif
+    data << byte;
   }
   lora_interface.handle_incoming(data);
 #endif
