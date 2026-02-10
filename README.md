@@ -83,6 +83,32 @@ pio run -t package
 Write version info:
   python release_hashes.py > Release/release.json
 
+## Firmware Release
+
+New firmware release procedure:
+
+  1. Ensure that microReticulum repo is updated for build (and package versioning is incremented if changed)
+
+  2. Shutdown microReticulum_Firmware project in IDE (if open)
+
+  3. Clean build directory
+     ```
+     pio run -t fullclean
+     ```
+
+  4. Clean release directory
+     ```
+     rm Release/*.zip
+     rm Release/release.json
+     ```
+
+  5. Build new releases
+     ```
+     pio run -t package
+     ```
+
+  6. Upload all files (except README.md and esptool) to github release
+
 ## Roadmap
 
 - [ ] Extend KISS interface to support config/control of the integrated microReticulum stack
