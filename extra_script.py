@@ -59,21 +59,22 @@ def post_upload(source, target, env):
     print("post_upload...")
     print("Platform:", env.GetProjectOption("platform"))
     print("Board:", env.GetProjectOption("board"))
+    print("Variant:", env.GetProjectOption("custom_variant"))
     print("Serial port:", env.subst("$UPLOAD_PORT"))
     # do some actions
     platform = env.GetProjectOption("platform")
     board = env.GetProjectOption("board")
     if (platform == "espressif32"):
-        time.sleep(5)
+        time.sleep(10)
         # device provisioning is incomplete and only currently appropriate for 915MHz T-Beam
-        #device_provision(env)
+        device_provision(env)
         firmware_hash(source, env)
         # firmware pacakaging is incomplete due to missing console image
         #firmware_package(env)
     elif (platform == "nordicnrf52"):
         time.sleep(5)
         # device provisioning is incomplete and only currently appropriate for 915MHz RAK4631
-        #device_provision(env)
+        device_provision(env)
         firmware_hash(source, env)
         # firmware pacakaging is incomplete due to missing console image
         #firmware_package(env)
@@ -112,14 +113,19 @@ def device_provision(env):
     print("Platform:", platform)
     board = env.GetProjectOption("board")
     print("Board:", board)
-    if (platform == "espressif32"):
-        if (board == "ttgo-t-beam"):
-            print("Provisioning t-beam device...")
+    variant = env.GetProjectOption("custom_variant")
+    print("Variant:", variant)
+    match variant:
+        case "tbeam" | "tbeam_local":
             env.Execute("rnodeconf --product e0 --model e9 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
-    elif (platform == "nordicnrf52"):
-        if (board == "wiscore_rak4631"):
-            print("Provisioning rak4631 device...")
+        case "lora32v21" | "lora32v21_local":
+            env.Execute("rnodeconf --product b1 --model b9 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
+        case "heltec32v4" | "heltec32v4_local":
+            env.Execute("rnodeconf --product b1 --model b9 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
+        case "rak4631" | "rak4631_local":
             env.Execute("rnodeconf --product 10 --model 12 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
+        case "heltec_t114" | "heltec_t114_local":
+            env.Execute("rnodeconf --product c2 --model c7 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
 
 def firmware_hash(source, env):
     # Firmware hash
@@ -160,7 +166,7 @@ def firmware_package(env):
     board = env.GetProjectOption("board")
     print("Board:", board)
     variant = env.GetProjectOption("custom_variant")
-    print("custom_variant:", variant)
+    print("Variant:", variant)
     core_dir = env.subst("$CORE_DIR")
     print("core_dir:", core_dir)
     packages_dir = env.subst("$PACKAGES_DIR")

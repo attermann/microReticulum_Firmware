@@ -644,7 +644,7 @@ void lora_receive() {
 inline void kiss_write_packet() {
 
 #ifdef HAS_RNS
-  TRACEF("Received %d byte packet", read_len);
+  TRACEF("Received %d byte packet", host_write_len);
   // CBA send packet received over LoRa to RNS in addition to connected client
   // CBA RESERVE
   //RNS::Bytes data();
