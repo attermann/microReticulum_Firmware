@@ -297,7 +297,7 @@
     #elif BOARD_MODEL == BOARD_HWSL_V1
       // Heltec Wireless Stick Lite V1 (ESP32-PICO-D4 + SX1276)
       #define HAS_BLUETOOTH true
-      #define HAS_CONSOLE true
+      #define HAS_CONSOLE false
       #define HAS_EEPROM true
       #define HAS_DISPLAY false
       #define HAS_PMU false

@@ -137,17 +137,14 @@ protected:
 
 // CBA logger callback
 void on_log(const char* msg, RNS::LogLevel level) {
-/*
-	Serial.print(RNS::getTimeString());
-	Serial.print(" [");
-	Serial.print(RNS::getLevelName(level));
-	Serial.print("] ");
-	Serial.println(msg);
-	Serial.flush();
-*/
-  String line = RNS::getTimeString() + String(" [") + RNS::getLevelName(level) + "] " + msg + "\n";
-	Serial.print(line);
-	Serial.flush();
+  // Only write RNS logs to Serial when no KISS client is connected.
+  // KISS protocol and ASCII log text share the same UART — interleaving
+  // them corrupts KISS framing and prevents rnodeconf from communicating.
+  if (cable_state != CABLE_STATE_CONNECTED) {
+    String line = RNS::getTimeString() + String(" [") + RNS::getLevelName(level) + "] " + msg + "\n";
+    Serial.print(line);
+    Serial.flush();
+  }
 
 #ifdef HAS_SDCARD
 	File file = SD.open("/logfile.txt", FILE_APPEND);
@@ -214,6 +211,9 @@ void setup() {
   memset(serialBuffer, 0, sizeof(serialBuffer));
   fifo_init(&serialFIFO, serialBuffer, CONFIG_UART_BUFFER_SIZE);
 
+  #if MCU_VARIANT == MCU_ESP32
+    Serial.setRxBufferSize(CONFIG_UART_BUFFER_SIZE);
+  #endif
   Serial.begin(serial_baudrate);
 
   // CBA Safely wait for serial initialization
@@ -225,6 +225,11 @@ void setup() {
   }
   // CBA Test
   delay(2000);
+
+  Serial.println("");
+  Serial.println("[RNode] Boot starting...");
+  Serial.print("[RNode] Board: HWSL_V1, Baud: ");
+  Serial.println(serial_baudrate);
 
   // Configure WDT
   #if MCU_VARIANT == MCU_ESP32
@@ -240,7 +245,7 @@ void setup() {
   #if MCU_VARIANT == MCU_ESP32
     boot_seq();
     EEPROM.begin(EEPROM_SIZE);
-    Serial.setRxBufferSize(CONFIG_UART_BUFFER_SIZE);
+    Serial.println("[RNode] EEPROM initialised");
   #endif
 
   #if MCU_VARIANT == MCU_NRF52
@@ -317,6 +322,7 @@ void setup() {
     // probe boot parameters.
     if (LoRa->preInit()) {
       modem_installed = true;
+      Serial.println("[RNode] Modem detected");
       uint32_t lfr = LoRa->getFrequency();
       if (lfr == 0) {
         // Normal boot
@@ -333,6 +339,7 @@ void setup() {
       LoRa->setFrequency(M_FRQ_S);
     } else {
       modem_installed = false;
+      Serial.println("[RNode] ERROR: Modem not detected!");
     }
   #else
     // Older variants only came with SX1276/78 chips,
@@ -361,21 +368,33 @@ void setup() {
     #if HAS_BLUETOOTH || HAS_BLE == true
       bt_init();
       bt_init_ran = true;
+      Serial.println("[RNode] Bluetooth initialised");
     #endif
 
     if (console_active) {
       #if HAS_CONSOLE
         console_start();
       #else
+        Serial.println("[RNode] Console requested but disabled, sending KISS reset");
         kiss_indicate_reset();
       #endif
     } else {
+      Serial.println("[RNode] Entering TNC/KISS mode");
       kiss_indicate_reset();
     }
   #endif
 
   // Validate board health, EEPROM and config
   validate_status();
+  Serial.print("[RNode] Op mode: ");
+  Serial.println(op_mode == MODE_TNC ? "TNC" : "Normal");
+  if (op_mode == MODE_TNC) {
+    Serial.print("[RNode] Freq: "); Serial.print(lora_freq); Serial.println(" Hz");
+    Serial.print("[RNode] BW: "); Serial.print(lora_bw); Serial.println(" Hz");
+    Serial.print("[RNode] SF: "); Serial.print(lora_sf);
+    Serial.print(" CR: "); Serial.print(lora_cr);
+    Serial.print(" TXP: "); Serial.print(lora_txp); Serial.println(" dBm");
+  }
 
   if (op_mode != MODE_TNC) LoRa->setFrequency(0);
 
@@ -461,7 +480,7 @@ void setup() {
       RNS::Transport::set_transmit_packet_callback(on_transmit_packet);
 
       Serial.write("Starting RNS...\r\n");
-      RNS::loglevel(RNS::LOG_TRACE);
+      RNS::loglevel(RNS::LOG_WARNING);
       //RNS::loglevel(RNS::LOG_MEM);
 
       HEAD("Registering LoRA Interface...", RNS::LOG_TRACE);
@@ -520,6 +539,8 @@ void setup() {
     ERROR("RNS startup failed: " + std::string(e.what()));
   }
 #endif  // HAS_RNS
+
+  Serial.println("[RNode] Boot complete");
 }
 
 void lora_receive() {
@@ -700,11 +721,13 @@ bool startRadio() {
         // Indicate this failure over both the
         // serial port and with the onboard LEDs
         radio_error = true;
+        Serial.println("[RNode] ERROR: Radio init failed!");
         kiss_indicate_error(ERROR_INITRADIO);
         led_indicate_error(0);
         return false;
       } else {
         radio_online = true;
+        Serial.println("[RNode] Radio online");
 
         init_channel_stats();
 

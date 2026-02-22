@@ -1,95 +1,154 @@
 #!/bin/bash
 #
-# Flash script for Heltec Wireless Stick Lite V1 - microReticulum Transport Node Firmware
+# Flash script for Heltec Wireless Stick Lite V1 — RNode Firmware
 #
-# Usage: ./flash_wsl_v1.sh [PORT] [FREQ_BAND]
-#   PORT: Serial port (default: /dev/cu.usbserial-0001)
-#   FREQ_BAND: 433 or 868 (default: 868)
+# Usage: ./flash_wsl_v1.sh [PORT] [FREQ_BAND] [--no-tnc] [--erase]
+#   PORT:       Serial port (default: /dev/cu.usbserial-0001)
+#   FREQ_BAND:  433, 868, or 915 (default: 868)
+#   --no-tnc:   Skip TNC configuration (leave in normal/host-controlled mode)
+#   --erase:    Erase entire flash before uploading (clean install)
+#
+# Examples:
+#   ./flash_wsl_v1.sh                                    # Default port, 868 MHz, TNC enabled
+#   ./flash_wsl_v1.sh /dev/ttyUSB0 915                   # Custom port, 915 MHz
+#   ./flash_wsl_v1.sh /dev/cu.usbserial-0001 868 --erase # Clean flash first
 #
 
 set -e
 
-PORT="${1:-/dev/cu.usbserial-0001}"
-FREQ_BAND="${2:-868}"
+# --- Parse arguments ---
+PORT="/dev/cu.usbserial-0001"
+FREQ_BAND="868"
+SKIP_TNC=false
+DO_ERASE=false
 
-# Model codes
-if [ "$FREQ_BAND" == "433" ]; then
-    MODEL="cb"
-    FREQ="433000000"
-    echo "=== Configuring for 433 MHz band ==="
-else
-    MODEL="cc"
-    FREQ="868000000"
-    echo "=== Configuring for 868/915 MHz band ==="
-fi
+for arg in "$@"; do
+    case "$arg" in
+        --no-tnc)  SKIP_TNC=true ;;
+        --erase)   DO_ERASE=true ;;
+        /dev/*)    PORT="$arg" ;;
+        433|868|915) FREQ_BAND="$arg" ;;
+    esac
+done
 
+# --- Band configuration ---
+# Product 0xC5 = HWSL_V1
+# Model 0xCB = 433 MHz (SX1278) | Model 0xCC = 868/915 MHz (SX1276)
 PRODUCT="c5"
 HWREV="1"
 
+case "$FREQ_BAND" in
+    433)
+        MODEL="cb"
+        FREQ="433775000"
+        BW="125000"
+        echo "=== Configuring for 433 MHz band (SX1278) ==="
+        ;;
+    868)
+        MODEL="cc"
+        FREQ="869525000"
+        BW="250000"
+        echo "=== Configuring for 868 MHz EU ISM band (SX1276) ==="
+        ;;
+    915)
+        MODEL="cc"
+        FREQ="915000000"
+        BW="250000"
+        echo "=== Configuring for 915 MHz US ISM band (SX1276) ==="
+        ;;
+    *)
+        echo "ERROR: Invalid frequency band '$FREQ_BAND'. Use 433, 868, or 915."
+        exit 1
+        ;;
+esac
+
+ENV="heltec_wsl_v1"
+
 echo ""
-echo "Port: $PORT"
-echo "Product: 0x$PRODUCT (HWSL_V1)"
-echo "Model: 0x$MODEL"
+echo "  Port:    $PORT"
+echo "  Product: 0x$PRODUCT (HWSL_V1)"
+echo "  Model:   0x$MODEL"
+echo "  Band:    $FREQ_BAND MHz"
 echo ""
 
-# Step 1: Build firmware
-echo "=== Step 1: Building firmware ==="
-if command -v pio &> /dev/null; then
-    pio run -e heltec_wsl_v1
-    FIRMWARE_BIN=".pio/build/heltec_wsl_v1/firmware.bin"
-else
+# --- Check prerequisites ---
+if ! command -v pio &> /dev/null; then
     echo "ERROR: PlatformIO not found. Install with: pip install platformio"
     exit 1
 fi
 
-# Step 2: Upload firmware
-echo ""
-echo "=== Step 2: Uploading firmware ==="
-pio run -e heltec_wsl_v1 -t upload --upload-port "$PORT"
+if ! command -v rnodeconf &> /dev/null; then
+    echo "ERROR: rnodeconf not found. Install with: pip install rns"
+    exit 1
+fi
 
-sleep 2
-
-# Step 3: Provision EEPROM
+# --- Step 1: Build firmware ---
+echo "=== Step 1: Building firmware ==="
+pio run -e "$ENV"
 echo ""
-echo "=== Step 3: Provisioning EEPROM ==="
+
+# --- Step 2: Erase flash (optional) ---
+if [ "$DO_ERASE" = true ]; then
+    echo "=== Step 2: Erasing flash (clean install) ==="
+    pio run -e "$ENV" -t erase --upload-port "$PORT"
+    echo ""
+    echo "  Press RESET on the board, then press Enter to continue..."
+    read -r
+fi
+
+# --- Step 3: Upload firmware ---
+# PIO's post_upload script automatically sets the firmware hash via rnodeconf
+echo "=== Step 3: Uploading firmware + setting firmware hash ==="
+pio run -e "$ENV" -t upload --upload-port "$PORT"
+
+echo ""
+echo "  Waiting for device to boot..."
+sleep 5
+
+# --- Step 4: Provision EEPROM ---
+echo "=== Step 4: Provisioning EEPROM ==="
 rnodeconf "$PORT" --rom --product "$PRODUCT" --model "$MODEL" --hwrev "$HWREV"
 
-sleep 2
+sleep 3
 
-# Step 4: Set firmware hash
-echo ""
-echo "=== Step 4: Setting firmware hash ==="
-if [ -f "./partition_hashes" ]; then
-    HASH=$(./partition_hashes "$FIRMWARE_BIN")
-elif [ -f "../partition_hashes" ]; then
-    HASH=$(../partition_hashes "$FIRMWARE_BIN")
+# --- Step 5: Enable TNC mode ---
+if [ "$SKIP_TNC" = false ]; then
+    echo ""
+    echo "=== Step 5: Enabling TNC mode ==="
+    rnodeconf "$PORT" --tnc --freq "$FREQ" --bw "$BW" --sf 7 --cr 5 --txp 14
+    sleep 2
 else
-    echo "WARNING: partition_hashes script not found, skipping hash"
-    HASH=""
+    echo ""
+    echo "=== Step 5: Skipped (--no-tnc) — device left in normal mode ==="
 fi
 
-if [ -n "$HASH" ]; then
-    rnodeconf "$PORT" --firmware-hash "$HASH"
-fi
-
-sleep 2
-
-# Step 5: Enable TNC/Transport mode
-echo ""
-echo "=== Step 5: Enabling TNC mode (standalone transport) ==="
-rnodeconf "$PORT" --tnc --freq "$FREQ" --bw 125000 --sf 7 --cr 5 --txp 14
-
-sleep 2
-
-# Step 6: Verify
+# --- Step 6: Verify ---
 echo ""
 echo "=== Step 6: Verifying device ==="
 rnodeconf "$PORT" -i
 
 echo ""
 echo "=== Done! ==="
-echo "Your Heltec Wireless Stick Lite V1 is now a standalone Reticulum transport node."
-echo ""
-echo "To return to normal (host-controlled) mode:"
-echo "  rnodeconf $PORT -N"
+if [ "$SKIP_TNC" = false ]; then
+    echo "  Device is now an RNode transport node on $FREQ_BAND MHz."
+    echo ""
+    echo "  Add to ~/.reticulum/config:"
+    echo ""
+    echo "    [[WSL]]"
+    echo "      type = RNodeInterface"
+    echo "      interface_enabled = true"
+    echo "      port = $PORT"
+    echo "      frequency = $FREQ"
+    echo "      bandwidth = $BW"
+    echo "      txpower = 14"
+    echo "      spreadingfactor = 7"
+    echo "      codingrate = 5"
+    echo ""
+    echo "  To switch to normal (host-controlled) mode:"
+    echo "    rnodeconf $PORT --normal"
+else
+    echo "  Device provisioned in normal mode."
+    echo "  To enable TNC mode:"
+    echo "    rnodeconf $PORT --tnc --freq $FREQ --bw $BW --sf 7 --cr 5 --txp 14"
+fi
 echo ""

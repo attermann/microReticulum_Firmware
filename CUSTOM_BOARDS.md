@@ -95,6 +95,20 @@ An all-in-one ESP32 + SX1276 board — just connect an antenna and a Micro-USB c
 ./flash_wsl_v1.sh
 ```
 
+Or use `rnodeconf --autoinstall` (select [17]):
+
+```bash
+# Patch rnodeconf first (one-time)
+uv run python patch_rnodeconf_hwsl_v1.py
+
+# Then autoinstall — compiles, flashes, and provisions in one step
+cd <firmware-directory>
+uv run rnodeconf /dev/ttyUSB0 --autoinstall
+# → select [17] Heltec Wireless Stick Lite V1
+# → select band (433/868/915)
+# → PlatformIO compiles + flashes + provisions automatically
+```
+
 Or manually:
 
 ```bash
@@ -103,10 +117,24 @@ uv run pio run -e heltec_wsl_v1 --target upload
 
 ### Provisioning
 
+First patch rnodeconf to recognize the board (one-time):
+
 ```bash
-uv run rnodeconf /dev/ttyUSB0 --rom --product 0x11 --model 0x12 --hwrev 1
+uv run python patch_rnodeconf_hwsl_v1.py
+```
+
+Then provision (use `cb` for 433 MHz, `cc` for 868/915 MHz):
+
+```bash
+uv run rnodeconf /dev/ttyUSB0 --rom --product c5 --model cc --hwrev 1
 uv run rnodeconf /dev/ttyUSB0 --firmware-hash <hash>
 uv run rnodeconf /dev/ttyUSB0 --tnc --freq 869525000 --bw 125000 --sf 7 --cr 5 --txp 14
+```
+
+Or use the interactive installer:
+
+```bash
+uv run rnodeconf /dev/ttyUSB0 --autoinstall    # select [17] Heltec Wireless Stick Lite V1
 ```
 
 ---
@@ -118,6 +146,7 @@ uv run rnodeconf /dev/ttyUSB0 --tnc --freq 869525000 --bw 125000 --sf 7 --cr 5 -
 | `xiao_rnode_setup.py` | All-in-one XIAO setup wizard (build, flash, provision, configure) |
 | `flash_xiao_nrf52840.sh` | Build & flash XIAO firmware with optional provisioning |
 | `flash_wsl_v1.sh` | Build & flash Heltec WSL V1 firmware |
+| `patch_rnodeconf_hwsl_v1.py` | Patch rnodeconf to recognize HWSL V1 (product, models, autoinstall) |
 | `provision_xiao.py` | Direct EEPROM provisioning for XIAO (KISS protocol) |
 
 All Python scripts should be run via `uv run` to use the managed dependencies. If you prefer not to use `uv`, install dependencies manually with `pip install platformio rns adafruit-nrfutil`.

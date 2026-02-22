@@ -62,7 +62,7 @@ bool FileSystem::init() {
 #if FS_TYPE == FS_TYPE_SPIFFS
 		// Initialize SPIFFS
 		INFO("SPIFFS mounting filesystem");
-		if (!SPIFFS.begin(true, "")) {
+		if (!SPIFFS.begin(true, "/spiffs")) {
 			ERROR("SPIFFS filesystem mount failed");
 			return false;
 		}
@@ -70,7 +70,7 @@ bool FileSystem::init() {
 #elif FS_TYPE == FS_TYPE_LITTLEFS
 		// Initialize LittleFS
 		INFO("LittleFS mounting filesystem");
-		if (!LittleFS.begin(true, "")) {
+		if (!LittleFS.begin(true, "/littlefs")) {
 			ERROR("LittleFS filesystem mount failed");
 			return false;
 		}
