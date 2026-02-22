@@ -23,6 +23,12 @@
 #include <queue>
 #endif
 
+// GPIO Control via LXMF messaging
+#ifdef HAS_GPIO_CONTROL
+#include "GPIO_Control.h"
+GPIOControl gpio_control;
+#endif
+
 #include <Arduino.h>
 #include <SPI.h>
 #include "Utilities.h"
@@ -228,7 +234,43 @@ void setup() {
 
   Serial.println("");
   Serial.println("[RNode] Boot starting...");
-  Serial.print("[RNode] Board: HWSL_V1, Baud: ");
+  Serial.print("[RNode] Board: ");
+  #if BOARD_MODEL == BOARD_RNODE
+    Serial.print("RNODE");
+  #elif BOARD_MODEL == BOARD_HMBRW
+    Serial.print("HMBRW");
+  #elif BOARD_MODEL == BOARD_TBEAM
+    Serial.print("TBEAM");
+  #elif BOARD_MODEL == BOARD_HUZZAH32
+    Serial.print("HUZZAH32");
+  #elif BOARD_MODEL == BOARD_GENERIC_ESP32
+    Serial.print("GENERIC_ESP32");
+  #elif BOARD_MODEL == BOARD_LORA32_V1_0
+    Serial.print("LORA32_V1_0");
+  #elif BOARD_MODEL == BOARD_LORA32_V2_0
+    Serial.print("LORA32_V2_0");
+  #elif BOARD_MODEL == BOARD_LORA32_V2_1
+    Serial.print("LORA32_V2_1");
+  #elif BOARD_MODEL == BOARD_HELTEC32_V2
+    Serial.print("HELTEC32_V2");
+  #elif BOARD_MODEL == BOARD_HELTEC32_V3
+    Serial.print("HELTEC32_V3");
+  #elif BOARD_MODEL == BOARD_HWSL_V1
+    Serial.print("HWSL_V1");
+  #elif BOARD_MODEL == BOARD_RNODE_NG_20
+    Serial.print("RNODE_NG_20");
+  #elif BOARD_MODEL == BOARD_RNODE_NG_21
+    Serial.print("RNODE_NG_21");
+  #elif BOARD_MODEL == BOARD_RNODE_NG_22
+    Serial.print("RNODE_NG_22");
+  #elif BOARD_MODEL == BOARD_RAK4631
+    Serial.print("RAK4631");
+  #elif BOARD_MODEL == BOARD_XIAO_NRF52840
+    Serial.print("XIAO_NRF52840");
+  #else
+    Serial.print("UNKNOWN");
+  #endif
+  Serial.print(", Baud: ");
   Serial.println(serial_baudrate);
 
   // Configure WDT
@@ -429,6 +471,7 @@ void setup() {
 
 #ifdef HAS_RNS
   try {
+    Serial.printf("[HEAP] Before filesystem init: %u bytes free\r\n", ESP.getFreeHeap());
     // CBA Init filesystem
 #if defined(RNS_USE_FS)
     filesystem = new FileSystem();
@@ -440,6 +483,7 @@ void setup() {
 
     HEAD("Registering filesystem...", RNS::LOG_TRACE);
     RNS::Utilities::OS::register_filesystem(filesystem);
+    Serial.printf("[HEAP] After filesystem init: %u bytes free\r\n", ESP.getFreeHeap());
 
 #ifndef NDEBUG
     //filesystem.remove_directory("/cache");
@@ -480,6 +524,7 @@ void setup() {
       RNS::Transport::set_transmit_packet_callback(on_transmit_packet);
 
       Serial.write("Starting RNS...\r\n");
+      Serial.printf("[HEAP] Before RNS init: %u bytes free\r\n", ESP.getFreeHeap());
       RNS::loglevel(RNS::LOG_WARNING);
       //RNS::loglevel(RNS::LOG_MEM);
 
@@ -487,12 +532,17 @@ void setup() {
       lora_interface = new LoRaInterface();
       lora_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
       RNS::Transport::register_interface(lora_interface);
+      Serial.printf("[HEAP] After LoRa interface: %u bytes free\r\n", ESP.getFreeHeap());
 
       HEAD("Creating Reticulum instance...", RNS::LOG_TRACE);
+      Serial.printf("[HEAP] Before Reticulum(): %u bytes free\r\n", ESP.getFreeHeap());
       reticulum = RNS::Reticulum();
+      Serial.printf("[HEAP] After Reticulum(): %u bytes free\r\n", ESP.getFreeHeap());
       reticulum.transport_enabled(op_mode == MODE_TNC);
       reticulum.probe_destination_enabled(true);
+      Serial.printf("[HEAP] Before start(): %u bytes free\r\n", ESP.getFreeHeap());
       reticulum.start();
+      Serial.printf("[HEAP] After start(): %u bytes free\r\n", ESP.getFreeHeap());
 
       // CBA load/create local destination for admin node
 /*
@@ -514,6 +564,26 @@ void setup() {
       RNS::Destination destination(RNS::Transport::identity(), RNS::Type::Destination::IN, RNS::Type::Destination::SINGLE, "rnstransport", "local");
 
       HEAD("RNS is READY!", RNS::LOG_TRACE);
+
+      // GPIO Control: Initialize LXMF endpoint for GPIO commands
+      #ifdef HAS_GPIO_CONTROL
+      {
+          // Load or create persistent identity for LXMF GPIO endpoint
+          RNS::Identity gpio_identity = {RNS::Type::NONE};
+          std::string gpio_id_path = std::string(RNS::Reticulum::_storagepath) + "/gpio_identity";
+          if (RNS::Utilities::OS::file_exists(gpio_id_path.c_str())) {
+              gpio_identity = RNS::Identity::from_file(gpio_id_path.c_str());
+              Serial.println("[GPIO] Loaded identity from storage");
+          }
+          if (!gpio_identity) {
+              Serial.println("[GPIO] Creating new identity...");
+              gpio_identity = RNS::Identity();
+              gpio_identity.to_file(gpio_id_path.c_str());
+              Serial.println("[GPIO] New identity saved");
+          }
+          gpio_control.init(gpio_identity, "GPIO Node");
+      }
+      #endif
       if (op_mode == MODE_TNC) {
         HEAD("RNS transport mode is ENABLED", RNS::LOG_TRACE);
         TRACE(std::string("Frequency: " + std::to_string(lora_freq)) + " Hz");
@@ -1585,6 +1655,11 @@ void loop() {
 	  reticulum.loop();
   }
 #endif
+
+  // GPIO Control: periodic announces, message handling
+  #ifdef HAS_GPIO_CONTROL
+  gpio_control.loop();
+  #endif
 
   if (radio_online) {
     #if MCU_VARIANT == MCU_ESP32

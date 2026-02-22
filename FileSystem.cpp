@@ -1,10 +1,35 @@
 #include "FileSystem.h"
 #include "FileStream.h"
 #include "FileSystemType.h"
+#include <string>
 
 #ifdef HAS_RNS
 
 #include <Log.h>
+
+// ESP32 LittleFS CONFIG_LITTLEFS_OBJ_NAME_LEN=64, but the actual usable
+// limit is 62 chars due to off-by-one in the length check.
+// microReticulum uses 64-char SHA256 hex hashes as cache filenames.
+// Truncate to 32 chars (128 bits) — still astronomically collision-proof.
+#define FS_NAME_MAX 32
+static std::string truncate_filename(const char* file_path) {
+	std::string path(file_path);
+	size_t last_slash = path.rfind('/');
+	if (last_slash == std::string::npos) {
+		// No directory component — truncate entire path
+		if (path.length() > FS_NAME_MAX) {
+			path.resize(FS_NAME_MAX);
+		}
+	} else {
+		std::string dir = path.substr(0, last_slash + 1);
+		std::string name = path.substr(last_slash + 1);
+		if (name.length() > FS_NAME_MAX) {
+			name.resize(FS_NAME_MAX);
+		}
+		path = dir + name;
+	}
+	return path;
+}
 
 #if FS_TYPE == FS_TYPE_INTERNALFS
 
@@ -104,6 +129,15 @@ bool FileSystem::init() {
 		}
 		else {
 			remove_file("/test");
+		}
+
+		// Ensure required directories exist
+		// microReticulum stores identity/path caches in /cache/
+		const char* required_dirs[] = { "/cache" };
+		for (const char* dir : required_dirs) {
+			if (!directory_exists(dir)) {
+				create_directory(dir);
+			}
 		}
 	}
 	catch (std::exception& e) {
@@ -252,6 +286,8 @@ void FileSystem::dumpDir(const char* dir) {
 
 
 /*virtua*/ bool FileSystem::file_exists(const char* file_path) {
+	std::string safe_path = truncate_filename(file_path);
+	file_path = safe_path.c_str();
 	TRACEF("file_exists: checking for existence of file %s", file_path);
 /*
 #if FS_TYPE == FS_TYPE_INTERNALFS || FS_TYPE == FS_TYPE_FLASHFS
@@ -272,6 +308,8 @@ void FileSystem::dumpDir(const char* dir) {
 
 /*virtua*/ size_t FileSystem::read_file(const char* file_path, RNS::Bytes& data) {
 	TRACEF("read_file: reading from file %s", file_path);
+	std::string safe_path = truncate_filename(file_path);
+	file_path = safe_path.c_str();
 	size_t read = 0;
 #if FS_TYPE == FS_TYPE_INTERNALFS || FS_TYPE == FS_TYPE_FLASHFS
 	File file(FS);
@@ -297,6 +335,8 @@ void FileSystem::dumpDir(const char* dir) {
 }
 
 /*virtua*/ size_t FileSystem::write_file(const char* file_path, const RNS::Bytes& data) {
+	std::string safe_path = truncate_filename(file_path);
+	file_path = safe_path.c_str();
 	TRACEF("write_file: writing to file %s", file_path);
 	// CBA TODO Replace remove with working truncation
 	if (FS.exists(file_path)) {
@@ -307,7 +347,7 @@ void FileSystem::dumpDir(const char* dir) {
 	File file(FS);
 	if (file.open(file_path, FILE_O_WRITE)) {
 #else
-	File file = FS.open(file_path, FILE_WRITE);
+	File file = FS.open(file_path, FILE_WRITE, true);
 	if (file) {
 #endif
 		// Seek to beginning to overwrite
@@ -328,6 +368,8 @@ void FileSystem::dumpDir(const char* dir) {
 }
 
 /*virtual*/ RNS::FileStream FileSystem::open_file(const char* file_path, RNS::FileStream::MODE file_mode) {
+	std::string safe_path = truncate_filename(file_path);
+	file_path = safe_path.c_str();
 	TRACEF("open_file: opening file %s", file_path);
 #if FS_TYPE == FS_TYPE_INTERNALFS || FS_TYPE == FS_TYPE_FLASHFS
 	int mode;
@@ -379,10 +421,11 @@ void FileSystem::dumpDir(const char* dir) {
 	}
 	TRACEF("open_file: opening file %s in mode %s", file_path, mode);
 	// CBA Using copy constructor to obtain File*
-	File* file = new File(FS.open(file_path, mode));
-	RNS::FileStream stream(new FileStream(file));
+	bool create = (file_mode == RNS::FileStream::MODE_WRITE || file_mode == RNS::FileStream::MODE_APPEND);
+	File* file = new File(FS.open(file_path, mode, create));
 	if (file == nullptr || !(*file)) {
 		ERRORF("open_file: failed to open output file %s", file_path);
+		delete file;
 		return {RNS::Type::NONE};
 	}
 	TRACEF("open_file: successfully opened file %s", file_path);
@@ -391,11 +434,17 @@ void FileSystem::dumpDir(const char* dir) {
 }
 
 /*virtua*/ bool FileSystem::remove_file(const char* file_path) {
+	std::string safe_path = truncate_filename(file_path);
+	file_path = safe_path.c_str();
 	TRACEF("remove_file: removing file %s", file_path);
 	return FS.remove(file_path);
 }
 
 /*virtua*/ bool FileSystem::rename_file(const char* from_file_path, const char* to_file_path) {
+	std::string safe_from = truncate_filename(from_file_path);
+	std::string safe_to = truncate_filename(to_file_path);
+	from_file_path = safe_from.c_str();
+	to_file_path = safe_to.c_str();
 	TRACEF("rename_file: renaming file %s to %s", from_file_path, to_file_path);
 	return FS.rename(from_file_path, to_file_path);
 }
