@@ -18,6 +18,7 @@
 #include <Transport.h>
 #include <Reticulum.h>
 #include <Interface.h>
+#include <AutoInterface.h>
 #include <Log.h>
 #include <Bytes.h>
 #include <queue>
@@ -222,6 +223,8 @@ void on_transmit_packet(const RNS::Bytes& raw, const RNS::Interface& interface) 
 // CBA RNS
 RNS::Reticulum reticulum(RNS::Type::NONE);
 RNS::Interface lora_interface(RNS::Type::NONE);
+AutoInterface* auto_interface_impl = nullptr;
+RNS::Interface* auto_interface = nullptr;
 RNS::FileSystem filesystem(RNS::Type::NONE);
 #endif  // HAS_RNS
 
@@ -579,6 +582,16 @@ void setup() {
       lora_interface = new LoRaInterface();
       lora_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
       RNS::Transport::register_interface(lora_interface);
+
+      INFO("Initializing AutoInterface (IPv6 peer discovery)...");
+      auto_interface_impl = new AutoInterface("Auto");
+      auto_interface = new RNS::Interface(auto_interface_impl);
+      if (!auto_interface->start()) {
+        ERROR("Failed to initialize AutoInterface!");
+      } else {
+        INFO("AutoInterface started");
+        RNS::Transport::register_interface(*auto_interface);
+      }
 
       HEAD("Creating Reticulum instance...", RNS::LOG_TRACE);
       reticulum = RNS::Reticulum();
