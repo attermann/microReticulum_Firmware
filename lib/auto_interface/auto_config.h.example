@@ -1,0 +1,19 @@
+#pragma once
+
+// AutoInterface configuration - DO NOT COMMIT auto_config.h
+// Copy auto_config.h.example to auto_config.h and fill in your values
+
+// WiFi credentials (for ESP32)
+#define AUTO_WIFI_SSID "your_wifi_ssid"
+#define AUTO_WIFI_PASSWORD "your_wifi_password"
+
+// Network interface to use (optional - leave empty for auto-detect)
+// Examples: "eth0", "wlan0", "enp0s3"
+#define AUTO_INTERFACE_NAME ""
+
+// Group ID (default: "reticulum" - must match Python RNS config)
+#define AUTO_GROUP_ID "reticulum"
+
+// Ports (default values match Python RNS)
+#define AUTO_DISCOVERY_PORT 29716
+#define AUTO_DATA_PORT 42671
