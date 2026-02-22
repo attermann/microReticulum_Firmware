@@ -69,14 +69,14 @@ def post_upload(source, target, env):
         # device provisioning is incomplete and only currently appropriate for 915MHz T-Beam
         device_provision(env)
         firmware_hash(source, env)
-        # firmware pacakaging is incomplete due to missing console image
+        # firmware packaging is incomplete due to missing console image
         #firmware_package(env)
     elif (platform == "nordicnrf52"):
         time.sleep(5)
         # device provisioning is incomplete and only currently appropriate for 915MHz RAK4631
         device_provision(env)
         firmware_hash(source, env)
-        # firmware pacakaging is incomplete due to missing console image
+        # firmware packaging is incomplete due to missing console image
         #firmware_package(env)
 
 def post_clean(source, target, env):
@@ -120,12 +120,16 @@ def device_provision(env):
             env.Execute("rnodeconf --product e0 --model e9 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "lora32v21" | "lora32v21_local":
             env.Execute("rnodeconf --product b1 --model b9 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
+        case "heltec32v3":
+             env.Execute("rnodeconf --product c1 --model c5 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT")) # 433 MHz. For 868-923: --model ca
         case "heltec32v4" | "heltec32v4_local":
             env.Execute("rnodeconf --product b1 --model b9 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "rak4631" | "rak4631_local":
             env.Execute("rnodeconf --product 10 --model 12 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "heltec_t114" | "heltec_t114_local":
             env.Execute("rnodeconf --product c2 --model c7 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
+        case _:
+            print("WARN Device hasn't been provisioned! Add rnodeconf call to device_provision() in extra_script.py")
 
 def firmware_hash(source, env):
     # Firmware hash
