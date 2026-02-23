@@ -583,6 +583,7 @@ void setup() {
       lora_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
       RNS::Transport::register_interface(lora_interface);
 
+      #if HAS_WIFI
       INFO("Initializing AutoInterface (IPv6 peer discovery)...");
       auto_interface_impl = new AutoInterface("Auto");
       auto_interface = new RNS::Interface(auto_interface_impl);
@@ -592,6 +593,7 @@ void setup() {
         INFO("AutoInterface started");
         RNS::Transport::register_interface(*auto_interface);
       }
+      #endif
 
       HEAD("Creating Reticulum instance...", RNS::LOG_TRACE);
       reticulum = RNS::Reticulum();
