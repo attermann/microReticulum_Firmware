@@ -121,7 +121,7 @@ def device_provision(env):
         case "lora32v21" | "lora32v21_local":
             env.Execute("rnodeconf --product b1 --model b9 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "heltec32v4" | "heltec32v4_local":
-            env.Execute("rnodeconf --product b1 --model b9 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
+            env.Execute("rnodeconf --product c3 --model c8 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "rak4631" | "rak4631_local":
             env.Execute("rnodeconf --product 10 --model 12 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "heltec_t114" | "heltec_t114_local":
