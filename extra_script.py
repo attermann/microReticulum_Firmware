@@ -193,6 +193,8 @@ def firmware_package(env):
         zip_cmd += build_dir + "/" + env.subst("$PROGNAME") + ".bootloader "
         zip_cmd += build_dir + "/" + env.subst("$PROGNAME") + ".partitions "
         env.Execute(zip_cmd)
+        env.Execute("cp " + build_dir + "/" + env.subst("$PROGNAME") + ".elf " + project_dir + "/Debug/.")
+        env.Execute("cp " + build_dir + "/" + env.subst("$PROGNAME") + ".map " + project_dir + "/Debug/.")
     elif (platform == "nordicnrf52"):
         env.Execute("cp " + build_dir + "/" + env.subst("$PROGNAME") + ".zip " + project_dir + "/Release/.")
     env.Execute("python " + project_dir + "/release_hashes.py > " + project_dir + "/Release/release.json")
