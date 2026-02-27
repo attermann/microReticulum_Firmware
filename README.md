@@ -103,7 +103,6 @@ New firmware release procedure:
 
   4. Clean release directory
      ```
-     rm Release/*.zip
      rm Release/release.json
      ```
 
