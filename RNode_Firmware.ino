@@ -567,6 +567,14 @@ void setup() {
 
     // CBA Start RNS
     if (hw_ready) {
+
+      // Set sane memory limits based on hardware-specific availability
+      RNS::Transport::path_table_maxsize(50);
+      RNS::Transport::hashlist_maxsize(50);
+      RNS::Transport::max_pr_tags(32);
+      RNS::Identity::known_destinations_maxsize(50);
+
+      // Configure callbacks
       RNS::setLogCallback(&on_log);
       RNS::Transport::set_receive_packet_callback(on_receive_packet);
       RNS::Transport::set_transmit_packet_callback(on_transmit_packet);
