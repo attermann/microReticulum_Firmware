@@ -92,6 +92,16 @@ sx128x::sx128x() :
   _frequency(0), _txp(0), _sf(0x05), _bw(0x34), _cr(0x01), _packetIndex(0), _implicitHeaderMode(0), _payloadLength(255), _crcMode(0), _fifo_tx_addr_ptr(0),
   _fifo_rx_addr_ptr(0), _rxPacketLength(0), _preinit_done(false), _tcxo(false) { setTimeout(0); }
 
+void sx128x::handleDio0IfPending() {
+  if (_dio0_pending) {
+    _dio0_pending = false;
+    // Preserve Errata 16.1 logic: re-enter RX mode after every packet.
+    // Now runs safely in main loop context rather than from ISR.
+    if (getPacketValidity()) { receive(); handleDio0Rise(); }
+    else                     { receive(); }
+  }
+}
+
 bool ISR_VECT sx128x::getPacketValidity() {
     uint8_t buf[2];
     buf[0] = 0x00;
@@ -103,7 +113,10 @@ bool ISR_VECT sx128x::getPacketValidity() {
 }
 
 void ISR_VECT sx128x::onDio0Rise() {
-    BaseType_t int_status = taskENTER_CRITICAL_FROM_ISR();
+  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+    sx128x_modem._dio0_pending = true;
+  #else
+    // Non-FreeRTOS platforms: run handler directly from ISR.
     // On the SX1280, there is a bug which can cause the busy line
     // to remain high if a high amount of packets are received when
     // in continuous RX mode. This is documented as Errata 16.1 in
@@ -111,8 +124,7 @@ void ISR_VECT sx128x::onDio0Rise() {
     // Therefore, the modem is set into receive mode each time a packet is received.
     if (sx128x_modem.getPacketValidity()) { sx128x_modem.receive(); sx128x_modem.handleDio0Rise(); }
     else                                  { sx128x_modem.receive(); }
-
-    taskEXIT_CRITICAL_FROM_ISR(int_status);
+  #endif
 }
 
 void sx128x::handleDio0Rise() {
@@ -558,16 +570,20 @@ void sx128x::onReceive(void(*callback)(int)) {
 
     executeOpcode(OP_SET_IRQ_FLAGS_8X, buf, 8);
 
-    #ifdef SPI_HAS_NOTUSINGINTERRUPT
+    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+      #ifdef SPI_HAS_NOTUSINGINTERRUPT
         SPI.usingInterrupt(digitalPinToInterrupt(_dio0));
+      #endif
     #endif
 
     attachInterrupt(digitalPinToInterrupt(_dio0), onDio0Rise, RISING);
 
   } else {
     detachInterrupt(digitalPinToInterrupt(_dio0));
-    #ifdef SPI_HAS_NOTUSINGINTERRUPT
-      _spiModem->notUsingInterrupt(digitalPinToInterrupt(_dio0));
+    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+      #ifdef SPI_HAS_NOTUSINGINTERRUPT
+        _spiModem->notUsingInterrupt(digitalPinToInterrupt(_dio0));
+      #endif
     #endif
   }
 }

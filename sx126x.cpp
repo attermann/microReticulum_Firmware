@@ -580,15 +580,19 @@ void sx126x::onReceive(void(*callback)(int)){
     buf[7] = 0x00;
     executeOpcode(OP_SET_IRQ_FLAGS_6X, buf, 8);
 
-    #ifdef SPI_HAS_NOTUSINGINTERRUPT
-      SPI.usingInterrupt(digitalPinToInterrupt(_dio0));
+    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+      #ifdef SPI_HAS_NOTUSINGINTERRUPT
+        SPI.usingInterrupt(digitalPinToInterrupt(_dio0));
+      #endif
     #endif
     attachInterrupt(digitalPinToInterrupt(_dio0), sx126x::onDio0Rise, RISING);
 
   } else {
     detachInterrupt(digitalPinToInterrupt(_dio0));
-    #ifdef SPI_HAS_NOTUSINGINTERRUPT
-      SPI.notUsingInterrupt(digitalPinToInterrupt(_dio0));
+    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+      #ifdef SPI_HAS_NOTUSINGINTERRUPT
+        SPI.notUsingInterrupt(digitalPinToInterrupt(_dio0));
+      #endif
     #endif
   }
 }
@@ -786,6 +790,13 @@ void sx126x::dumpRegisters(Stream& out) {
   }
 }
 
+void sx126x::handleDio0IfPending() {
+  if (_dio0_pending) {
+    _dio0_pending = false;
+    handleDio0Rise();
+  }
+}
+
 void ISR_VECT sx126x::handleDio0Rise() {
   uint8_t buf[2];
   buf[0] = 0x00;
@@ -802,7 +813,13 @@ void ISR_VECT sx126x::handleDio0Rise() {
   }
 }
 
-void ISR_VECT sx126x::onDio0Rise() { sx126x_modem.handleDio0Rise(); }
+void ISR_VECT sx126x::onDio0Rise() {
+  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+    sx126x_modem._dio0_pending = true;
+  #else
+    sx126x_modem.handleDio0Rise();
+  #endif
+}
 void sx126x::setSPIFrequency(uint32_t frequency) { _spiSettings = SPISettings(frequency, MSBFIRST, SPI_MODE0); }
 void sx126x::enableCrc() { _crcMode = 1; setPacketParams(_preambleLength, _implicitHeaderMode, _payloadLength, _crcMode); }
 void sx126x::disableCrc() { _crcMode = 0; setPacketParams(_preambleLength, _implicitHeaderMode, _payloadLength, _crcMode); }
