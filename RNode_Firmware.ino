@@ -2015,6 +2015,7 @@ void loop() {
 
   if (radio_online) {
     #if MCU_VARIANT == MCU_ESP32
+      LoRa->handleDio0IfPending();
       modem_packet_t *modem_packet = NULL;
       if(modem_packet_queue && xQueueReceive(modem_packet_queue, &modem_packet, 0) == pdTRUE && modem_packet) {
         host_write_len = modem_packet->len;
@@ -2034,6 +2035,7 @@ void loop() {
       if (lt_airtime_limit != 0.0 && longterm_airtime >= lt_airtime_limit) airtime_lock = true;
 
     #elif MCU_VARIANT == MCU_NRF52
+      LoRa->handleDio0IfPending();
       modem_packet_t *modem_packet = NULL;
       if(modem_packet_queue && xQueueReceive(modem_packet_queue, &modem_packet, 0) == pdTRUE && modem_packet) {
         memcpy(&pbuf, modem_packet->data, modem_packet->len);

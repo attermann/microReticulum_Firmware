@@ -80,6 +80,7 @@ public:
 
   void setPins(int ss = LORA_DEFAULT_SS_PIN, int reset = LORA_DEFAULT_RESET_PIN, int dio0 = LORA_DEFAULT_DIO0_PIN, int busy = LORA_DEFAULT_BUSY_PIN);
   void setSPIFrequency(uint32_t frequency);
+  void handleDio0IfPending();
 
 private:
   void explicitHeaderMode();
@@ -106,6 +107,7 @@ private:
   int _packetIndex;
   int _implicitHeaderMode;
   bool _preinit_done;
+  volatile bool _dio0_pending;
   void (*_onReceive)(int);
 };
 

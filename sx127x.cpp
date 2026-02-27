@@ -311,17 +311,21 @@ void sx127x::onReceive(void(*callback)(int)) {
     pinMode(_dio0, INPUT);
     writeRegister(REG_DIO_MAPPING_1_7X, 0x00);
     
-    #ifdef SPI_HAS_NOTUSINGINTERRUPT
-      SPI.usingInterrupt(digitalPinToInterrupt(_dio0));
+    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+      #ifdef SPI_HAS_NOTUSINGINTERRUPT
+        SPI.usingInterrupt(digitalPinToInterrupt(_dio0));
+      #endif
     #endif
-    
+
     attachInterrupt(digitalPinToInterrupt(_dio0), sx127x::onDio0Rise, RISING);
-  
+
   } else {
     detachInterrupt(digitalPinToInterrupt(_dio0));
-    
-    #ifdef SPI_HAS_NOTUSINGINTERRUPT
-      SPI.notUsingInterrupt(digitalPinToInterrupt(_dio0));
+
+    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+      #ifdef SPI_HAS_NOTUSINGINTERRUPT
+        SPI.notUsingInterrupt(digitalPinToInterrupt(_dio0));
+      #endif
     #endif
   }
 }
@@ -482,6 +486,13 @@ void sx127x::optimizeModemSensitivity() {
   }
 }
 
+void sx127x::handleDio0IfPending() {
+  if (_dio0_pending) {
+    _dio0_pending = false;
+    handleDio0Rise();
+  }
+}
+
 void ISR_VECT sx127x::handleDio0Rise() {
   int irqFlags = readRegister(REG_IRQ_FLAGS_7X);
 
@@ -496,7 +507,13 @@ void ISR_VECT sx127x::handleDio0Rise() {
   }
 }
 
-void ISR_VECT sx127x::onDio0Rise() { sx127x_modem.handleDio0Rise(); }
+void ISR_VECT sx127x::onDio0Rise() {
+  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+    sx127x_modem._dio0_pending = true;
+  #else
+    sx127x_modem.handleDio0Rise();
+  #endif
+}
 
 sx127x sx127x_modem;
 

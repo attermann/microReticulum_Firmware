@@ -94,6 +94,7 @@ public:
   void setSPIFrequency(uint32_t frequency);
 
   void dumpRegisters(Stream& out);
+  void handleDio0IfPending();
 
 private:
   void explicitHeaderMode();
@@ -134,6 +135,7 @@ private:
   int _fifo_rx_addr_ptr;
   uint8_t _packet[256];
   bool _preinit_done;
+  volatile bool _dio0_pending;
   bool _tcxo;
   bool _radio_online;
   int _rxPacketLength;
