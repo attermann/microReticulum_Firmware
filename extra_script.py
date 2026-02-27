@@ -143,7 +143,7 @@ def firmware_package(env):
     build_dir = env.subst("$BUILD_DIR")
     print("build_dir:", build_dir)
     env.Execute("mkdir -p " + project_dir + "/Release")
-    env.Execute("mkdir -p " + project_dir + "/Deubg")
+    env.Execute("mkdir -p " + project_dir + "/Debug")
     if (platform == "espressif32"):
         #env.Execute("cp " + packages_dir + "/framework-arduinoespressif32/tools/partitions/boot_app0.bin " + build_dir + "/rnode_firmware_" + variant + ".boot_app0")
         env.Execute("cp ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin " + build_dir + "/rnode_firmware_" + variant + ".boot_app0")
