@@ -58,6 +58,7 @@ def pre_clean(env):
     env.Execute("rm -f " + project_dir + "/Release/" + env.subst("$PROGNAME") + ".zip")
     env.Execute("rm -f " + project_dir + "/Debug/" + env.subst("$PROGNAME") + ".elf")
     env.Execute("rm -f " + project_dir + "/Debug/" + env.subst("$PROGNAME") + ".map")
+    env.Execute("rm -f " + project_dir + "/Release/" + env.subst("$PROGNAME") + "_debug.zip")
 
 def full_clean(env):
     print("--- Executing full_clean steps...")
@@ -161,6 +162,11 @@ def firmware_package(env):
         env.Execute(zip_cmd)
         env.Execute("cp " + build_dir + "/" + env.subst("$PROGNAME") + ".elf " + project_dir + "/Debug/.")
         env.Execute("cp " + build_dir + "/" + env.subst("$PROGNAME") + ".map " + project_dir + "/Debug/.")
+        zip_cmd = "zip --junk-paths "
+        zip_cmd += project_dir + "/Release/rnode_firmware_" + variant + "_debug.zip "
+        zip_cmd += build_dir + "/" + env.subst("$PROGNAME") + ".elf "
+        zip_cmd += build_dir + "/" + env.subst("$PROGNAME") + ".map "
+        env.Execute(zip_cmd)
     elif (platform == "nordicnrf52"):
         env.Execute("cp " + build_dir + "/" + env.subst("$PROGNAME") + ".zip " + project_dir + "/Release/.")
     env.Execute("python " + project_dir + "/release_hashes.py > " + project_dir + "/Release/release.json")

@@ -113,7 +113,15 @@ protected:
 	virtual void handle_incoming(const RNS::Bytes& data) {
     TRACEF("LoRaInterface.handle_incoming: (%u bytes) data: %s", data.size(), data.toHex().c_str());
     TRACE("LoRaInterface.handle_incoming: sending packet to rns...");
-    InterfaceImpl::handle_incoming(data);
+    try {
+      InterfaceImpl::handle_incoming(data);
+    }
+    catch (const std::bad_alloc&) {
+      ERROR("LoRaInterface::handle_incoming: bad_alloc - out of memory");
+    }
+    catch (std::exception& e) {
+      ERRORF("LoRaInterface::handle_incoming: %s", e.what());
+    }
   }
 	virtual void send_outgoing(const RNS::Bytes& data) {
     // CBA NOTE header will be addded later by transmit function
@@ -148,23 +156,32 @@ protected:
 
     }
     // Perform post-send housekeeping
-    InterfaceImpl::handle_outgoing(data);
+    try {
+      InterfaceImpl::handle_outgoing(data);
+    }
+    catch (const std::bad_alloc&) {
+      ERROR("LoRaInterface::handle_outgoing: bad_alloc - out of memory");
+    }
+    catch (std::exception& e) {
+      ERRORF("LoRaInterface::handle_outgoing: %s", e.what());
+    }
   }
 };
 
 // CBA logger callback
 void on_log(const char* msg, RNS::LogLevel level) {
-/*
+  // Using individual Serial.print statements to avoid memory allocation for String
 	Serial.print(RNS::getTimeString());
 	Serial.print(" [");
 	Serial.print(RNS::getLevelName(level));
 	Serial.print("] ");
 	Serial.println(msg);
 	Serial.flush();
-*/
+/*
   String line = RNS::getTimeString() + String(" [") + RNS::getLevelName(level) + "] " + msg + "\n";
 	Serial.print(line);
 	Serial.flush();
+*/
 
 #ifdef HAS_SDCARD
 	File file = SD.open("/logfile.txt", FILE_APPEND);
@@ -561,7 +578,7 @@ void setup() {
     TRACE("FILE: destination_table");
     RNS::Bytes content;
     if (filesystem.read_file("/destination_table", content) > 0) {
-      TRACE(content.toString() + "\r\n");
+      TRACE(content.toString().c_str());
     }
 #endif  // NDEBUG
 
@@ -570,6 +587,7 @@ void setup() {
 
       // Set sane memory limits based on hardware-specific availability
       RNS::Transport::path_table_maxsize(50);
+      RNS::Transport::announce_table_maxsize(50);
       RNS::Transport::hashlist_maxsize(50);
       RNS::Transport::max_pr_tags(32);
       RNS::Identity::known_destinations_maxsize(50);
@@ -580,8 +598,11 @@ void setup() {
       RNS::Transport::set_transmit_packet_callback(on_transmit_packet);
 
       Serial.write("Starting RNS...\r\n");
+#if defined(RNS_MEM_LOG)
+      RNS::loglevel(RNS::LOG_MEM);
+#else
       RNS::loglevel(RNS::LOG_TRACE);
-      //RNS::loglevel(RNS::LOG_MEM);
+#endif
 
       HEAD("Registering LoRA Interface...", RNS::LOG_TRACE);
       lora_interface = new LoRaInterface();
@@ -635,8 +656,11 @@ void setup() {
   		//reticulum.clear_caches();
     }
   }
+  catch (const std::bad_alloc&) {
+    ERROR("RNS startup failed: bad_alloc - out of memory");
+  }
   catch (std::exception& e) {
-    ERROR("RNS startup failed: " + std::string(e.what()));
+    ERRORF("RNS startup failed: %s", e.what());
   }
 #endif  // HAS_RNS
 }
@@ -2017,7 +2041,15 @@ void loop() {
 #ifdef HAS_RNS
   // CBA
   if (reticulum) {
-	  reticulum.loop();
+    try {
+      reticulum.loop();
+    }
+    catch (const std::bad_alloc&) {
+      ERROR("RNS loop failed: bad_alloc - out of memory");
+    }
+    catch (std::exception& e) {
+      ERRORF("RNS loop failed: %s", e.what());
+    }
   }
 #endif
 

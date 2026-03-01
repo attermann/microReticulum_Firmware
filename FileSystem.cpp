@@ -124,7 +124,7 @@ bool FileSystem::format() {
 		return true;
 	}
 	catch (std::exception& e) {
-		ERROR("FileSystem reformat Exception: " + std::string(e.what()));
+		ERRORF("FileSystem reformat Exception: %s", e.what());
 	}
 	return false;
 }
@@ -154,7 +154,7 @@ bool FileSystem::reformat() {
 		return true;
 	}
 	catch (std::exception& e) {
-		ERROR("FileSystem reformat Exception: " + std::string(e.what()));
+		ERRORF("FileSystem reformat Exception: %s", e.what());
 	}
 	return false;
 }
@@ -417,7 +417,7 @@ void FileSystem::dumpDir(const char* dir) {
 /*virtua*/ bool FileSystem::create_directory(const char* directory_path) {
 	TRACEF("create_directory: creating directory %s", directory_path);
 	if (!FS.mkdir(directory_path)) {
-		ERROR("create_directory: failed to create directory " + std::string(directory_path));
+		ERRORF("create_directory: failed to create directory %s", directory_path);
 		return false;
 	}
 	return true;
@@ -430,7 +430,7 @@ void FileSystem::dumpDir(const char* dir) {
 #else
 	if (!FS.rmdir(directory_path)) {
 #endif
-		ERROR("remove_directory: failed to remove directory " + std::string(directory_path));
+		ERRORF("remove_directory: failed to remove directory %s", directory_path);
 		return false;
 	}
 	return true;
@@ -441,7 +441,7 @@ void FileSystem::dumpDir(const char* dir) {
 	std::list<std::string> files;
 	File root = FS.open(directory_path);
 	if (!root) {
-		ERROR("list_directory: failed to open directory " + std::string(directory_path));
+		ERRORF("list_directory: failed to open directory %s", directory_path);
 		return files;
 	}
 	File file = root.openNextFile();
