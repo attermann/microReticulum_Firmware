@@ -304,6 +304,7 @@
     #elif BOARD_MODEL == BOARD_LORA32_V2_1
       #define HAS_DISPLAY true
       #define HAS_BLUETOOTH true
+	  #define HAS_WIFI true
       #define HAS_PMU true
       #define HAS_CONSOLE true
       #define HAS_EEPROM true
