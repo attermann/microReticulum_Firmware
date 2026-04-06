@@ -95,6 +95,7 @@ public:
 		_IN = true;
 		_OUT = true;
 		_HW_MTU = 508;
+		_DEFAULT_IFAC_SIZE = 8;
 	}
 	LoRaInterface() : LoRaInterface("LoRaInterface") {}
 	virtual ~LoRaInterface() {
@@ -661,24 +662,39 @@ void setup() {
       RNS::loglevel(RNS::LOG_TRACE);
 #endif
 
+      HEAD("Creating Reticulum instance...", RNS::LOG_TRACE);
+      reticulum = RNS::Reticulum();
+      reticulum.transport_enabled(op_mode == MODE_TNC);
+      reticulum.probe_destination_enabled(true);
+
+      char ifac_netname[33] = {0};
+      char ifac_netkey[33] = {0};
+      uint8_t ifac_size = 0;
+
+#ifdef RNS_USE_IFAC
+      for (uint8_t i = 0; i < 32; i++) {
+        ifac_netname[i] = EEPROM.read(config_addr(ADDR_CONF_IFAC_NETNAME+i));
+        if (ifac_netname[i] == 0xFF) ifac_netname[i] = 0x00;
+      }
+      for (uint8_t i = 0; i < 32; i++) {
+        ifac_netkey[i] = EEPROM.read(config_addr(ADDR_CONF_IFAC_NETKEY+i));
+        if (ifac_netkey[i] == 0xFF) ifac_netkey[i] = 0x00;
+      }
+      ifac_size = EEPROM.read(config_addr(ADDR_CONF_IFAC_SIZE));
+#endif
+
       HEAD("Registering LoRA Interface...", RNS::LOG_TRACE);
       lora_interface = new LoRaInterface();
-      lora_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
-      RNS::Transport::register_interface(lora_interface);
+      reticulum._add_interface(lora_interface, RNS::Type::Interface::MODE_GATEWAY, ifac_size, std::string(ifac_netname), std::string(ifac_netkey));
       TRACEF("LoRaInterface hash: %s", lora_interface.get_hash().toHex().c_str());
 
 #if HAS_WIFI && defined(UDP_TRANSPORT)
       HEAD("Registering UDP Interface...", RNS::LOG_TRACE);
       udp_interface = new UDPInterface();
-      udp_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
-      RNS::Transport::register_interface(udp_interface);
+      reticulum._add_interface(udp_interface, RNS::Type::Interface::MODE_GATEWAY, ifac_size, std::string(ifac_netname), std::string(ifac_netkey));
       TRACEF("UDPInterface hash: %s", udp_interface.get_hash().toHex().c_str());
 #endif
 
-      HEAD("Creating Reticulum instance...", RNS::LOG_TRACE);
-      reticulum = RNS::Reticulum();
-      reticulum.transport_enabled(op_mode == MODE_TNC);
-      reticulum.probe_destination_enabled(true);
       reticulum.start();
 
       // Set loop callback only after the Reticulum instance is started
@@ -1671,6 +1687,56 @@ void serial_callback(uint8_t sbyte) {
         }
 
         if (frame_len == 4) { for (uint8_t i = 0; i<4; i++) { eeprom_update(config_addr(ADDR_CONF_NM+i), cmdbuf[i]); } }
+      #endif
+    } else if (command == CMD_IFAC_NETNAME) {
+      #if defined(RNS_USE_IFAC) && defined(CONFIG_OFFSET)
+        if (sbyte == FESC) { ESCAPE = true; }
+        else {
+          if (ESCAPE) {
+            if (sbyte == TFEND) sbyte = FEND;
+            if (sbyte == TFESC) sbyte = FESC;
+            ESCAPE = false;
+          }
+          if (frame_len < CMD_L) cmdbuf[frame_len++] = sbyte;
+        }
+
+        if (frame_len == 1 && cmdbuf[0] == 0xFF) {
+          kiss_indicate_ifac_netname();
+        } else if (sbyte == 0x00) {
+          for (uint8_t i = 0; i < 33; i++) {
+            if (i < frame_len && i < 32) { eeprom_update(config_addr(ADDR_CONF_IFAC_NETNAME+i), cmdbuf[i]); }
+            else                         { eeprom_update(config_addr(ADDR_CONF_IFAC_NETNAME+i), 0x00); }
+          }
+        }
+      #endif
+    } else if (command == CMD_IFAC_NETKEY) {
+      #if defined(RNS_USE_IFAC) && defined(CONFIG_OFFSET)
+        if (sbyte == FESC) { ESCAPE = true; }
+        else {
+          if (ESCAPE) {
+            if (sbyte == TFEND) sbyte = FEND;
+            if (sbyte == TFESC) sbyte = FESC;
+            ESCAPE = false;
+          }
+          if (frame_len < CMD_L) cmdbuf[frame_len++] = sbyte;
+        }
+
+        if (frame_len == 1 && cmdbuf[0] == 0xFF) {
+          kiss_indicate_ifac_netkey();
+        } else if (sbyte == 0x00) {
+          for (uint8_t i = 0; i < 33; i++) {
+            if (i < frame_len && i < 32) { eeprom_update(config_addr(ADDR_CONF_IFAC_NETKEY+i), cmdbuf[i]); }
+            else                         { eeprom_update(config_addr(ADDR_CONF_IFAC_NETKEY+i), 0x00); }
+          }
+        }
+      #endif
+    } else if (command == CMD_IFAC_SIZE) {
+      #if defined(RNS_USE_IFAC) && defined(CONFIG_OFFSET)
+        if (sbyte == 0xFF) {
+          kiss_indicate_ifac_size();
+        } else {
+          eeprom_update(config_addr(ADDR_CONF_IFAC_SIZE), sbyte);
+        }
       #endif
     } else if (command == CMD_BT_CTRL) {
       #if HAS_BLUETOOTH || HAS_BLE
