@@ -113,6 +113,11 @@
   #define BOARD_RAK4631       0x51
   #define MODEL_11            0x11 // RAK4631, 433 Mhz
   #define MODEL_12            0x12 // RAK4631, 868 Mhz
+  #define BOARD_RAK3401       0x52 // RAK3401 + RAK13302 (nRF52840 + SX1262 + SKY66122 1W FEM)
+  #define MODEL_13            0x13 // RAK3401 + RAK13302, 433 MHz
+  #define MODEL_14            0x14 // RAK3401 + RAK13302, 868 MHz
+
+  #define PIN_3V3_EN          34   // WB_IO2 — 5V boost + 3V3_S rail (RAK13302 FEM)
 
   #define PRODUCT_HMBRW       0xF0
   #define BOARD_HMBRW         0x32
@@ -140,7 +145,7 @@
   #endif
 
   #ifndef MODEM
-    #if BOARD_MODEL == BOARD_RAK4631
+    #if BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401
       #define MODEM SX1262
     #elif BOARD_MODEL == BOARD_GENERIC_NRF52
       #define MODEM SX1262
@@ -751,6 +756,58 @@
       const int pin_led_rx = LED_BLUE;
       const int pin_led_tx = LED_GREEN;
       const int pin_tcxo_enable = -1;
+
+    #elif BOARD_MODEL == BOARD_RAK3401
+      #define HAS_EEPROM false
+      #define HAS_DISPLAY false      // RAK19007 base board has no display in this kit
+      #define HAS_BLUETOOTH false
+      #define HAS_BLE true
+      #define HAS_CONSOLE false
+      #define HAS_PMU false
+      #define HAS_NP false
+      #define HAS_SD false
+      #define HAS_TCXO true
+      #define HAS_RF_SWITCH_RX_TX true
+      #define HAS_BUSY true
+      #define HAS_INPUT true
+      #define DIO2_AS_RF_SWITCH true   // SKY66122 CTX driven by DIO2 (hardware TX/RX switch)
+      #define CONFIG_UART_BUFFER_SIZE 6144
+      #define CONFIG_QUEUE_SIZE 6144
+      #define CONFIG_QUEUE_MAX_LENGTH 200
+      #define EEPROM_SIZE 296
+      #define EEPROM_OFFSET EEPROM_SIZE-EEPROM_RESERVED
+      #define BLE_MANUFACTURER "RAK Wireless"
+      #define BLE_MODEL "RAK3401"
+
+      // RAK13302 SKY66122-11 FEM: +8 dBm PA gain (constant per datasheet),
+      // 30 dBm (1 W) max output. Gain values from Meshtastic config.
+      // LORA_LNA_GAIN corrects RSSI for the +11-13 dB LNA (midpoint 12).
+      #define HAS_LORA_PA    true
+      #define PA_MAX_OUTPUT  30
+      #define PA_GAIN_POINTS 22
+      #define PA_GAIN_VALUES 7, 8, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 8
+
+      #define HAS_LORA_LNA   true
+      #define LORA_LNA_GAIN  12
+      #define LORA_LNA_GVT   8
+
+      // RAK13302 SX1262 pins — all on P0 bus.
+      const int pin_rxen = 21;         // IO3 = SKY66122 CSD+CPS FEM power enable (stays HIGH)
+                                       // See also SX126X_POWER_EN in variant.h — same pin.
+      const int pin_txen = -1;         // CTX via DIO2_AS_RF_SWITCH (SX1262 hardware control)
+      const int pin_reset = 4;
+      const int pin_cs = 26;
+      const int pin_sclk = 3;
+      const int pin_mosi = 30;
+      const int pin_miso = 29;
+      const int pin_busy = 9;
+      const int pin_dio = 10;
+      const int pin_led_rx = LED_BLUE;
+      const int pin_led_tx = LED_GREEN;
+      const int pin_tcxo_enable = -1;  // TCXO powered by DIO3 via enableTCXO(), not a GPIO
+
+      // User Input Button
+      const int pin_btn_usr1 = 31;   // AIN1 (WB_A1) on J11 header / connector pin 22
 
     #elif BOARD_MODEL == BOARD_TECHO
       #define _PINNUM(port, pin) ((port) * 32 + (pin))
