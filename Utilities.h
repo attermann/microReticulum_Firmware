@@ -24,7 +24,7 @@
     using namespace Adafruit_LittleFS_Namespace;
     #define EEPROM_FILE "eeprom"
     bool file_exists = false;
-    int written_bytes = 4;
+    int written_bytes = 0;
     File file(InternalFS);
 #endif
 #include <stddef.h>
@@ -376,6 +376,14 @@ extern RNS::Reticulum reticulum;
 		void led_tx_off() { digitalWrite(pin_led_tx, LED_OFF); }
 		void led_id_on()  { }
 		void led_id_off() { }
+  #elif BOARD_MODEL == BOARD_XIAO_NRF52840
+    // XIAO LEDs are active-low (LED_ON=LOW, LED_OFF=HIGH); rx and tx share LED_RED
+    void led_rx_on()  { digitalWrite(pin_led_rx, LED_ON); }
+    void led_rx_off() { digitalWrite(pin_led_rx, LED_OFF); }
+    void led_tx_on()  { digitalWrite(pin_led_tx, LED_ON); }
+    void led_tx_off() { digitalWrite(pin_led_tx, LED_OFF); }
+    void led_id_on()  { }
+    void led_id_off() { }
 	#endif
 #endif
 
@@ -1693,6 +1701,8 @@ bool eeprom_model_valid() {
   if (model == MODEL_C6 || model == MODEL_C7) {
   #elif BOARD_MODEL == BOARD_RAK4631
   if (model == MODEL_11 || model == MODEL_12) {
+  #elif BOARD_MODEL == BOARD_XIAO_NRF52840
+  if (model == MODEL_11 || model == MODEL_12) {
 	#elif BOARD_MODEL == BOARD_HUZZAH32
 	if (model == MODEL_FF) {
 	#elif BOARD_MODEL == BOARD_GENERIC_ESP32
@@ -1846,7 +1856,7 @@ void eeprom_conf_load() {
 }
 
 void eeprom_conf_save() {
-	if (hw_ready && radio_online) {
+	if (hw_ready) {
 		eeprom_update(eeprom_addr(ADDR_CONF_SF), lora_sf);
 		eeprom_update(eeprom_addr(ADDR_CONF_CR), lora_cr);
 		eeprom_update(eeprom_addr(ADDR_CONF_TXP), lora_txp);

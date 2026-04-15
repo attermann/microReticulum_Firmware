@@ -21,6 +21,7 @@
 #define OP_STANDBY_6X               0x80
 #define OP_TX_6X                    0x83
 #define OP_RX_6X                    0x82
+#define OP_RX_DUTY_CYCLE_6X         0x94
 #define OP_PA_CONFIG_6X             0x95
 #define OP_SET_IRQ_FLAGS_6X         0x08 // Also provides info such as
                                          // preamble detection, etc for
@@ -119,7 +120,10 @@ sx126x::sx126x() :
   _fifo_rx_addr_ptr(0),
   _packet({0}),
   _preinit_done(false),
-  _onReceive(NULL)
+  _onReceive(NULL),
+  _rxDutyCycleEnabled(false),
+  _rxPeriodUs(0),
+  _sleepPeriodUs(0)
 { setTimeout(0); }
 
 bool sx126x::preInit() {
@@ -445,18 +449,29 @@ bool sx126x::dcd() {
   bool header_detected = false;
   bool carrier_detected = false;
 
-  if ((buf[1] & IRQ_HEADER_DET_MASK_6X) != 0) { header_detected = true; carrier_detected = true; }
-  else { header_detected = false; }
+  if ((buf[1] & IRQ_HEADER_DET_MASK_6X) != 0) {
+    header_detected = true; carrier_detected = true;
+    // Keep the software timer alive so it doesn't expire mid-reception.
+    preamble_detected_at = now;
+  } else { header_detected = false; }
 
   if ((buf[1] & IRQ_PREAMBLE_DET_MASK_6X) != 0) {
     carrier_detected = true;
     if (preamble_detected_at == 0) { preamble_detected_at = now; }
-    if (now - preamble_detected_at > lora_preamble_time_ms + lora_header_time_ms) {
+    // Clear preamble IRQ bit immediately. The SX1262 preamble IRQ is not
+    // routed to DIO1, so this bit is never cleared by handleDio0Rise().
+    // Without immediate clearing, spurious detections latch for up to 147ms
+    // each; under high-frequency CSMA polling the medium appears perpetually
+    // busy. The software timer below preserves the correct busy window.
+    uint8_t clearbuf[2] = {0};
+    clearbuf[1] = IRQ_PREAMBLE_DET_MASK_6X;
+    executeOpcode(OP_CLEAR_IRQ_STATUS_6X, clearbuf, 2);
+  } else if (!header_detected && preamble_detected_at != 0) {
+    if (now - preamble_detected_at < (uint32_t)(lora_preamble_time_ms + lora_header_time_ms)) {
+      carrier_detected = true; // Still within expected preamble+header window
+    } else {
       preamble_detected_at = 0;
-      if (!header_detected) { false_preamble_detected = true; }
-      uint8_t clearbuf[2] = {0};
-      clearbuf[1] = IRQ_PREAMBLE_DET_MASK_6X;
-      executeOpcode(OP_CLEAR_IRQ_STATUS_6X, clearbuf, 2);
+      false_preamble_detected = true;
     }
   }
 
@@ -631,7 +646,47 @@ void sx126x::standby() {
   executeOpcode(OP_STANDBY_6X, &byte, 1); 
 }
 
-void sx126x::sleep() { uint8_t byte = 0x00; executeOpcode(OP_SLEEP_6X, &byte, 1); }
+void sx126x::sleep() { uint8_t byte = 0x00; executeOpcode(OP_SLEEP_6X, &byte, 1); _rxDutyCycleEnabled = false; }
+
+void sx126x::setRxDutyCycle(uint32_t rxPeriodUs, uint32_t sleepPeriodUs) {
+  _rxPeriodUs = rxPeriodUs;
+  _sleepPeriodUs = sleepPeriodUs;
+}
+
+void sx126x::startRxDutyCycle() {
+  if (_rxPeriodUs == 0 || _sleepPeriodUs == 0) {
+    setRxDutyCycleParams(_sf, getSignalBandwidth(), _preambleLength);
+  }
+  explicitHeaderMode();
+  if (_rxen != -1) { rxAntEnable(); }
+  // Convert µs to 15.625µs steps (64 kHz RC clock): steps = us * 64 / 1000
+  uint32_t rxPeriod    = (_rxPeriodUs    * 64) / 1000;
+  uint32_t sleepPeriod = (_sleepPeriodUs * 64) / 1000;
+  uint8_t buf[6];
+  buf[0] = (rxPeriod >> 16) & 0xFF;
+  buf[1] = (rxPeriod >>  8) & 0xFF;
+  buf[2] =  rxPeriod        & 0xFF;
+  buf[3] = (sleepPeriod >> 16) & 0xFF;
+  buf[4] = (sleepPeriod >>  8) & 0xFF;
+  buf[5] =  sleepPeriod        & 0xFF;
+  executeOpcode(OP_RX_DUTY_CYCLE_6X, buf, 6);
+  _rxDutyCycleEnabled = true;
+}
+
+void sx126x::stopRxDutyCycle() { standby(); _rxDutyCycleEnabled = false; }
+
+bool sx126x::isRxDutyCycleEnabled() { return _rxDutyCycleEnabled; }
+
+void sx126x::setRxDutyCycleParams(uint8_t sf, long bw, uint16_t preambleSymbols) {
+  // Symbol time in µs = (2^SF * 1e6) / BW
+  uint32_t symbolTimeUs = ((uint32_t)1 << sf) * 1000000UL / bw;
+  // RX window: 2 symbols + 5ms TCXO warmup
+  _rxPeriodUs = (2 * symbolTimeUs) + 5000;
+  // Sleep: (preamble - 3) symbols so we always wake during preamble
+  _sleepPeriodUs = (preambleSymbols > 4) ? (preambleSymbols - 3) * symbolTimeUs : symbolTimeUs;
+  if (_rxPeriodUs    < 5000) _rxPeriodUs    = 5000;
+  if (_sleepPeriodUs < 1000) _sleepPeriodUs = 1000;
+}
 
 void sx126x::enableTCXO() {
   #if HAS_TCXO
@@ -650,6 +705,8 @@ void sx126x::enableTCXO() {
     #elif BOARD_MODEL == BOARD_TECHO
       uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
     #elif BOARD_MODEL == BOARD_HELTEC32_V4
+      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
+    #elif BOARD_MODEL == BOARD_XIAO_NRF52840
       uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
     #endif
     executeOpcode(OP_DIO3_TCXO_CTRL_6X, buf, 4);

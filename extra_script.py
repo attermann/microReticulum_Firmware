@@ -24,6 +24,9 @@ def pre_upload(source, target, env):
     print("*** Executing pre_upload steps...")
     # do some actions
 
+def is_nrf52_platform(platform):
+    return "nordicnrf52" in platform or "seeedboards" in platform or "platform-seeedboards" in platform
+
 def post_upload(source, target, env):
     print("*** Executing post_upload steps...")
     print("Platform:", env.GetProjectOption("platform"))
@@ -40,9 +43,8 @@ def post_upload(source, target, env):
         firmware_hash(source, env)
         # firmware pacakaging is incomplete due to missing console image
         #firmware_package(env)
-    elif ("nordicnrf52" in platform):
+    elif is_nrf52_platform(platform):
         time.sleep(5)
-        # device provisioning is incomplete and only currently appropriate for 915MHz RAK4631
         device_provision(env)
         firmware_hash(source, env)
         # firmware pacakaging is incomplete due to missing console image
@@ -93,6 +95,10 @@ def device_provision(env):
             env.Execute("rnodeconf --product 10 --model 12 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "heltec_t114" | "heltec_t114_local":
             env.Execute("rnodeconf --product c2 --model c7 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
+        case "xiao_nrf52840" | "xiao_nrf52840_lowpower":
+            # No dedicated rnodeconf product ID for XIAO nRF52840 yet; reuse RAK4631
+            # product/model bytes (0x10/0x12) — same MCU+SX1262 stack, 868/915 MHz band
+            env.Execute("rnodeconf --product 10 --model 12 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case _:
             print(f"Unknown board variant {variant}, can not provision device!")
 
@@ -102,10 +108,9 @@ def firmware_hash(source, env):
     source_file = source[0].get_abspath()
     platform = env.GetProjectOption("platform")
     print("Platform:", platform)
-    if (platform == "nordicnrf52"):
+    if is_nrf52_platform(platform):
         build_dir = env.subst("$BUILD_DIR")
         env.Execute("cd " + build_dir + "; unzip -o " + source_file + " " + env.subst("$PROGNAME") + ".bin")
-        #source_file.replace(".zip", ".bin")
         source_file = build_dir + "/" + env.subst("$PROGNAME") + ".bin";
         print("source_file:", source_file)
         firmware_data = open(source_file, "rb").read()
@@ -169,7 +174,7 @@ def firmware_package(env):
         zip_cmd += build_dir + "/" + env.subst("$PROGNAME") + ".elf "
         zip_cmd += build_dir + "/" + env.subst("$PROGNAME") + ".map "
         env.Execute(zip_cmd)
-    elif (platform == "nordicnrf52"):
+    elif is_nrf52_platform(platform):
         env.Execute("cp " + build_dir + "/" + env.subst("$PROGNAME") + ".zip " + project_dir + "/Release/.")
     env.Execute("python " + project_dir + "/release_hashes.py > " + project_dir + "/Release/release.json")
 
@@ -205,7 +210,7 @@ if (platform == "espressif32"):
         title="Package",
         description="Package esp32 firmware for delivery"
     )
-elif (platform == "nordicnrf52"):
+elif is_nrf52_platform(platform):
     # remove --specs=nano.specs to allow exceptions to work
     if '--specs=nano.specs' in env['LINKFLAGS']:
         env['LINKFLAGS'].remove('--specs=nano.specs')
