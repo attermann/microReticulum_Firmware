@@ -153,6 +153,10 @@
     #endif
   #endif
 
+  #define LORA_PA_UNKNOWN  0x00
+  #define LORA_PA_GC1109   0x01
+  #define LORA_PA_KCT8103L 0x02
+
   #define HAS_DISPLAY false
   #define HAS_BLUETOOTH false
   #define HAS_BLE false
@@ -255,7 +259,7 @@
         #define HAS_TCXO true
         #define HAS_BUSY true
         #define DIO2_AS_RF_SWITCH true
-        #define OCP_TUNED 0x18
+        #define OCP_TUNED 0x28
         const int pin_busy = 32;
         const int pin_dio = 33;
         const int pin_tcxo_enable = -1;
@@ -363,7 +367,7 @@
       #define HAS_SLEEP true
       #define PIN_WAKEUP GPIO_NUM_0
       #define WAKEUP_LEVEL 0
-      #define OCP_TUNED 0x18
+      #define OCP_TUNED 0x28
 
       const int pin_btn_usr1 = 0;
 
@@ -405,8 +409,9 @@
       #define HAS_LORA_LNA true
       #define PIN_WAKEUP GPIO_NUM_0
       #define WAKEUP_LEVEL 0
-      #define OCP_TUNED 0x18
+      #define OCP_TUNED 0x28
       #define Vext GPIO_NUM_36
+      #define LORA_PA_MODEL LORA_PA_UNKNOWN
 
       const int pin_btn_usr1 = 0;
 
@@ -428,14 +433,17 @@
 
       #define LORA_LNA_GAIN  17
       #define LORA_LNA_GVT   12
-      #define LORA_PA_GC1109 true
       #define LORA_PA_PWR_EN  7
-      #define LORA_PA_CSD     2
-      #define LORA_PA_CPS    46
+      #define LORA_PA_CSD     2 // Same pin on GC1109
+      #define LORA_PA_CPS    46 // Same pin on GC1109
+      #define LORA_PA_CTX     5 // Only used on KCT8103L
 
       #define PA_MAX_OUTPUT  28
       #define PA_GAIN_POINTS 22
-      #define PA_GAIN_VALUES 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 10, 10, 9, 9, 8, 7
+
+      #define LORA_LNA_KCT8103L_GAIN 21
+      const int PA_GC1109_VALUES[PA_GAIN_POINTS]   = {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 10, 10,  9, 9, 8, 7};
+      const int PA_KCT8103L_VALUES[PA_GAIN_POINTS] = {13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 12, 12, 11, 11, 10, 9, 8, 7};
 
       const int pin_cs = 8;
       const int pin_busy = 13;
@@ -627,7 +635,7 @@
       #define DIO2_AS_RF_SWITCH true
       #define HAS_BUSY true
       #define HAS_TCXO true
-      #define OCP_TUNED 0x18
+      #define OCP_TUNED 0x28
 
       #define HAS_DISPLAY true
       #define HAS_CONSOLE true
@@ -985,7 +993,7 @@
   // Default OCP value if not specified
   // in board configuration
   #ifndef OCP_TUNED
-    #define OCP_TUNED 0x18
+    #define OCP_TUNED 0x28
   #endif
 
   #ifndef NP_M

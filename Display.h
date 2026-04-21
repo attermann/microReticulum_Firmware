@@ -1085,6 +1085,7 @@ void update_display(bool blank = false) {
       #if BOARD_MODEL == BOARD_HELTEC_T114
         display.clear();
         display.display();
+        digitalWrite(PIN_T114_TFT_BLGT, HIGH);
       #elif BOARD_MODEL != BOARD_TDECK && BOARD_MODEL != BOARD_TECHO
         display.clearDisplay();
         display.display();
@@ -1105,6 +1106,7 @@ void update_display(bool blank = false) {
 
       #if BOARD_MODEL == BOARD_HELTEC_T114
         display.clear();
+        digitalWrite(PIN_T114_TFT_BLGT, LOW);
       #elif BOARD_MODEL != BOARD_TDECK && BOARD_MODEL != BOARD_TECHO
         display.clearDisplay();
       #endif
