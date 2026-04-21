@@ -89,7 +89,7 @@ def device_provision(env):
             env.Execute("rnodeconf --product e0 --model e9 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "lora32v21" | "lora32v21_local":
             env.Execute("rnodeconf --product b1 --model b9 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
-        case "heltec32v3" | "heltec32v3_local":
+        case "heltec32v3" | "heltec32v3_local" | "heltec32v3_wsl":
             env.Execute("rnodeconf --product c1 --model ca --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "heltec32v4pa" | "heltec32v4pa_local":
             env.Execute("rnodeconf --product c3 --model c8 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
