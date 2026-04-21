@@ -303,7 +303,7 @@ extern RNS::Reticulum reticulum;
 			void led_id_on()  { }
 			void led_id_off() { }
 		#endif
-	#elif BOARD_MODEL == BOARD_HELTEC32_V3
+	#elif BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_HELTEC_WSL_V3
 			void led_rx_on()  { digitalWrite(pin_led_rx, HIGH); }
 			void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
 			void led_tx_on()  { digitalWrite(pin_led_tx, HIGH); }
