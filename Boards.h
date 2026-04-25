@@ -95,6 +95,8 @@
   #define MODEL_C5            0xC5 // Heltec Lora32 v3, 433 MHz
   #define MODEL_CA            0xCA // Heltec Lora32 v3, 868 MHz
 
+  #define BOARD_HELTEC_WSL_V3 0x43 // Heltec Wireless Stick Lite V3 (same as V3, no display)
+
   #define PRODUCT_H32_V4      0xC3
   #define BOARD_HELTEC32_V4   0x3F
   #define MODEL_C8            0xC8 // Heltec Lora32 v3, 850-950 MHz, 28dBm
@@ -113,6 +115,8 @@
   #define BOARD_RAK4631       0x51
   #define MODEL_11            0x11 // RAK4631, 433 Mhz
   #define MODEL_12            0x12 // RAK4631, 868 Mhz
+
+  #define BOARD_XIAO_NRF52840 0x52 // Seeed XIAO nRF52840 + Wio-SX1262
 
   #define PRODUCT_HMBRW       0xF0
   #define BOARD_HMBRW         0x32
@@ -142,12 +146,18 @@
   #ifndef MODEM
     #if BOARD_MODEL == BOARD_RAK4631
       #define MODEM SX1262
+    #elif BOARD_MODEL == BOARD_XIAO_NRF52840
+      #define MODEM SX1262
     #elif BOARD_MODEL == BOARD_GENERIC_NRF52
       #define MODEM SX1262
     #else
       #define MODEM SX1276
     #endif
   #endif
+
+  #define LORA_PA_UNKNOWN  0x00
+  #define LORA_PA_GC1109   0x01
+  #define LORA_PA_KCT8103L 0x02
 
   #define HAS_DISPLAY false
   #define HAS_BLUETOOTH false
@@ -251,7 +261,7 @@
         #define HAS_TCXO true
         #define HAS_BUSY true
         #define DIO2_AS_RF_SWITCH true
-        #define OCP_TUNED 0x18
+        #define OCP_TUNED 0x28
         const int pin_busy = 32;
         const int pin_dio = 33;
         const int pin_tcxo_enable = -1;
@@ -346,7 +356,9 @@
 
     #elif BOARD_MODEL == BOARD_HELTEC32_V3
       #define IS_ESP32S3 true
-      #define HAS_DISPLAY true
+      #ifndef NO_DISPLAY
+        #define HAS_DISPLAY true
+      #endif
       #define HAS_WIFI true
       #define HAS_BLUETOOTH false
       #define HAS_BLE true
@@ -357,7 +369,7 @@
       #define HAS_SLEEP true
       #define PIN_WAKEUP GPIO_NUM_0
       #define WAKEUP_LEVEL 0
-      #define OCP_TUNED 0x18
+      #define OCP_TUNED 0x28
 
       const int pin_btn_usr1 = 0;
 
@@ -384,6 +396,45 @@
       const int pin_miso = 11;
       const int pin_sclk = 9;
 
+    #elif BOARD_MODEL == BOARD_HELTEC_WSL_V3
+      #define IS_ESP32S3 true
+      #define HAS_DISPLAY false
+      #define HAS_WIFI true
+      #define HAS_BLUETOOTH false
+      #define HAS_BLE true
+      #define HAS_PMU true
+      #define HAS_CONSOLE true
+      #define HAS_EEPROM true
+      #define HAS_INPUT true
+      #define HAS_SLEEP true
+      #define PIN_WAKEUP GPIO_NUM_0
+      #define WAKEUP_LEVEL 0
+      #define OCP_TUNED 0x28
+
+      const int pin_btn_usr1 = 0;
+
+      #if defined(EXTERNAL_LEDS)
+        const int pin_led_rx = 13;
+        const int pin_led_tx = 14;
+      #else
+        const int pin_led_rx = 35;
+        const int pin_led_tx = 35;
+      #endif
+
+      #define MODEM SX1262
+      #define HAS_TCXO true
+      const int pin_tcxo_enable = -1;
+      #define HAS_BUSY true
+      #define DIO2_AS_RF_SWITCH true
+
+      const int pin_cs = 8;
+      const int pin_busy = 13;
+      const int pin_dio = 14;
+      const int pin_reset = 12;
+      const int pin_mosi = 10;
+      const int pin_miso = 11;
+      const int pin_sclk = 9;
+
     #elif BOARD_MODEL == BOARD_HELTEC32_V4
       #define IS_ESP32S3 true
       #define HAS_DISPLAY true
@@ -399,8 +450,9 @@
       #define HAS_LORA_LNA true
       #define PIN_WAKEUP GPIO_NUM_0
       #define WAKEUP_LEVEL 0
-      #define OCP_TUNED 0x18
+      #define OCP_TUNED 0x28
       #define Vext GPIO_NUM_36
+      #define LORA_PA_MODEL LORA_PA_UNKNOWN
 
       const int pin_btn_usr1 = 0;
 
@@ -422,14 +474,17 @@
 
       #define LORA_LNA_GAIN  17
       #define LORA_LNA_GVT   12
-      #define LORA_PA_GC1109 true
       #define LORA_PA_PWR_EN  7
-      #define LORA_PA_CSD     2
-      #define LORA_PA_CPS    46
+      #define LORA_PA_CSD     2 // Same pin on GC1109
+      #define LORA_PA_CPS    46 // Same pin on GC1109
+      #define LORA_PA_CTX     5 // Only used on KCT8103L
 
       #define PA_MAX_OUTPUT  28
       #define PA_GAIN_POINTS 22
-      #define PA_GAIN_VALUES 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 10, 10, 9, 9, 8, 7
+
+      #define LORA_LNA_KCT8103L_GAIN 21
+      const int PA_GC1109_VALUES[PA_GAIN_POINTS]   = {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 10, 10,  9, 9, 8, 7};
+      const int PA_KCT8103L_VALUES[PA_GAIN_POINTS] = {13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 12, 12, 11, 11, 10, 9, 8, 7};
 
       const int pin_cs = 8;
       const int pin_busy = 13;
@@ -621,7 +676,7 @@
       #define DIO2_AS_RF_SWITCH true
       #define HAS_BUSY true
       #define HAS_TCXO true
-      #define OCP_TUNED 0x18
+      #define OCP_TUNED 0x28
 
       #define HAS_DISPLAY true
       #define HAS_CONSOLE true
@@ -890,6 +945,61 @@
       const int DISPLAY_BL_PIN = PIN_T114_TFT_BLGT;
       const int DISPLAY_RST = PIN_T114_TFT_RST;
 
+    #elif BOARD_MODEL == BOARD_XIAO_NRF52840
+      #define HAS_EEPROM false
+      #define HAS_DISPLAY false
+      #define HAS_BLUETOOTH false
+      #undef HAS_BLE
+      #define HAS_BLE true
+      // Seeed platform bootloader does not write image size at the Adafruit
+      // nRF52 IMG_SIZE_START address, so firmware hash validation is disabled.
+      #undef VALIDATE_FIRMWARE
+      #define VALIDATE_FIRMWARE false
+      #define HAS_CONSOLE false
+      #define HAS_PMU false
+      #define HAS_NP false
+      #define HAS_SD false
+      #undef HAS_TCXO
+      #define HAS_TCXO true
+      #define HAS_RF_SWITCH_RX_TX true
+      #undef HAS_BUSY
+      #define HAS_BUSY true
+      #define DIO2_AS_RF_SWITCH true
+      #define CONFIG_UART_BUFFER_SIZE 6144
+      #define CONFIG_QUEUE_SIZE 6144
+      #define CONFIG_QUEUE_MAX_LENGTH 200
+      #define EEPROM_SIZE 296
+      #define EEPROM_OFFSET EEPROM_SIZE-EEPROM_RESERVED
+      #define BLE_MANUFACTURER "Seeed Studio"
+      #define BLE_MODEL "XIAO nRF52840"
+
+      // XIAO nRF52840 onboard LEDs are active-low
+      // (LOW turns LED on, HIGH turns LED off)
+      #define LED_ON LOW
+      #define LED_OFF HIGH
+
+      // Low Power Mode Support
+      #undef HAS_SLEEP
+      #define HAS_SLEEP true
+      #define HAS_LOWPOWER true
+      #define PIN_WAKEUP 1          // DIO1 from radio (Arduino D1)
+      #define WAKEUP_LEVEL HIGH     // DIO1 goes high on interrupt
+
+      // Pin mapping for XIAO nRF52840 + Wio-SX1262 kit
+      // Using Arduino digital pin numbers (D0-D10), not raw GPIO
+      // The Arduino framework maps these via g_ADigitalPinMap
+      const int pin_rxen = 5;      // D5 → P0.05 (RF_SW)
+      const int pin_reset = 2;     // D2 → P0.28 (RST)
+      const int pin_cs = 4;        // D4 → P0.04 (NSS)
+      const int pin_sclk = 8;      // D8 → P1.13 (SCK)
+      const int pin_mosi = 10;     // D10 → P1.15 (MOSI)
+      const int pin_miso = 9;      // D9 → P1.14 (MISO)
+      const int pin_busy = 3;      // D3 → P0.29 (BUSY)
+      const int pin_dio = 1;       // D1 → P0.03 (DIO1/IRQ)
+      const int pin_led_rx = LED_RED;
+      const int pin_led_tx = LED_RED;
+      const int pin_tcxo_enable = -1;
+
     #else
       #error An unsupported nRF board was selected. Cannot compile RNode firmware.
     #endif
@@ -924,7 +1034,7 @@
   // Default OCP value if not specified
   // in board configuration
   #ifndef OCP_TUNED
-    #define OCP_TUNED 0x18
+    #define OCP_TUNED 0x28
   #endif
 
   #ifndef NP_M

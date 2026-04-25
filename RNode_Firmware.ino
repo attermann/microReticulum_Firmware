@@ -39,6 +39,9 @@ SPIClass SDSPI(HSPI);
   #include <esp_task_wdt.h>
 #endif
 
+// Low Power Management (XIAO nRF52840 and other HAS_LOWPOWER boards)
+#include "LowPower.h"
+
 // WDT timeout
 #define WDT_TIMEOUT 60  // seconds
 
@@ -382,11 +385,11 @@ void setup() {
     boot_seq();
   #endif
 
-  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_HELTEC_T114 && BOARD_MODEL != BOARD_TECHO && BOARD_MODEL != BOARD_T3S3 && BOARD_MODEL != BOARD_TBEAM_S_V1 && BOARD_MODEL != BOARD_HELTEC32_V4
+  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_HELTEC_T114 && BOARD_MODEL != BOARD_TECHO && BOARD_MODEL != BOARD_T3S3 && BOARD_MODEL != BOARD_TBEAM_S_V1 && BOARD_MODEL != BOARD_HELTEC32_V4 && BOARD_MODEL != BOARD_XIAO_NRF52840
     // Some boards need to wait until the hardware UART is set up before booting
-    // the full firmware. In the case of the RAK4631 and Heltec T114, the line below will wait
-    // until a serial connection is actually established with a master. Thus, it
-    // is disabled on this platform.
+    // the full firmware. In the case of the RAK4631, XIAO nRF52840, and Heltec T114,
+    // the line below will wait until a serial connection is actually established
+    // with a master. Thus, it is disabled on these platforms.
     while (!Serial);
   #endif
 
@@ -737,6 +740,16 @@ void setup() {
 }
 
 void lora_receive() {
+  #if defined(HAS_LOWPOWER) && HAS_LOWPOWER == true && MODEM == SX1262
+    // Use RX duty cycle mode if enabled for power saving
+    const PowerConfig* config = lowpower_get_config();
+    if (config != NULL && config->use_rx_duty_cycle && low_power_initialized) {
+      LoRa->setRxDutyCycle(config->rx_duty_rx_us, config->rx_duty_sleep_us);
+      LoRa->startRxDutyCycle();
+      return;
+    }
+  #endif
+
   if (!implicit) {
     LoRa->receive();
   } else {
@@ -984,6 +997,17 @@ bool startRadio() {
 
         LoRa->enableCrc();
         LoRa->onReceive(receive_callback);
+
+        // Initialize low power mode after radio is configured
+        #if defined(HAS_LOWPOWER) && HAS_LOWPOWER == true
+          lowpower_init();
+          // Both TNC and host modes require continuous RX for reliable CSMA/CA
+          // carrier sensing. POWER_MODE_BALANCED (RX duty cycle) causes dcd() and
+          // currentRssi() to return unreliable values during the sleep phase,
+          // preventing the DIFS timer from ever completing and blocking TX.
+          lowpower_set_mode(POWER_MODE_PERFORMANCE);
+        #endif
+
         lora_receive();
 
         // Flash an info pattern to indicate
@@ -1802,6 +1826,7 @@ void serial_callback(uint8_t sbyte) {
 
 bool medium_free() {
   update_modem_status();
+  update_noise_floor();
   if (avoid_interference && interference_detected) { return false; }
   return !dcd;
 }
@@ -2215,6 +2240,16 @@ void loop() {
     input_read();
   #endif
 
+  // Low Power Sleep — allow MCU to enter low power mode between loop iterations
+  #if defined(HAS_LOWPOWER) && HAS_LOWPOWER == true && MCU_VARIANT == MCU_NRF52
+    if (radio_online && !packet_ready && queue_height == 0 && !serial_buffering) {
+      const PowerConfig* config = lowpower_get_config();
+      if (config != NULL && config->main_loop_sleep_ms > 0) {
+        delay(config->main_loop_sleep_ms);
+      }
+    }
+  #endif
+
   // Feed WDT
 #if MCU_VARIANT == MCU_ESP32
   esp_task_wdt_reset();
@@ -2275,10 +2310,22 @@ void sleep_now() {
         delay(2000);
         analogWrite(PIN_VEXT_EN, 0);
         delay(100);
-      #endif
+      #elif BOARD_MODEL == BOARD_XIAO_NRF52840
+        // XIAO nRF52840: put radio to sleep, configure DIO1 as wakeup, enter System OFF
+        if (radio_online) {
+          LoRa->sleep();
+        }
+        #if defined(PIN_WAKEUP)
+          nrf_gpio_cfg_sense_input(g_ADigitalPinMap[PIN_WAKEUP],
+                                   NRF_GPIO_PIN_PULLDOWN,
+                                   NRF_GPIO_PIN_SENSE_HIGH);
+        #endif
+        NRF_POWER->SYSTEMOFF = 1;
+      #else
       sd_power_gpregret_set(0, 0x6d);
       nrf_gpio_cfg_sense_input(pin_btn_usr1, NRF_GPIO_PIN_PULLUP, NRF_GPIO_PIN_SENSE_LOW);
       NRF_POWER->SYSTEMOFF = 1;
+      #endif
     #endif
   #endif
 }

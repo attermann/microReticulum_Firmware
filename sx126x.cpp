@@ -21,6 +21,7 @@
 #define OP_STANDBY_6X               0x80
 #define OP_TX_6X                    0x83
 #define OP_RX_6X                    0x82
+#define OP_RX_DUTY_CYCLE_6X         0x94
 #define OP_PA_CONFIG_6X             0x95
 #define OP_SET_IRQ_FLAGS_6X         0x08 // Also provides info such as
                                          // preamble detection, etc for
@@ -97,6 +98,14 @@
   #define SPI spiModem
 #endif
 
+#if HAS_LORA_PA
+  uint8_t lora_pa_model = LORA_PA_MODEL;
+#endif
+
+#if HAS_LORA_LNA
+  int lora_lna_gain = LORA_LNA_GAIN;
+#endif
+
 extern SPIClass SPI;
 
 #define MAX_PKT_LENGTH 255
@@ -119,14 +128,17 @@ sx126x::sx126x() :
   _fifo_rx_addr_ptr(0),
   _packet({0}),
   _preinit_done(false),
-  _onReceive(NULL)
+  _onReceive(NULL),
+  _rxDutyCycleEnabled(false),
+  _rxPeriodUs(0),
+  _sleepPeriodUs(0)
 { setTimeout(0); }
 
 bool sx126x::preInit() {
   pinMode(_ss, OUTPUT);
   digitalWrite(_ss, HIGH);
   
-  #if BOARD_MODEL == BOARD_T3S3 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_HELTEC32_V4 || BOARD_MODEL == BOARD_TDECK || BOARD_MODEL == BOARD_XIAO_S3
+  #if BOARD_MODEL == BOARD_T3S3 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_HELTEC_WSL_V3 || BOARD_MODEL == BOARD_HELTEC32_V4 || BOARD_MODEL == BOARD_TDECK || BOARD_MODEL == BOARD_XIAO_S3
     SPI.begin(pin_sclk, pin_miso, pin_mosi, pin_cs);
   #elif BOARD_MODEL == BOARD_TECHO
     SPI.setPins(pin_miso, pin_sclk, pin_mosi);
@@ -275,9 +287,20 @@ void sx126x::setPacketParams(long preamble_symbols, uint8_t headermode, uint8_t 
   buf[4] = crc;
   buf[5] = 0x00; // standard IQ setting (no inversion)
   buf[6] = 0x00; // unused params
-  buf[7] = 0x00; 
-  buf[8] = 0x00; 
+  buf[7] = 0x00;
+  buf[8] = 0x00;
   executeOpcode(OP_PACKET_PARAMS_6X, buf, 9);
+
+  // SX1262 errata 15.4: SetPacketParams resets register 0x0736 to an
+  // incorrect IQ polarity default. For standard IQ (no inversion), bit 2
+  // must be SET; for inverted IQ, bit 2 must be CLEARED. Without this fix,
+  // LoRa RX demodulation fails silently while TX continues to work.
+  uint8_t iqreg = readRegister(0x0736);
+  if (buf[5] == 0x00) {
+    writeRegister(0x0736, iqreg | 0x04);
+  } else {
+    writeRegister(0x0736, iqreg & ~0x04);
+  }
 }
 
 void sx126x::reset(void) {
@@ -348,7 +371,21 @@ int sx126x::begin(long frequency) {
   setPacketParams(_preambleLength, _implicitHeaderMode, _payloadLength, _crcMode);
 
   #if HAS_LORA_PA
-    #if LORA_PA_GC1109
+    if (lora_pa_model == LORA_PA_UNKNOWN) {
+      #if BOARD_MODEL == BOARD_HELTEC32_V4
+        pinMode(LORA_PA_PWR_EN, OUTPUT);
+        pinMode(LORA_PA_CSD, INPUT);
+        digitalWrite(LORA_PA_PWR_EN, HIGH); delay(5);
+        if (digitalRead(LORA_PA_CSD) == HIGH) {
+          lora_pa_model = LORA_PA_KCT8103L;
+          lora_lna_gain = LORA_LNA_KCT8103L_GAIN;
+        } else {
+          lora_pa_model = LORA_PA_GC1109;
+        }
+      #endif
+    }
+
+    if (lora_pa_model == LORA_PA_GC1109) {
       // Enable Vfem_ctl for supply to
       // PA power net.
       pinMode(LORA_PA_PWR_EN, OUTPUT);
@@ -373,7 +410,26 @@ int sx126x::begin(long frequency) {
       // is driven by the SX1262 DIO2
       // pin directly, so we do not
       // need to manually raise this.
-    #endif
+
+    } else if (lora_pa_model == LORA_PA_KCT8103L) {
+      // Enable Vfem_ctl for supply to
+      // PA power net.
+      pinMode(LORA_PA_PWR_EN, OUTPUT);
+      digitalWrite(LORA_PA_PWR_EN, HIGH);
+
+      // Enable KCT8103L chip
+      pinMode(LORA_PA_CSD, OUTPUT);
+      digitalWrite(LORA_PA_CSD, HIGH);
+
+      // Enable receive LNA
+      pinMode(LORA_PA_CTX, OUTPUT);
+      digitalWrite(LORA_PA_CTX, LOW);
+
+      // On Heltec V4.3, the PA CPS pin
+      // is driven by the SX1262 DIO2
+      // pin directly, so we do not
+      // need to manually raise this.
+    }
   #endif
 
   return 1;
@@ -383,13 +439,15 @@ void sx126x::end() { sleep(); SPI.end(); _preinit_done = false; }
 
 int sx126x::beginPacket(int implicitHeader) {
   #if HAS_LORA_PA
-    #if LORA_PA_GC1109
+    if (lora_pa_model == LORA_PA_GC1109) {
       // Enable PA CPS for transmit
       // digitalWrite(LORA_PA_CPS, HIGH);
       // Disabled since we're keeping it
       // on permanently as long as the
       // radio is powered up.
-    #endif
+    } else if (lora_pa_model == LORA_PA_KCT8103L) {
+      digitalWrite(LORA_PA_CTX, HIGH);
+    }
   #endif
 
   standby();
@@ -445,18 +503,29 @@ bool sx126x::dcd() {
   bool header_detected = false;
   bool carrier_detected = false;
 
-  if ((buf[1] & IRQ_HEADER_DET_MASK_6X) != 0) { header_detected = true; carrier_detected = true; }
-  else { header_detected = false; }
+  if ((buf[1] & IRQ_HEADER_DET_MASK_6X) != 0) {
+    header_detected = true; carrier_detected = true;
+    // Keep the software timer alive so it doesn't expire mid-reception.
+    preamble_detected_at = now;
+  } else { header_detected = false; }
 
   if ((buf[1] & IRQ_PREAMBLE_DET_MASK_6X) != 0) {
     carrier_detected = true;
     if (preamble_detected_at == 0) { preamble_detected_at = now; }
-    if (now - preamble_detected_at > lora_preamble_time_ms + lora_header_time_ms) {
+    // Clear preamble IRQ bit immediately. The SX1262 preamble IRQ is not
+    // routed to DIO1, so this bit is never cleared by handleDio0Rise().
+    // Without immediate clearing, spurious detections latch for up to 147ms
+    // each; under high-frequency CSMA polling the medium appears perpetually
+    // busy. The software timer below preserves the correct busy window.
+    uint8_t clearbuf[2] = {0};
+    clearbuf[1] = IRQ_PREAMBLE_DET_MASK_6X;
+    executeOpcode(OP_CLEAR_IRQ_STATUS_6X, clearbuf, 2);
+  } else if (!header_detected && preamble_detected_at != 0) {
+    if (now - preamble_detected_at < (uint32_t)(lora_preamble_time_ms + lora_header_time_ms)) {
+      carrier_detected = true; // Still within expected preamble+header window
+    } else {
       preamble_detected_at = 0;
-      if (!header_detected) { false_preamble_detected = true; }
-      uint8_t clearbuf[2] = {0};
-      clearbuf[1] = IRQ_PREAMBLE_DET_MASK_6X;
-      executeOpcode(OP_CLEAR_IRQ_STATUS_6X, clearbuf, 2);
+      false_preamble_detected = true;
     }
   }
 
@@ -477,7 +546,7 @@ int ISR_VECT sx126x::currentRssi() {
   executeOpcodeRead(OP_CURRENT_RSSI_6X, &byte, 1);
   int rssi = -(int(byte)) / 2;
   #if HAS_LORA_LNA
-    rssi -= LORA_LNA_GAIN;
+    rssi -= lora_lna_gain;
   #endif
   return rssi;
 }
@@ -604,7 +673,7 @@ void sx126x::onReceive(void(*callback)(int)){
 
 void sx126x::receive(int size) {
   #if HAS_LORA_PA
-    #if LORA_PA_GC1109
+    if (lora_pa_model == LORA_PA_GC1109) {
       // Disable PA CPS for receive
       // digitalWrite(LORA_PA_CPS, LOW);
       // That turned out to be a bad idea.
@@ -612,7 +681,9 @@ void sx126x::receive(int size) {
       // on and off too quickly. We'll keep
       // it on permanently, as long as the
       // radio is powered up.
-    #endif
+    } else if (lora_pa_model == LORA_PA_KCT8103L) {
+      digitalWrite(LORA_PA_CTX, LOW);
+    }
   #endif
 
   if (size > 0) {
@@ -631,11 +702,51 @@ void sx126x::standby() {
   executeOpcode(OP_STANDBY_6X, &byte, 1); 
 }
 
-void sx126x::sleep() { uint8_t byte = 0x00; executeOpcode(OP_SLEEP_6X, &byte, 1); }
+void sx126x::sleep() { uint8_t byte = 0x00; executeOpcode(OP_SLEEP_6X, &byte, 1); _rxDutyCycleEnabled = false; }
+
+void sx126x::setRxDutyCycle(uint32_t rxPeriodUs, uint32_t sleepPeriodUs) {
+  _rxPeriodUs = rxPeriodUs;
+  _sleepPeriodUs = sleepPeriodUs;
+}
+
+void sx126x::startRxDutyCycle() {
+  if (_rxPeriodUs == 0 || _sleepPeriodUs == 0) {
+    setRxDutyCycleParams(_sf, getSignalBandwidth(), _preambleLength);
+  }
+  explicitHeaderMode();
+  if (_rxen != -1) { rxAntEnable(); }
+  // Convert µs to 15.625µs steps (64 kHz RC clock): steps = us * 64 / 1000
+  uint32_t rxPeriod    = (_rxPeriodUs    * 64) / 1000;
+  uint32_t sleepPeriod = (_sleepPeriodUs * 64) / 1000;
+  uint8_t buf[6];
+  buf[0] = (rxPeriod >> 16) & 0xFF;
+  buf[1] = (rxPeriod >>  8) & 0xFF;
+  buf[2] =  rxPeriod        & 0xFF;
+  buf[3] = (sleepPeriod >> 16) & 0xFF;
+  buf[4] = (sleepPeriod >>  8) & 0xFF;
+  buf[5] =  sleepPeriod        & 0xFF;
+  executeOpcode(OP_RX_DUTY_CYCLE_6X, buf, 6);
+  _rxDutyCycleEnabled = true;
+}
+
+void sx126x::stopRxDutyCycle() { standby(); _rxDutyCycleEnabled = false; }
+
+bool sx126x::isRxDutyCycleEnabled() { return _rxDutyCycleEnabled; }
+
+void sx126x::setRxDutyCycleParams(uint8_t sf, long bw, uint16_t preambleSymbols) {
+  // Symbol time in µs = (2^SF * 1e6) / BW
+  uint32_t symbolTimeUs = ((uint32_t)1 << sf) * 1000000UL / bw;
+  // RX window: 2 symbols + 5ms TCXO warmup
+  _rxPeriodUs = (2 * symbolTimeUs) + 5000;
+  // Sleep: (preamble - 3) symbols so we always wake during preamble
+  _sleepPeriodUs = (preambleSymbols > 4) ? (preambleSymbols - 3) * symbolTimeUs : symbolTimeUs;
+  if (_rxPeriodUs    < 5000) _rxPeriodUs    = 5000;
+  if (_sleepPeriodUs < 1000) _sleepPeriodUs = 1000;
+}
 
 void sx126x::enableTCXO() {
   #if HAS_TCXO
-    #if BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_XIAO_S3
+    #if BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_HELTEC_WSL_V3 || BOARD_MODEL == BOARD_XIAO_S3
       uint8_t buf[4] = {MODE_TCXO_3_3V_6X, 0x00, 0x00, 0xFF};
     #elif BOARD_MODEL == BOARD_TBEAM
       uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
@@ -650,6 +761,8 @@ void sx126x::enableTCXO() {
     #elif BOARD_MODEL == BOARD_TECHO
       uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
     #elif BOARD_MODEL == BOARD_HELTEC32_V4
+      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
+    #elif BOARD_MODEL == BOARD_XIAO_NRF52840
       uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
     #endif
     executeOpcode(OP_DIO3_TCXO_CTRL_6X, buf, 4);
@@ -737,8 +850,16 @@ void sx126x::handleLowDataRate() {
     else { _ldro = 0x00; lora_low_datarate = false; }
 }
 
-// TODO: Check if there's anything the sx1262 can do here
-void sx126x::optimizeModemSensitivity(){ }
+// SX1262 errata 15.1: Register 0x0889 bit 2 must be cleared for 500 kHz BW
+// and set for all other bandwidths to maintain modulation quality.
+void sx126x::optimizeModemSensitivity(){
+  uint8_t reg = readRegister(0x0889);
+  if (getSignalBandwidth() == 500E3) {
+    writeRegister(0x0889, reg & 0xFB);
+  } else {
+    writeRegister(0x0889, reg | 0x04);
+  }
+}
 
 void sx126x::setSignalBandwidth(long sbw) {
   if (sbw <= 7.8E3)        { _bw = 0x00; }

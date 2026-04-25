@@ -24,7 +24,7 @@
     using namespace Adafruit_LittleFS_Namespace;
     #define EEPROM_FILE "eeprom"
     bool file_exists = false;
-    int written_bytes = 4;
+    int written_bytes = 0;
     File file(InternalFS);
 #endif
 #include <stddef.h>
@@ -303,7 +303,7 @@ extern RNS::Reticulum reticulum;
 			void led_id_on()  { }
 			void led_id_off() { }
 		#endif
-	#elif BOARD_MODEL == BOARD_HELTEC32_V3
+	#elif BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_HELTEC_WSL_V3
 			void led_rx_on()  { digitalWrite(pin_led_rx, HIGH); }
 			void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
 			void led_tx_on()  { digitalWrite(pin_led_tx, HIGH); }
@@ -376,6 +376,14 @@ extern RNS::Reticulum reticulum;
 		void led_tx_off() { digitalWrite(pin_led_tx, LED_OFF); }
 		void led_id_on()  { }
 		void led_id_off() { }
+  #elif BOARD_MODEL == BOARD_XIAO_NRF52840
+    // XIAO LEDs are active-low (LED_ON=LOW, LED_OFF=HIGH); rx and tx share LED_RED
+    void led_rx_on()  { digitalWrite(pin_led_rx, LED_ON); }
+    void led_rx_off() { digitalWrite(pin_led_rx, LED_OFF); }
+    void led_tx_on()  { digitalWrite(pin_led_tx, LED_ON); }
+    void led_tx_off() { digitalWrite(pin_led_tx, LED_OFF); }
+    void led_id_on()  { }
+    void led_id_off() { }
 	#endif
 #endif
 
@@ -1292,11 +1300,31 @@ int getTxPower() {
 }
 
 #if HAS_LORA_PA
-	const int tx_gain[PA_GAIN_POINTS] = {PA_GAIN_VALUES};
+	#if BOARD_MODEL == BOARD_HELTEC32_V4
+		bool pa_values_determined = false;
+		int tx_gain[PA_GAIN_POINTS] = {100};
+	#else
+		bool pa_values_determined = true;
+		const int tx_gain[PA_GAIN_POINTS] = {PA_GAIN_VALUES};
+	#endif
 #endif
+
+extern uint8_t lora_pa_model;
+void determine_pa_values() {
+	#if BOARD_MODEL == BOARD_HELTEC32_V4
+		if (lora_pa_model == LORA_PA_GC1109) {
+			for (int i = 0; i < PA_GAIN_POINTS; i++) { tx_gain[i] = PA_GC1109_VALUES[i]; }
+			pa_values_determined = true;
+		} else if (lora_pa_model == LORA_PA_KCT8103L) {
+			for (int i = 0; i < PA_GAIN_POINTS; i++) { tx_gain[i] = PA_KCT8103L_VALUES[i]; }
+			pa_values_determined = true;
+		}
+	#endif
+}
 
 int map_target_power_to_modem_output(int target_tx_power) {
 	#if HAS_LORA_PA
+		if (!pa_values_determined) { determine_pa_values(); }
 		int modem_output_dbm = -9;
 		for (int i = 0; i < PA_GAIN_POINTS; i++) {
 			int gain = tx_gain[i];
@@ -1685,13 +1713,15 @@ bool eeprom_model_valid() {
 	if (model == MODEL_B4 || model == MODEL_B9) {
 	#elif BOARD_MODEL == BOARD_HELTEC32_V2
 	if (model == MODEL_C4 || model == MODEL_C9) {
-	#elif BOARD_MODEL == BOARD_HELTEC32_V3
+	#elif BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_HELTEC_WSL_V3
 	if (model == MODEL_C5 || model == MODEL_CA) {
 	#elif BOARD_MODEL == BOARD_HELTEC32_V4
 	if (model == MODEL_C8) {
   #elif BOARD_MODEL == BOARD_HELTEC_T114
   if (model == MODEL_C6 || model == MODEL_C7) {
   #elif BOARD_MODEL == BOARD_RAK4631
+  if (model == MODEL_11 || model == MODEL_12) {
+  #elif BOARD_MODEL == BOARD_XIAO_NRF52840
   if (model == MODEL_11 || model == MODEL_12) {
 	#elif BOARD_MODEL == BOARD_HUZZAH32
 	if (model == MODEL_FF) {
@@ -1846,7 +1876,7 @@ void eeprom_conf_load() {
 }
 
 void eeprom_conf_save() {
-	if (hw_ready && radio_online) {
+	if (hw_ready) {
 		eeprom_update(eeprom_addr(ADDR_CONF_SF), lora_sf);
 		eeprom_update(eeprom_addr(ADDR_CONF_CR), lora_cr);
 		eeprom_update(eeprom_addr(ADDR_CONF_TXP), lora_txp);
