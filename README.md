@@ -88,9 +88,42 @@ rnodeconf /dev/ttyACM0 --info
 
 The onboard red LED indicates radio state: briefly lit on RX/TX activity in HOST mode; lit while the channel is sensed busy (CSMA) in TNC mode.
 
+**Flash storage and RNS persistence:**
+
+The nRF52840 has 1 MB of internal flash, but the Adafruit nRF52 BSP hard-codes the LittleFS filesystem region (`InternalFileSystem`) to only 28 KB. This severely limits how many RNS paths and announces microReticulum can persist across reboots.
+
+This fork works around the limitation with a pre-build patcher in `extra_script.py`. At every build, `patch_internalfs_for_xiao()` locates `InternalFileSystem.cpp` inside the PlatformIO package cache and rewrites two `#define`s to enlarge the region to 128 KB (32 × 4096-byte pages):
+
+```
+LFS_FLASH_ADDR:       0xED000 → 0xD4000
+LFS_FLASH_TOTAL_SIZE: 7 pages → 32 pages  (28 KB → 128 KB)
+```
+
+The resulting flash layout (with S140 v7.3.0 SoftDevice):
+
+| Region | Address range | Size |
+|---|---|---|
+| MBR | `0x00000`–`0x01000` | 4 KB |
+| SoftDevice S140 | `0x01000`–`0x27000` | 152 KB |
+| Application | `0x27000`–`0xD4000` | 692 KB |
+| LittleFS (InternalFS) | `0xD4000`–`0xF4000` | **128 KB** |
+| Bootloader | `0xF4000`–`0x100000` | 48 KB |
+
+The patch is idempotent — it skips cleanly on subsequent builds once applied, backs up the original file to `InternalFileSystem.cpp.xiao.orig`, and raises an error if the BSP changes in a way that breaks the regex so the failure is explicit rather than silent. The region size is configurable via `-DXIAO_INTERNALFS_PAGES=N` (supported values: 7, 16, 32, 64).
+
+With 128 KB available, the path table cap is raised to 100 entries (`-DRNS_PATH_TABLE_MAX=100`) — the nRF52840 boots using ~42 KB of its 237 KB RAM, leaving ample headroom. The firmware prints the mounted filesystem size at INFO level on boot:
+
+```
+Total flash: 131072 bytes
+Free flash:  130048 bytes
+```
+
+Connect a serial monitor after flashing to confirm the new region is in use.
+
 **Notes:**
 - The Seeed bootloader does not write the image size at the Adafruit nRF52 `IMG_SIZE_START` address, so `VALIDATE_FIRMWARE` is disabled for this board to prevent the firmware hash check from failing.
 - No dedicated `rnodeconf` product/model ID exists for the XIAO nRF52840 yet; the RAK4631 bytes (`0x10`/`0x12`) are reused during provisioning.
+- PlatformIO's USB HWID auto-detection crashes on the Seeed platform (the XIAO enumerates as `0x2886:0x0045`, which is absent from the board JSON's hwid list). `upload_port = /dev/ttyACM0` is pinned in the env to bypass this; the board's `use_1200bps_touch` setting still triggers DFU automatically on upload.
 
 ## Build Dependencies
 
@@ -113,6 +146,8 @@ Instructions for command line builds and packaging for firmware distribution.
 
 - `-DHAS_RNS` Used to enable the microReticulum RNS stack and transport node.
 - `-DUDP_TRANSPORT` Used to enable WiFi connection (when configured through `rnodeconf` as an additional transport medium (currently hard-coded to use port 4242).
+- `-DXIAO_INTERNALFS_PAGES=N` *(XIAO nRF52840 only)* Sets the number of 4096-byte pages reserved for the LittleFS region. Supported values: `7` (28 KB, BSP default), `16` (64 KB), `32` (128 KB, default in this fork), `64` (256 KB). Larger values trade application flash for persistence capacity.
+- `-DRNS_PATH_TABLE_MAX=N` Sets the maximum number of RNS path table entries held in RAM and persisted to flash (default: `100`).
 
 ## PlatformIO Command Line
 
@@ -189,6 +224,8 @@ New firmware release procedure:
 
 - [ ] Extend KISS interface to support config/control of the integrated microReticulum stack
 - [ ] Add interface for easy customization of firmware
+- [ ] Option 2: use XIAO nRF52840 onboard 2 MB QSPI flash for even larger RNS persistence (path table, announce cache)
+- [x] Enlarge XIAO nRF52840 InternalFS from 28 KB to 128 KB via pre-build BSP patcher; raise path table cap to 100 entries
 - [x] Add power management and sleep states to extend battery runtime (XIAO nRF52840: PERFORMANCE / BALANCED / LOW_POWER modes)
 - [x] Add build targets for NRF52 boards
 - [x] Add build target for Seeed XIAO nRF52840 + Wio-SX1262
