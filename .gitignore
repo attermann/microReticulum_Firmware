@@ -10,3 +10,8 @@ build/*
 .pio/*
 .vscode/*
 Debug*
+.gitnexus
+CLAUDE.md
+AGENTS.md
+.claude/
+implementation.md

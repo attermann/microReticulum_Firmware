@@ -1,3 +1,5 @@
+import os
+import re
 import time
 import hashlib
 import shutil
@@ -30,6 +32,82 @@ def pre_upload(source, target, env):
 def is_nrf52_platform(platform):
     return "nordicnrf52" in platform or "seeedboards" in platform or "platform-seeedboards" in platform
 
+#
+# InternalFS region patcher for XIAO nRF52840
+#
+
+_XIAO_VARIANTS = {"xiao_nrf52840", "xiao_nrf52840_lowpower"}
+_XIAO_INTERNALFS_PAGES_DEFAULT = 32  # 128 KB
+_BOOTLOADER_START = 0xF4000           # Seeed/Adafruit bootloader bottom — never touch above this
+
+def _xiao_internalfs_pages(env):
+    flags = env.GetProjectOption("build_flags") or []
+    if isinstance(flags, str):
+        flags = flags.split()
+    for f in (flags if isinstance(flags, list) else [flags]):
+        m = re.search(r"-DXIAO_INTERNALFS_PAGES=(\d+)", str(f))
+        if m:
+            return int(m.group(1))
+    return _XIAO_INTERNALFS_PAGES_DEFAULT
+
+def patch_internalfs_for_xiao(env):
+    variant = env.GetProjectOption("custom_variant")
+    if variant not in _XIAO_VARIANTS:
+        return
+
+    pkg_dir = env.PioPlatform().get_package_dir("framework-arduinoadafruitnrf52")
+    if not pkg_dir:
+        print("!!! [xiao_internalfs] framework-arduinoadafruitnrf52 not found; cannot patch InternalFS")
+        return
+
+    src = os.path.join(pkg_dir, "libraries", "InternalFileSytem", "src", "InternalFileSystem.cpp")
+    if not os.path.isfile(src):
+        print(f"!!! [xiao_internalfs] {src} missing; cannot patch InternalFS")
+        return
+
+    pages = _xiao_internalfs_pages(env)
+    if pages not in (7, 16, 32, 64):
+        raise ValueError(f"[xiao_internalfs] XIAO_INTERNALFS_PAGES={pages} not in supported set {{7, 16, 32, 64}}")
+
+    total_size = pages * 4096
+    new_addr = _BOOTLOADER_START - total_size
+
+    with open(src, "r") as fh:
+        text = fh.read()
+
+    # Patch the nRF52840-specific LFS_FLASH_ADDR only (the #ifdef NRF52840_XXAA branch)
+    new_text = re.sub(
+        r"(#ifdef NRF52840_XXAA\s*\n#define\s+LFS_FLASH_ADDR\s+)0x[0-9A-Fa-f]+",
+        rf"\g<1>0x{new_addr:X}",
+        text,
+    )
+    new_text = re.sub(
+        r"#define\s+LFS_FLASH_TOTAL_SIZE\s+\([^)]+\)",
+        f"#define LFS_FLASH_TOTAL_SIZE  ({pages}*FLASH_NRF52_PAGE_SIZE)",
+        new_text,
+    )
+
+    if new_text == text:
+        if f"0x{new_addr:X}" in text:
+            print(f"--- [xiao_internalfs] InternalFS already patched ({pages} pages @ 0x{new_addr:X}, ~{total_size//1024} KB); skipping")
+        else:
+            raise RuntimeError(
+                "[xiao_internalfs] Patch regex matched nothing but file looks unpatched — "
+                "BSP may have changed. Check InternalFileSystem.cpp manually."
+            )
+        return
+
+    # Back up original (once; never overwrite the backup)
+    backup = src + ".xiao.orig"
+    if not os.path.isfile(backup):
+        with open(backup, "w") as fh:
+            fh.write(text)
+        print(f"--- [xiao_internalfs] Backup written to {backup}")
+
+    with open(src, "w") as fh:
+        fh.write(new_text)
+    print(f"*** [xiao_internalfs] Patched InternalFS: {pages} pages @ 0x{new_addr:X} (~{total_size//1024} KB)")
+
 def post_upload(source, target, env):
     print("*** Executing post_upload steps...")
     print("Platform:", env.GetProjectOption("platform"))
@@ -47,7 +125,7 @@ def post_upload(source, target, env):
         # firmware pacakaging is incomplete due to missing console image
         #firmware_package(env)
     elif is_nrf52_platform(platform):
-        time.sleep(5)
+        time.sleep(12)
         device_provision(env)
         time.sleep(5)
         firmware_hash(source, env)
@@ -215,6 +293,7 @@ if (platform == "espressif32"):
         description="Package esp32 firmware for delivery"
     )
 elif is_nrf52_platform(platform):
+    patch_internalfs_for_xiao(env)
     # remove --specs=nano.specs to allow exceptions to work
     if '--specs=nano.specs' in env['LINKFLAGS']:
         env['LINKFLAGS'].remove('--specs=nano.specs')
