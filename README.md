@@ -147,7 +147,7 @@ Instructions for command line builds and packaging for firmware distribution.
 - `-DHAS_RNS` Used to enable the microReticulum RNS stack and transport node.
 - `-DUDP_TRANSPORT` Used to enable WiFi connection (when configured through `rnodeconf` as an additional transport medium (currently hard-coded to use port 4242).
 - `-DXIAO_INTERNALFS_PAGES=N` *(XIAO nRF52840 only)* Sets the number of 4096-byte pages reserved for the LittleFS region. Supported values: `7` (28 KB, BSP default), `16` (64 KB), `32` (128 KB, default in this fork), `64` (256 KB). Larger values trade application flash for persistence capacity.
-- `-DRNS_PATH_TABLE_MAX=N` Sets the maximum number of RNS path table entries held in RAM and persisted to flash (default: `100`).
+- `-DURTN_PATH_TABLE_MAX_RECS=N` Sets the maximum number of RNS path table entries held in RAM and persisted to flash (default: `100`). Passed directly to `RNS::Transport::path_table_maxsize()` at startup.
 
 ## PlatformIO Command Line
 
