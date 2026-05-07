@@ -57,17 +57,17 @@ def patch_internalfs_for_xiao(env):
 
     pkg_dir = env.PioPlatform().get_package_dir("framework-arduinoadafruitnrf52")
     if not pkg_dir:
-        print("!!! [xiao_internalfs] framework-arduinoadafruitnrf52 not found; cannot patch InternalFS")
+        print("--- [xiao_internalfs] WARNING: framework-arduinoadafruitnrf52 not found; skipping InternalFS patch")
         return
 
     src = os.path.join(pkg_dir, "libraries", "InternalFileSytem", "src", "InternalFileSystem.cpp")
     if not os.path.isfile(src):
-        print(f"!!! [xiao_internalfs] {src} missing; cannot patch InternalFS")
+        print("--- [xiao_internalfs] WARNING:", src, "missing; skipping InternalFS patch")
         return
 
     pages = _xiao_internalfs_pages(env)
     if pages not in (7, 16, 32, 64):
-        raise ValueError(f"[xiao_internalfs] XIAO_INTERNALFS_PAGES={pages} not in supported set {{7, 16, 32, 64}}")
+        raise ValueError("[xiao_internalfs] XIAO_INTERNALFS_PAGES=" + str(pages) + " not in supported set {7, 16, 32, 64}")
 
     total_size = pages * 4096
     new_addr = _BOOTLOADER_START - total_size
@@ -78,18 +78,18 @@ def patch_internalfs_for_xiao(env):
     # Patch the nRF52840-specific LFS_FLASH_ADDR only (the #ifdef NRF52840_XXAA branch)
     new_text = re.sub(
         r"(#ifdef NRF52840_XXAA\s*\n#define\s+LFS_FLASH_ADDR\s+)0x[0-9A-Fa-f]+",
-        rf"\g<1>0x{new_addr:X}",
+        r"\g<1>0x" + format(new_addr, "X"),
         text,
     )
     new_text = re.sub(
         r"#define\s+LFS_FLASH_TOTAL_SIZE\s+\([^)]+\)",
-        f"#define LFS_FLASH_TOTAL_SIZE  ({pages}*FLASH_NRF52_PAGE_SIZE)",
+        "#define LFS_FLASH_TOTAL_SIZE  (" + str(pages) + "*FLASH_NRF52_PAGE_SIZE)",
         new_text,
     )
 
     if new_text == text:
-        if f"0x{new_addr:X}" in text:
-            print(f"--- [xiao_internalfs] InternalFS already patched ({pages} pages @ 0x{new_addr:X}, ~{total_size//1024} KB); skipping")
+        if "0x" + format(new_addr, "X") in text:
+            print("--- [xiao_internalfs] InternalFS already patched (" + str(pages) + " pages @ 0x" + format(new_addr, "X") + ", ~" + str(total_size//1024) + " KB); skipping")
         else:
             raise RuntimeError(
                 "[xiao_internalfs] Patch regex matched nothing but file looks unpatched — "
@@ -102,11 +102,11 @@ def patch_internalfs_for_xiao(env):
     if not os.path.isfile(backup):
         with open(backup, "w") as fh:
             fh.write(text)
-        print(f"--- [xiao_internalfs] Backup written to {backup}")
+        print("--- [xiao_internalfs] Backup written to", backup)
 
     with open(src, "w") as fh:
         fh.write(new_text)
-    print(f"*** [xiao_internalfs] Patched InternalFS: {pages} pages @ 0x{new_addr:X} (~{total_size//1024} KB)")
+    print("*** [xiao_internalfs] Patched InternalFS:", pages, "pages @ 0x" + format(new_addr, "X"), "(~" + str(total_size//1024) + " KB)")
 
 def post_upload(source, target, env):
     print("*** Executing post_upload steps...")
