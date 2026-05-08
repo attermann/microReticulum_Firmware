@@ -835,39 +835,39 @@
       #define BLE_MANUFACTURER "Heltec"
       #define BLE_MODEL "T114"
 
-      #define PIN_T114_ADC_EN 6
-      #define PIN_VEXT_EN 21
+      #define PIN_T114_ADC_EN PIN_BAT_ADC_CTL
+      #define PIN_VEXT_EN     PIN_VEXT_CTL
 
       // LED
-      #define LED_T114_GREEN 3
-      #define PIN_T114_LED 14
+      #define LED_T114_GREEN  LED_GREEN
+      #define PIN_T114_LED    PIN_NEOPIXEL
       #define NP_M 1
       const int pin_np = PIN_T114_LED;
 
       // SPI
-      #define PIN_T114_MOSI 22
-      #define PIN_T114_MISO 23
-      #define PIN_T114_SCK  19
-      #define PIN_T114_SS   24
+      #define PIN_T114_MOSI PIN_SPI_MOSI
+      #define PIN_T114_MISO PIN_SPI_MISO
+      #define PIN_T114_SCK  PIN_SPI_SCK
+      #define PIN_T114_SS   PIN_SPI_CS
 
       // SX1262
-      #define PIN_T114_RST  25
-      #define PIN_T114_DIO1 20
-      #define PIN_T114_BUSY 17
+      #define PIN_T114_RST  LORA_RESET
+      #define PIN_T114_DIO1 LORA_DIO1
+      #define PIN_T114_BUSY LORA_BUSY
 
       // TFT
       #define DISPLAY_SCALE 2
-      #define PIN_T114_TFT_MOSI 9
-      #define PIN_T114_TFT_MISO 11 // not connected
-      #define PIN_T114_TFT_SCK 8
-      #define PIN_T114_TFT_SS 11
-      #define PIN_T114_TFT_DC 12
-      #define PIN_T114_TFT_RST 2
-      #define PIN_T114_TFT_EN 3
-      #define PIN_T114_TFT_BLGT 15
+      #define PIN_T114_TFT_MOSI PIN_SPI1_MOSI
+      #define PIN_T114_TFT_MISO PIN_SPI1_MISO
+      #define PIN_T114_TFT_SCK  PIN_SPI1_SCK
+      #define PIN_T114_TFT_SS   PIN_TFT_CS
+      #define PIN_T114_TFT_DC   PIN_TFT_DC
+      #define PIN_T114_TFT_RST  PIN_TFT_RST
+      #define PIN_T114_TFT_EN   PIN_TFT_VDD_CTL
+      #define PIN_T114_TFT_BLGT PIN_TFT_LEDA_CTL
 
       // pins for buttons on Heltec T114
-      const int pin_btn_usr1 = 42;
+      const int pin_btn_usr1 = PIN_BUTTON1;
 
       // pins for sx1262 on Heltec T114
       const int pin_reset = PIN_T114_RST;
@@ -877,8 +877,8 @@
       const int pin_miso = PIN_T114_MISO;
       const int pin_busy = PIN_T114_BUSY;
       const int pin_dio = PIN_T114_DIO1;
-      const int pin_led_rx = 35;
-      const int pin_led_tx = 35;
+      const int pin_led_rx = PIN_T114_LED;
+      const int pin_led_tx = PIN_T114_LED;
       const int pin_tcxo_enable = -1;
 
       // pins for ST7789 display on Heltec T114
