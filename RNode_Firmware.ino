@@ -289,8 +289,10 @@ void setup() {
   // CBA Test
   delay(2000);
 
-  printf("Total SRAM: %u bytes\n", RNS::Utilities::Memory::heap_size());
-  printf("Free SRAM:  %u bytes\n", RNS::Utilities::Memory::heap_available());
+  #ifdef HAS_RNS
+    printf("Total SRAM: %u bytes\n", RNS::Utilities::Memory::heap_size());
+    printf("Free SRAM:  %u bytes\n", RNS::Utilities::Memory::heap_available());
+  #endif
 #if defined(ESP32)
 	printf("Total PSRAM: %u bytes\n", ESP.getPsramSize());
 #endif

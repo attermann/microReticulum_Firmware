@@ -293,7 +293,7 @@ void measure_battery() {
         }
       }
 
-      #if MCU_VARIANT == MCU_NRF52
+      #if MCU_VARIANT == MCU_NRF52 && HAS_BLE
         if (bt_state != BT_STATE_OFF) { blebas.write(battery_percent); }
       #endif
 
