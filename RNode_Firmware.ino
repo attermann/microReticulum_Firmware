@@ -1914,12 +1914,13 @@ void update_modem_status() {
       else              { led_rx_off(); led_id_off(); }
     }
   }
+
+  update_noise_floor();
 }
 
 void check_modem_status() {
   if (millis()-last_status_update >= status_interval_ms) {
     update_modem_status();
-    update_noise_floor();
 
     #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
       util_samples[dcd_sample] = dcd;
