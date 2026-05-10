@@ -605,10 +605,6 @@ void setup() {
     filesystem = microStore::Adapters::FlashFSFileSystem(&device_rak15001);
     if (filesystem.init()) {
       TRACE("Initialized RAK15001 flash");
-      // Raise path store limits to account for larger external flash size
-      RNS::Transport::path_table_maxsize(500);
-      RNS::Transport::path_store_segment_size(24576);
-      RNS::Transport::path_store_segment_count(8);
     }
     else {
       // Finaly attempt to initialize internl flash
