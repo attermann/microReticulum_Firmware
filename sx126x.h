@@ -56,6 +56,13 @@ public:
   void receive(int size = 0);
   void standby();
   void sleep();
+
+  // Low Power RX Duty Cycle Mode
+  void setRxDutyCycle(uint32_t rxPeriodUs, uint32_t sleepPeriodUs);
+  void startRxDutyCycle();
+  void stopRxDutyCycle();
+  bool isRxDutyCycleEnabled();
+  void setRxDutyCycleParams(uint8_t sf, long bw, uint16_t preambleSymbols);
   void reset(void);
 
   bool preInit();
@@ -140,6 +147,9 @@ private:
   bool _preinit_done;
   volatile bool _dio0_pending;
   void (*_onReceive)(int);
+  bool _rxDutyCycleEnabled;
+  uint32_t _rxPeriodUs;
+  uint32_t _sleepPeriodUs;
 };
 
 extern sx126x sx126x_modem;

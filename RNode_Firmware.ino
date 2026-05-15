@@ -378,11 +378,11 @@ void setup() {
     boot_seq();
   #endif
 
-  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_HELTEC_T114 && BOARD_MODEL != BOARD_TECHO && BOARD_MODEL != BOARD_T3S3 && BOARD_MODEL != BOARD_TBEAM_S_V1 && BOARD_MODEL != BOARD_HELTEC32_V4
+  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_HELTEC_T114 && BOARD_MODEL != BOARD_TECHO && BOARD_MODEL != BOARD_T3S3 && BOARD_MODEL != BOARD_TBEAM_S_V1 && BOARD_MODEL != BOARD_HELTEC32_V4 && BOARD_MODEL != BOARD_XIAO_NRF52840
     // Some boards need to wait until the hardware UART is set up before booting
-    // the full firmware. In the case of the RAK4631 and Heltec T114, the line below will wait
-    // until a serial connection is actually established with a master. Thus, it
-    // is disabled on this platform.
+    // the full firmware. In the case of the RAK4631, XIAO nRF52840, and Heltec T114,
+    // the line below will wait until a serial connection is actually established
+    // with a master. Thus, it is disabled on these platforms.
     while (!Serial);
   #endif
 
@@ -1004,6 +1004,7 @@ bool startRadio() {
 
         LoRa->enableCrc();
         LoRa->onReceive(receive_callback);
+
         lora_receive();
 
         // Flash an info pattern to indicate
@@ -1822,6 +1823,7 @@ void serial_callback(uint8_t sbyte) {
 
 bool medium_free() {
   update_modem_status();
+  update_noise_floor();
   if (avoid_interference && interference_detected) { return false; }
   return !dcd;
 }
@@ -2295,10 +2297,22 @@ void sleep_now() {
         delay(2000);
         analogWrite(PIN_VEXT_EN, 0);
         delay(100);
-      #endif
+      #elif BOARD_MODEL == BOARD_XIAO_NRF52840
+        // XIAO nRF52840: put radio to sleep, configure DIO1 as wakeup, enter System OFF
+        if (radio_online) {
+          LoRa->sleep();
+        }
+        #if defined(PIN_WAKEUP)
+          nrf_gpio_cfg_sense_input(g_ADigitalPinMap[PIN_WAKEUP],
+                                   NRF_GPIO_PIN_PULLDOWN,
+                                   NRF_GPIO_PIN_SENSE_HIGH);
+        #endif
+        NRF_POWER->SYSTEMOFF = 1;
+      #else
       sd_power_gpregret_set(0, 0x6d);
       nrf_gpio_cfg_sense_input(pin_btn_usr1, NRF_GPIO_PIN_PULLUP, NRF_GPIO_PIN_SENSE_LOW);
       NRF_POWER->SYSTEMOFF = 1;
+      #endif
     #endif
   #endif
 }
