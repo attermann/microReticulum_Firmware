@@ -194,6 +194,13 @@ void sx126x::rxAntEnable() {
   if (_rxen != -1) { digitalWrite(_rxen, HIGH); }
 }
 
+void sx126x::txAntEnable() {
+  // External RF switch RX leg must be off during TX so the PA output
+  // (gated by DIO2 in DIO2_AS_RF_SWITCH mode) is routed to the antenna
+  // instead of being shunted into the LNA path.
+  if (_rxen != -1) { digitalWrite(_rxen, LOW); }
+}
+
 void sx126x::loraMode() {
   // Enable lora mode on the SX1262 chip
   uint8_t mode = MODE_LONG_RANGE_MODE_6X;
@@ -451,6 +458,7 @@ int sx126x::beginPacket(int implicitHeader) {
     }
   #endif
 
+  if (_rxen != -1) { txAntEnable(); }
   standby();
   if (implicitHeader) { implicitHeaderMode(); }
   else { explicitHeaderMode(); }
