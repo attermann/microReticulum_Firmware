@@ -77,6 +77,8 @@ public:
 
   void rxAntEnable();
   void txAntEnable();
+  void setRegulatorDCDC();
+  void clearDeviceErrors();
   void loraMode();
   void waitOnBusy();
   void executeOpcode(uint8_t opcode, uint8_t *buffer, uint8_t size);

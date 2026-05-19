@@ -46,6 +46,7 @@
 #define OP_RX_TX_FALLBACK_MODE_6X   0x93
 #define OP_REGULATOR_MODE_6X        0x96
 #define OP_CALIBRATE_IMAGE_6X       0x98
+#define OP_CLR_ERROR_6X             0x07
 
 #define MASK_CALIBRATE_ALL          0x7f
 
@@ -61,6 +62,7 @@
 #define OP_FIFO_WRITE_6X            0x0E
 #define OP_FIFO_READ_6X             0x1E
 #define REG_OCP_6X                0x08E7
+#define OCP_TUNED_6X              0x38 // 140 mA, SX1262 +22 dBm headroom
 #define REG_LNA_6X                0x08AC // No agc in sx1262
 #define REG_SYNC_WORD_MSB_6X      0x0740
 #define REG_SYNC_WORD_LSB_6X      0x0741
@@ -344,16 +346,33 @@ void sx126x::calibrate_image(long frequency) {
   waitOnBusy();
 }
 
+void sx126x::setRegulatorDCDC() {
+  uint8_t byte = 0x01; // DC-DC + LDO
+  executeOpcode(OP_REGULATOR_MODE_6X, &byte, 1);
+}
+
+void sx126x::clearDeviceErrors() {
+  uint8_t buf[2] = {0x00, 0x00};
+  executeOpcode(OP_CLR_ERROR_6X, buf, 2);
+}
+
 int sx126x::begin(long frequency) {
   reset();
-  
+
   if (_busy != -1) { pinMode(_busy, INPUT); }
   if (!_preinit_done) { if (!preInit()) { return false; } }
   if (_rxen != -1) { pinMode(_rxen, OUTPUT); }
 
-  calibrate();
+  // STDBY_RC before regulator/TCXO config
+  uint8_t stdby_rc = MODE_STDBY_RC_6X;
+  executeOpcode(OP_STANDBY_6X, &stdby_rc, 1);
+
+  setRegulatorDCDC();          // DC-DC for PA current headroom
+  enableTCXO();                // power TCXO via DIO3 before any cal
+  clearDeviceErrors();         // flush XOSC_START_ERROR after TCXO ramp
+
+  calibrate();                 // now runs against stable TCXO clock
   calibrate_image(frequency);
-  enableTCXO();
   loraMode();
   standby();
 
@@ -744,7 +763,7 @@ void sx126x::setTxPower(int level, int outputPin) {
 
   if (level > 22) { level = 22; }
   else if (level < -9) { level = -9; }
-  writeRegister(REG_OCP_6X, OCP_TUNED); // Use board-specific tuned OCP
+  writeRegister(REG_OCP_6X, OCP_TUNED_6X); // 140 mA — SX1262 +22 dBm needs ~158 mA headroom
 
   uint8_t tx_buf[2];
   tx_buf[0] = level;
