@@ -521,7 +521,11 @@ bool sx126x::dcd() {
 
   // TODO: Maybe there's a way of unlatching the RSSI
   // status without re-activating receive mode?
-  if (false_preamble_detected) { sx126x_modem.receive(); false_preamble_detected = false; }
+  if (false_preamble_detected) {
+    Serial.print("*** dcd: FALSE PREAMBLE -> radio reset (irq_lo=0x");
+    Serial.print(buf[1], HEX); Serial.println(")"); Serial.flush();
+    sx126x_modem.receive(); false_preamble_detected = false;
+  }
   return carrier_detected;
 }
 
@@ -680,7 +684,13 @@ void sx126x::receive(int size) {
     implicitHeaderMode();
     _payloadLength = size;
     setPacketParams(_preambleLength, _implicitHeaderMode, _payloadLength, _crcMode);
-  } else { explicitHeaderMode(); }
+  } else {
+    // After TX, _payloadLength holds the size of the last transmitted packet.
+    // Restore it to MAX_PKT_LENGTH before re-entering explicit-mode RX, in case
+    // the SX1262 uses this as a max-RX cap for CRC computation in explicit mode.
+    _payloadLength = MAX_PKT_LENGTH;
+    explicitHeaderMode();
+  }
 
   if (_rxen != -1) { rxAntEnable(); }
   uint8_t mode[3] = {0xFF, 0xFF, 0xFF}; // Continuous mode
@@ -879,6 +889,32 @@ void ISR_VECT sx126x::handleDio0Rise() {
   buf[1] = 0x00;
   executeOpcodeRead(OP_GET_IRQ_STATUS_6X, buf, 2);
   executeOpcode(OP_CLEAR_IRQ_STATUS_6X, buf, 2);
+
+  // Reset RX/TX buffer base addresses so the NEXT received packet starts at
+  // offset 0 in the SX1262's 256-byte data buffer (the radio otherwise
+  // concatenates packets in continuous RX, which can lead to FIFO overruns).
+  uint8_t basebuf[2] = {0};
+  executeOpcode(OP_BUFFER_BASE_ADDR_6X, basebuf, 2);
+
+  // Refresh the SX1262's PacketParams between packets, explicitly setting
+  // payload_length back to MAX_PKT_LENGTH. In explicit header mode this
+  // parameter is documented as the max RX size. Even though we set it to 255
+  // at init, any code path that mutates _payloadLength (TX cycles, preamble
+  // updates) can leave a smaller value latched in the radio - which would
+  // cause the radio to fire RX_DONE + HEADER_VALID + CRC_ERR for any inbound
+  // packet whose header-declared length exceeds the latched max.
+  _payloadLength = MAX_PKT_LENGTH;
+  setPacketParams(_preambleLength, _implicitHeaderMode, _payloadLength, _crcMode);
+
+  // TEMP DIAGNOSTIC: log every DIO0 event with raw IRQ flags and FIFO offset
+  // so we can confirm rxptr stays at 0 after this fix. Remove once verified.
+  uint8_t rxbuf_dbg[2] = {0};
+  executeOpcodeRead(OP_RX_BUFFER_STATUS_6X, rxbuf_dbg, 2);
+  Serial.print("*** DIO0: irq_hi=0x"); Serial.print(buf[0], HEX);
+  Serial.print(" irq_lo=0x"); Serial.print(buf[1], HEX);
+  Serial.print(" rxlen="); Serial.print(rxbuf_dbg[0]);
+  Serial.print(" rxptr="); Serial.println(rxbuf_dbg[1]);
+  Serial.flush();
 
   if ((buf[1] & IRQ_PAYLOAD_CRC_ERROR_MASK_6X) == 0) {
     _packetIndex = 0;
