@@ -72,6 +72,10 @@
   #define CMD_WIFI_IP     0x84
   #define CMD_WIFI_NM     0x85
 
+  #define CMD_IFAC_NETNAME 0x86
+  #define CMD_IFAC_NETKEY  0x87
+  #define CMD_IFAC_SIZE    0x88
+
   #define CMD_BOARD       0x47
   #define CMD_PLATFORM    0x48
   #define CMD_MCU         0x49

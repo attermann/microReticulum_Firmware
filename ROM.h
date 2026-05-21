@@ -54,10 +54,16 @@
   #define EEPROM_RESERVED 200
   
   #define CONFIG_SIZE     256
+  
   #define ADDR_CONF_SSID 0x00
   #define ADDR_CONF_PSK  0x21
   #define ADDR_CONF_IP   0x42
   #define ADDR_CONF_NM   0x46
+
+  #define ADDR_CONF_IFAC_NETNAME  0x4A
+  #define ADDR_CONF_IFAC_NETKEY   0x6B
+  #define ADDR_CONF_IFAC_SIZE     0x8C
+
   //////////////////////////////////
 
 #endif

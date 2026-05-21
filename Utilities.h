@@ -1053,6 +1053,39 @@ void kiss_indicate_btpin() {
 	#endif
 }
 
+#if defined(RNS_USE_IFAC) && defined(CONFIG_OFFSET)
+void kiss_indicate_ifac_netname() {
+	serial_write(FEND);
+	serial_write(CMD_IFAC_NETNAME);
+	for (uint8_t i = 0; i < 32; i++) {
+		uint8_t byte = EEPROM.read(config_addr(ADDR_CONF_IFAC_NETNAME+i));
+		if (byte == 0xFF) byte = 0x00;
+		escaped_serial_write(byte);
+	}
+	serial_write(FEND);
+}
+
+void kiss_indicate_ifac_netkey() {
+	serial_write(FEND);
+	serial_write(CMD_IFAC_NETKEY);
+	for (uint8_t i = 0; i < 32; i++) {
+		uint8_t byte = EEPROM.read(config_addr(ADDR_CONF_IFAC_NETKEY+i));
+		if (byte == 0xFF) byte = 0x00;
+		escaped_serial_write(byte);
+	}
+	serial_write(FEND);
+}
+
+void kiss_indicate_ifac_size() {
+	serial_write(FEND);
+	serial_write(CMD_IFAC_SIZE);
+	uint8_t ifac_size = EEPROM.read(config_addr(ADDR_CONF_IFAC_SIZE));
+	if (ifac_size == 0x00 || ifac_size == 0xFF) ifac_size = 16;
+	escaped_serial_write(ifac_size);
+	serial_write(FEND);
+}
+#endif
+
 void kiss_indicate_random(uint8_t byte) {
 	serial_write(FEND);
 	serial_write(CMD_RANDOM);
