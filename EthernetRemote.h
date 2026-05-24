@@ -28,6 +28,8 @@ uint32_t eth_last_mac_check = 0;
 uint32_t eth_last_retry     = 0;
 bool     eth_initialized    = false;
 bool     eth_session_started = false;
+bool     eth_hw_detected    = false; // W5100S confirmed present at least once
+bool     eth_hw_absent      = false; // W5100S confirmed absent; skip all retries
 
 // The board's default SPI (NRF_SPIM3) is on the IO slot pins (P0.03/P0.29/P0.30),
 // which are exactly the W5100S pins.  The SX1262 modem uses spiModem (NRF_SPIM2)
@@ -78,6 +80,7 @@ static void eth_check_timeout() {
 }
 
 bool eth_remote_available() {
+  if (!eth_initialized) { return false; }
   if (eth_connection) {
     if (eth_connection.connected()) {
       if (eth_connection.available()) { eth_last_read = millis(); eth_session_started = true; return true; }
@@ -114,12 +117,19 @@ static void eth_hw_reset() {
 }
 
 static bool eth_start() {
+  if (eth_hw_absent) { return false; }
   SPI.begin();
   Ethernet.init(SPI, ETH_CS_PIN);
-  // begin() calls W5100.init() first; returns 0 immediately if no hardware.
-  // 8s DHCP timeout avoids a 60s hang when the module is present but unplugged.
+  // If hardware was seen before, check link before attempting DHCP — avoids
+  // the full 8s timeout every 30s when the cable is simply unplugged.
+  if (eth_hw_detected && Ethernet.linkStatus() != LinkON) { return false; }
   int status = Ethernet.begin(eth_mac, 8000, 2000);
-  if (status == 0) { return false; }
+  if (status == 0) {
+    if (Ethernet.hardwareStatus() == EthernetNoHardware) { eth_hw_absent = true; }
+    else                                                  { eth_hw_detected = true; }
+    return false;
+  }
+  eth_hw_detected = true;
   eth_listener.begin();
   return true;
 }
@@ -132,11 +142,13 @@ static void eth_check_chip() {
   if (memcmp(current_mac, eth_mac, 6) != 0) {
     if (eth_connection) { eth_disconnect(); }
     eth_hw_reset();
+    // Clear eth_hw_detected so eth_start() skips the linkStatus gate — PHY
+    // needs time to auto-negotiate after a hardware reset and would return
+    // LinkOFF too soon, causing DHCP to be skipped.
+    eth_hw_detected = false;
     if (eth_start()) {
       eth_last_mac_check = millis();
     } else {
-      // Re-init failed (W5100S still coming up or link down); fall back to
-      // the retry loop so update_eth() handles recovery with proper backoff.
       eth_initialized = false;
       eth_last_retry  = millis();
     }
