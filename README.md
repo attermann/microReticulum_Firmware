@@ -5,6 +5,6 @@ This fork adds Ethernet support for the RAK4631 + RAK13800 (W5100S) WisBlock com
 To install via `rnodeconf`:
 
 ```bash
-rnodeconf --autoinstall --fw-url https://github.com/metrafonic/RNode_Firmware/releases/
+rnodeconf --autoinstall --fw-url https://github.com/metrafonic/RNode_Firmware_RAK_Ethernet/releases/
 ```
 
