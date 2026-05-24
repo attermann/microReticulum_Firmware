@@ -253,6 +253,7 @@ RNS::Interface lora_interface(RNS::Type::NONE);
     microStore::FileSystem filesystem{microStore::Adapters::PosixFileSystem()};
   #endif
   #else // RNS_USE_FS
+    #include <microStore/Adapters/NoopFileSystem.h>
     microStore::FileSystem filesystem{microStore::Adapters::NoopFileSystem()};
   #endif // RNS_USE_FS
 #endif  // HAS_RNS
