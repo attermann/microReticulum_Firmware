@@ -132,7 +132,14 @@ static void eth_check_chip() {
   if (memcmp(current_mac, eth_mac, 6) != 0) {
     if (eth_connection) { eth_disconnect(); }
     eth_hw_reset();
-    eth_start();
+    if (eth_start()) {
+      eth_last_mac_check = millis();
+    } else {
+      // Re-init failed (W5100S still coming up or link down); fall back to
+      // the retry loop so update_eth() handles recovery with proper backoff.
+      eth_initialized = false;
+      eth_last_retry  = millis();
+    }
   }
 }
 
