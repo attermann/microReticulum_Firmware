@@ -157,6 +157,7 @@
   #define HAS_BLUETOOTH false
   #define HAS_BLE false
   #define HAS_WIFI false
+  #define HAS_ETHERNET false
   #define HAS_TCXO false
   #define HAS_PMU false
   #define HAS_NP false
@@ -756,6 +757,16 @@
       const int pin_led_rx = LED_BLUE;
       const int pin_led_tx = LED_GREEN;
       const int pin_tcxo_enable = -1;
+
+      // RAK13800 W5100S on WisBlock IO slot — board default SPI / NRF_SPIM3
+      // (pins P0.03/P0.29/P0.30). CS shares P0.26 with the e-ink slot footprint;
+      // runtime detection via Ethernet.hardwareStatus() skips ETH if absent.
+      #define HAS_ETHERNET true
+      #define ETH_CS_PIN   26
+      #define ETH_RST_PIN  21
+      #define ETH_MISO_PIN 29
+      #define ETH_MOSI_PIN 30
+      #define ETH_SCK_PIN   3
 
     #elif BOARD_MODEL == BOARD_TECHO
       #define _PINNUM(port, pin) ((port) * 32 + (pin))
