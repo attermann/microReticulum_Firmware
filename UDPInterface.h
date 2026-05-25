@@ -41,7 +41,8 @@ protected:
       ERRORF("UDPInterface::handle_incoming: %s", e.what());
     }
   }
-	virtual void send_outgoing(const RNS::Bytes& data) {
+	virtual bool send_outgoing(const RNS::Bytes& data) {
+    bool success = true;
     try {
       //if (udp.availableForWrite()) {
       //wl_status_t wifi_status = WiFi.status();
@@ -49,8 +50,12 @@ protected:
       if (wifi_initialized) {
         TRACEF("UDPInterface.send_outgoing: (%u bytes) data: %s", data.size(), data.toHex().c_str());
         if (udp.beginPacket(UDP_REMOTE_HOST, UDP_PORT) != 0) {
-          udp.write(data.data(), data.size());
+          size_t wrote = udp.write(data.data(), data.size());
           udp.endPacket();
+          if (wrote != data.size()) {
+            WARNINGF("Failed to send %u packet over UDPInterface", wrote);
+            success = false;
+          }
         }
       }
       // Perform post-send housekeeping
@@ -58,10 +63,13 @@ protected:
     }
     catch (const std::bad_alloc&) {
       ERROR("UDPInterface::send_outgoing: bad_alloc - out of memory");
+      success = false;
     }
     catch (std::exception& e) {
       ERRORF("UDPInterface::send_outgoing: %s", e.what());
+      success = false;
     }
+    return success;
   }
 };
 #endif

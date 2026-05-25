@@ -114,7 +114,7 @@ protected:
       ERRORF("LoRaInterface::handle_incoming: %s", e.what());
     }
   }
-	virtual void send_outgoing(const RNS::Bytes& data) {
+	virtual bool send_outgoing(const RNS::Bytes& data) {
     // CBA NOTE header will be addded later by transmit function
     TRACEF("LoRaInterface.send_outgoing: (%u bytes) data: %s", data.size(), data.toHex().c_str());
     try {
@@ -152,10 +152,13 @@ protected:
     }
     catch (const std::bad_alloc&) {
       ERROR("LoRaInterface::send_outgoing: bad_alloc - out of memory");
+      return false;
     }
     catch (std::exception& e) {
       ERRORF("LoRaInterface::send_outgoing: %s", e.what());
+      return false;
     }
+    return true;
   }
 };
 
