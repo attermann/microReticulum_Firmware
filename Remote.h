@@ -52,7 +52,7 @@ wl_status_t wr_wifi_status = WL_IDLE_STATUS;
 WiFiUDP udp;
 RNS::Bytes udp_buffer;
 #if defined(HAS_RNS)
-RNS::Interface udp_interface(RNS::Type::NONE);
+extern RNS::Interface udp_interface;
 #endif
 #endif
 
@@ -63,6 +63,7 @@ bool wifi_initialized = false;
 char wr_ssid[33];
 char wr_psk[33];
 
+extern uint16_t udp_port;
 extern void host_disconnected();
 
 void wifi_dbg(String msg) { Serial.print("[WiFi] "); Serial.println(msg); }
@@ -152,7 +153,7 @@ void wifi_remote_start() {
     remote_listener.setTimeout(WR_SOCKET_TIMEOUT);
     wr_state = WR_STATE_ON;
 #if defined(UDP_TRANSPORT)
-    udp.begin(UDP_PORT);
+    udp.begin(udp_port);
 #endif
   } else {
     remote_listener.end();

@@ -1,3 +1,20 @@
+// Copyright (C) 2026, Chad Attermann
+
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+#pragma once
+
 #include <Reticulum.h>
 #include <Interface.h>
 #include <Log.h>
@@ -14,8 +31,8 @@
 extern WiFiUDP udp;
 extern bool wifi_initialized;
 
-#if defined(HAS_RNS) && defined(UDP_TRANSPORT)
-// CBA UDP interface
+uint16_t udp_port = UDP_PORT;
+
 class UDPInterface : public RNS::InterfaceImpl {
 public:
 	UDPInterface(const char *name) : RNS::InterfaceImpl(name) {
@@ -49,7 +66,7 @@ protected:
       //if (wifi_status == WL_CONNECTED) {
       if (wifi_initialized) {
         TRACEF("UDPInterface.send_outgoing: (%u bytes) data: %s", data.size(), data.toHex().c_str());
-        if (udp.beginPacket(UDP_REMOTE_HOST, UDP_PORT) != 0) {
+        if (udp.beginPacket(UDP_REMOTE_HOST, udp_port) != 0) {
           size_t wrote = udp.write(data.data(), data.size());
           udp.endPacket();
           if (wrote != data.size()) {
@@ -72,4 +89,3 @@ protected:
     return success;
   }
 };
-#endif

@@ -16,6 +16,8 @@
 #include "ROM.h"
 #include "Boards.h"
 
+#include <SPI.h>
+
 #ifndef CONFIG_H
 	#define CONFIG_H
 
