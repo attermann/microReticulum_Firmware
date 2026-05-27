@@ -511,7 +511,14 @@ bool sx126x::dcd() {
     // could take, clear it and re-arm RX (mirrors the false-preamble handling).
     if (header_detected_at == 0) { header_detected_at = now; }
     else if (lora_us_per_byte > 0.0 && lora_us_per_byte < 1000000.0) {
-      long max_packet_ms = lora_preamble_time_ms + lora_header_time_ms + (long)(MAX_PKT_LENGTH * lora_us_per_byte / 1000.0);
+      // lora_us_per_byte is the nominal bitrate and undercounts real airtime:
+      // when Low Data Rate Optimize is active (SF11/SF12) LDRO inflates payload
+      // time by SF/(SF-2), and the symbol-count quantization is omitted entirely.
+      // Without correction a valid near-max-length packet would be aborted
+      // mid-reception. Over-estimating only delays this last-resort heal slightly.
+      float payload_ms = MAX_PKT_LENGTH * lora_us_per_byte / 1000.0;
+      if (_ldro && _sf > 2) { payload_ms *= (float)_sf / (float)(_sf - 2); }
+      long max_packet_ms = lora_preamble_time_ms + lora_header_time_ms + (long)(payload_ms * 1.25);
       if ((long)(now - header_detected_at) > max_packet_ms) {
         header_detected_at = 0;
         false_preamble_detected = true;
