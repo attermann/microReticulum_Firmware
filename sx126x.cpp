@@ -890,7 +890,7 @@ void ISR_VECT sx126x::handleDio0Rise() {
 }
 
 void ISR_VECT sx126x::onDio0Rise() {
-  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
     sx126x_modem._dio0_pending = true;
   #else
     sx126x_modem.handleDio0Rise();

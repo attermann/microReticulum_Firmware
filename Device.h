@@ -183,6 +183,12 @@ void calculate_region_hash(unsigned long long start, unsigned long long end, uin
 #endif
 
 void device_validate_partitions() {
+  #if MCU_VARIANT == MCU_NATIVE
+    // Native build runs as a userspace process; there are no firmware
+    // partitions to attest. Treat as validated.
+    fw_signature_validated = true;
+    return;
+  #endif
   device_load_firmware_hash();
   #if MCU_VARIANT == MCU_ESP32
   esp_partition_t partition;
@@ -212,6 +218,21 @@ void device_validate_partitions() {
 bool device_firmware_ok() {
   return fw_signature_validated;
 }
+
+#if MCU_VARIANT == MCU_NATIVE
+bool device_init() {
+  // Native build: no BLE MAC, no partition signatures. We still load the
+  // device signature from the EEPROM image so admin-installed keys can
+  // be honored if present, but a green-field install reports OK without
+  // requiring provisioning.
+  device_load_signature();
+  device_load_firmware_hash();
+  device_validate_partitions();
+  dev_signature_validated = true;
+  device_init_done = true;
+  return true;
+}
+#endif
 
 #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
 bool device_init() {

@@ -113,7 +113,7 @@ bool ISR_VECT sx128x::getPacketValidity() {
 }
 
 void ISR_VECT sx128x::onDio0Rise() {
-  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
     sx128x_modem._dio0_pending = true;
   #else
     // Non-FreeRTOS platforms: run handler directly from ISR.

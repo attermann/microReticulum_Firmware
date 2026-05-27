@@ -16,7 +16,14 @@
 #include "Config.h"
 
 #if HAS_EEPROM
-    #include <EEPROM.h>
+    #if MCU_VARIANT == MCU_NATIVE
+        // File-backed shim: provides EEPROMClass + global `EEPROM` instance
+        // so the EEPROM.read/write/update/commit/begin calls below resolve
+        // against a 1 KB buffer flushed to ./eeprom on disk.
+        #include "native/EEPROMShim.h"
+    #else
+        #include <EEPROM.h>
+    #endif
 #elif PLATFORM == PLATFORM_NRF52
 		#include <hal/nrf_rng.h>
     #include <Adafruit_LittleFS.h>
@@ -72,7 +79,7 @@ uint8_t eeprom_read(uint32_t mapped_addr);
 	#include "Input.h"
 #endif
 
-#if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+#if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
 	#include "Device.h"
 #endif
 #if MCU_VARIANT == MCU_ESP32

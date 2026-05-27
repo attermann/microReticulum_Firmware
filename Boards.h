@@ -21,11 +21,13 @@
   #define PLATFORM_AVR        0x90
   #define PLATFORM_ESP32      0x80
   #define PLATFORM_NRF52      0x70
+  #define PLATFORM_NATIVE     0x60
 
   #define MCU_1284P           0x91
   #define MCU_2560            0x92
   #define MCU_ESP32           0x81
   #define MCU_NRF52           0x71
+  #define MCU_NATIVE          0x61
 
   // Products, boards and models ////
   #define PRODUCT_RNODE       0x03 // RNode devices
@@ -122,21 +124,37 @@
   #define MODEL_FE            0xFE // Homebrew board, max 17dBm output power
   #define MODEL_FF            0xFF // Homebrew board, max 14dBm output power
 
-  #if defined(__AVR_ATmega1284P__)
-    #define PLATFORM PLATFORM_AVR
-    #define MCU_VARIANT MCU_1284P
-  #elif defined(__AVR_ATmega2560__)
-    #define PLATFORM PLATFORM_AVR
-    #define MCU_VARIANT MCU_2560
-  #elif defined(ESP32)
-    #define PLATFORM PLATFORM_ESP32
-    #define MCU_VARIANT MCU_ESP32
-  #elif defined(NRF52840_XXAA)
-    #include <variant.h>
-    #define PLATFORM PLATFORM_NRF52
-    #define MCU_VARIANT MCU_NRF52
-  #else
-      #error "The firmware cannot be compiled for the selected MCU variant"
+  // Native Linux build: runs the firmware as a userspace process on
+  // Linux (RPi/FemtoFox/x86), driving an SPI-attached SX126x/SX127x/SX128x
+  // modem through Portduino (libgpiod + /dev/spidev). Pins are populated
+  // at runtime from a config file, not from board macros below.
+  #define PRODUCT_NATIVE_LINUX 0x60
+  #define BOARD_NATIVE_LINUX   0x60
+  #define MODEL_60             0x60 // Native build, configurable at runtime
+
+  // Native Linux builds pre-define MCU_VARIANT via the build system
+  // (-DMCU_VARIANT=MCU_NATIVE); skip auto-detection in that case so the
+  // chain doesn't fall through to #error on a host that has none of the
+  // Arduino-core compiler macros.
+  #ifndef MCU_VARIANT
+    #if defined(__AVR_ATmega1284P__)
+      #define PLATFORM PLATFORM_AVR
+      #define MCU_VARIANT MCU_1284P
+    #elif defined(__AVR_ATmega2560__)
+      #define PLATFORM PLATFORM_AVR
+      #define MCU_VARIANT MCU_2560
+    #elif defined(ESP32)
+      #define PLATFORM PLATFORM_ESP32
+      #define MCU_VARIANT MCU_ESP32
+    #elif defined(NRF52840_XXAA)
+      #include <variant.h>
+      #define PLATFORM PLATFORM_NRF52
+      #define MCU_VARIANT MCU_NRF52
+    #else
+        #error "The firmware cannot be compiled for the selected MCU variant"
+    #endif
+  #elif MCU_VARIANT == MCU_NATIVE
+    #define PLATFORM PLATFORM_NATIVE
   #endif
 
   #ifndef MODEM
@@ -900,6 +918,50 @@
 
     #else
       #error An unsupported nRF board was selected. Cannot compile RNode firmware.
+    #endif
+
+  #elif MCU_VARIANT == MCU_NATIVE
+
+    // Native Linux build: pin numbers are populated at runtime from a
+    // config file by native/PinMap.cpp before LoRa->begin(). The extern
+    // declarations let existing Arduino-style setup() code reference
+    // pin_cs/pin_reset/pin_dio/etc. without modification.
+    extern int pin_cs;
+    extern int pin_reset;
+    extern int pin_dio;
+    extern int pin_busy;
+    extern int pin_rxen;
+    extern int pin_txen;
+    extern int pin_led_rx;
+    extern int pin_led_tx;
+    extern int pin_tcxo_enable;
+    extern int pin_sclk;
+    extern int pin_mosi;
+    extern int pin_miso;
+
+    // Suppress the default const-int pin declarations later in this header
+    // (HAS_RF_SWITCH_RX_TX / HAS_BUSY blocks) so they don't collide with
+    // the extern declarations above. Whether the modem actually uses the
+    // RXEN/TXEN/BUSY lines is driven by the runtime pin map (-1 = disabled).
+    #define HAS_RF_SWITCH_RX_TX true
+    #define HAS_BUSY true
+
+    // Native build: device config (lora_sf/lora_freq/etc.) persists through
+    // a file-backed EEPROM shim (native/EEPROMShim.h) so all the existing
+    // Utilities.h paths reading/writing EEPROM.read()/EEPROM.write() work
+    // unchanged. RNS identity & path table go through microStore PosixFS.
+    #define HAS_EEPROM true
+    #define EEPROM_SIZE 1024
+    #define EEPROM_OFFSET EEPROM_SIZE-EEPROM_RESERVED
+
+    #define CONFIG_UART_BUFFER_SIZE 6144
+    #define CONFIG_QUEUE_SIZE 6144
+    #define CONFIG_QUEUE_MAX_LENGTH 200
+
+    // BOARD_MODEL and MODEM are expected to be supplied by the build
+    // (-DBOARD_MODEL=BOARD_NATIVE_LINUX -DMODEM=SX1262 etc.).
+    #ifndef BOARD_MODEL
+      #define BOARD_MODEL BOARD_NATIVE_LINUX
     #endif
 
   #endif
