@@ -125,7 +125,7 @@ sx126x::sx126x() :
   _crcMode(1),
   _fifo_tx_addr_ptr(0),
   _fifo_rx_addr_ptr(0),
-  _packet({0}),
+  _packet{0},
   _preinit_done(false),
   _onReceive(NULL)
 { setTimeout(0); }
@@ -644,7 +644,7 @@ void sx126x::onReceive(void(*callback)(int)){
     buf[7] = 0x00;
     executeOpcode(OP_SET_IRQ_FLAGS_6X, buf, 8);
 
-    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
       #ifdef SPI_HAS_NOTUSINGINTERRUPT
         SPI.usingInterrupt(digitalPinToInterrupt(_dio0));
       #endif
@@ -653,7 +653,7 @@ void sx126x::onReceive(void(*callback)(int)){
 
   } else {
     detachInterrupt(digitalPinToInterrupt(_dio0));
-    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
       #ifdef SPI_HAS_NOTUSINGINTERRUPT
         SPI.notUsingInterrupt(digitalPinToInterrupt(_dio0));
       #endif

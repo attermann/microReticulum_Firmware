@@ -1,0 +1,13 @@
+#!/bin/sh
+# Wrapper that strips `-fpreprocessed` (which Apple's clang rejects)
+# before forwarding to clang++. Used only as $CXX during PlatformIO's
+# .ino → .cpp conversion step. The real build still uses the platform's
+# regular CXX for actual compilation.
+args=""
+for a in "$@"; do
+  if [ "$a" != "-fpreprocessed" ]; then
+    # Quote each arg to preserve spaces in paths
+    args="$args \"$a\""
+  fi
+done
+eval exec clang++ "$args"

@@ -205,7 +205,7 @@ extern RNS::Reticulum reticulum;
   void boot_seq() { }
 #endif
 
-#if MCU_VARIANT == MCU_1284P || MCU_VARIANT == MCU_2560
+#if MCU_VARIANT == MCU_1284P || MCU_VARIANT == MCU_2560 || MCU_VARIANT == MCU_NATIVE
 	void led_rx_on()  { digitalWrite(pin_led_rx, HIGH); }
 	void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
 	void led_tx_on()  { digitalWrite(pin_led_tx, HIGH); }
@@ -483,7 +483,7 @@ void led_indicate_warning(int cycles) {
 }
 
 // LED Indication: Info
-#if MCU_VARIANT == MCU_1284P || MCU_VARIANT == MCU_2560
+#if MCU_VARIANT == MCU_1284P || MCU_VARIANT == MCU_2560 || MCU_VARIANT == MCU_NATIVE
 	void led_indicate_info(int cycles) {
 		bool forever = (cycles == 0) ? true : false;
 		cycles = forever ? 1 : cycles;
@@ -567,7 +567,7 @@ void led_indicate_warning(int cycles) {
 
 
 unsigned long led_standby_ticks = 0;
-#if MCU_VARIANT == MCU_1284P || MCU_VARIANT == MCU_2560
+#if MCU_VARIANT == MCU_1284P || MCU_VARIANT == MCU_2560 || MCU_VARIANT == MCU_NATIVE
 	uint8_t led_standby_min = 1;
 	uint8_t led_standby_max = 40;
 	unsigned long led_standby_wait = 11000;
@@ -617,7 +617,7 @@ unsigned long led_standby_ticks = 0;
 unsigned long led_standby_value = led_standby_min;
 int8_t  led_standby_direction = 0;
 
-#if MCU_VARIANT == MCU_1284P || MCU_VARIANT == MCU_2560
+#if MCU_VARIANT == MCU_1284P || MCU_VARIANT == MCU_2560 || MCU_VARIANT == MCU_NATIVE
 	void led_indicate_standby() {
 		led_standby_ticks++;
 		if (led_standby_ticks > led_standby_wait) {
@@ -734,7 +734,7 @@ int8_t  led_standby_direction = 0;
   #endif
 #endif
 
-#if MCU_VARIANT == MCU_1284P || MCU_VARIANT == MCU_2560
+#if MCU_VARIANT == MCU_1284P || MCU_VARIANT == MCU_2560 || MCU_VARIANT == MCU_NATIVE
 	void led_indicate_not_ready() {
 		led_standby_ticks++;
 		if (led_standby_ticks > led_standby_wait) {
@@ -1082,7 +1082,7 @@ void kiss_indicate_fbstate() {
 	serial_write(FEND);
 }
 
-#if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+#if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
 	void kiss_indicate_device_hash() {
 	  serial_write(FEND);
 	  serial_write(CMD_DEV_HASH);
@@ -1957,7 +1957,7 @@ inline void fifo_flush(FIFOBuffer *f) {
   f->head = f->tail;
 }
 
-#if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+#if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
 	static inline bool fifo_isempty_locked(const FIFOBuffer *f) {
 	  bool result;
 	  ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
@@ -2039,7 +2039,7 @@ inline void fifo16_flush(FIFOBuffer16 *f) {
   f->head = f->tail;
 }
 
-#if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+#if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
 	static inline bool fifo16_isempty_locked(const FIFOBuffer16 *f) {
 	  bool result;
 	  ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {

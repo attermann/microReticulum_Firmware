@@ -311,7 +311,7 @@ void sx127x::onReceive(void(*callback)(int)) {
     pinMode(_dio0, INPUT);
     writeRegister(REG_DIO_MAPPING_1_7X, 0x00);
     
-    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
       #ifdef SPI_HAS_NOTUSINGINTERRUPT
         SPI.usingInterrupt(digitalPinToInterrupt(_dio0));
       #endif
@@ -322,7 +322,7 @@ void sx127x::onReceive(void(*callback)(int)) {
   } else {
     detachInterrupt(digitalPinToInterrupt(_dio0));
 
-    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
       #ifdef SPI_HAS_NOTUSINGINTERRUPT
         SPI.notUsingInterrupt(digitalPinToInterrupt(_dio0));
       #endif

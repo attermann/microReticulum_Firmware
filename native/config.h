@@ -21,20 +21,22 @@ struct Config {
     std::string gpio_chip = "/dev/gpiochip0";
     uint32_t    spi_speed_hz = 8000000;
 
-    // Modem pin map. -1 disables a pin. CS/RESET are required; the rest
-    // are conditional on the modem variant.
-    int pin_cs           = -1;
-    int pin_reset        = -1;
-    int pin_busy         = -1;
-    int pin_dio          = -1;
-    int pin_rxen         = -1;
-    int pin_txen         = -1;
-    int pin_tcxo_enable  = -1;
-    int pin_sclk         = -1;
-    int pin_mosi         = -1;
-    int pin_miso         = -1;
-    int pin_led_rx       = -1;
-    int pin_led_tx       = -1;
+    // Modem pin map. Defaults are deliberately small positive integers
+    // so they fall inside Portduino's simulated GPIO range (NUM_GPIOS=64
+    // on cross_platform builds). On native Linux, override with real
+    // BCM/libgpiod line offsets via the config file.
+    int pin_cs           = 0;
+    int pin_reset        = 1;
+    int pin_busy         = 2;
+    int pin_dio          = 3;
+    int pin_rxen         = 4;
+    int pin_txen         = 5;
+    int pin_tcxo_enable  = -1;  // -1 = disabled
+    int pin_sclk         = 6;
+    int pin_mosi         = 7;
+    int pin_miso         = 8;
+    int pin_led_rx       = 9;
+    int pin_led_tx       = 10;
 
     // LoRa radio settings. These get written into the EEPROM image at
     // startup so the existing eeprom_conf_load() path picks them up.

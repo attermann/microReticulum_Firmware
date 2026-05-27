@@ -437,6 +437,11 @@ void setup() {
     modem_packet_queue = xQueueCreate(MODEM_QUEUE_SIZE, sizeof(modem_packet_t*));
   #endif
 
+  // LoRa modem init — gated so [env:native-macos] (which removes
+  // LORA_TRANSPORT via build_unflags) launches with no radio, no
+  // SPI activity, and modem_installed stays false (default from Config.h).
+  // Downstream `if (modem_installed)` checks handle the no-radio case.
+  #if defined(LORA_TRANSPORT)
   // Set chip select, reset and interrupt
   // pins for the LoRa module
   #if MODEM == SX1276 || MODEM == SX1278
@@ -446,7 +451,7 @@ void setup() {
   #elif MODEM == SX1280
   LoRa->setPins(pin_cs, pin_reset, pin_dio, pin_busy, pin_rxen, pin_txen);
   #endif
-  
+
   #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
     init_channel_stats();
 
@@ -497,6 +502,7 @@ void setup() {
     // so assume that to be the case for now.
     modem_installed = true;
   #endif
+  #endif // defined(LORA_TRANSPORT)
 
   #if HAS_DISPLAY
     #if HAS_EEPROM
@@ -564,7 +570,9 @@ void setup() {
   // Validate board health, EEPROM and config
   validate_status();
 
+  #if defined(LORA_TRANSPORT)
   if (op_mode != MODE_TNC) LoRa->setFrequency(0);
+  #endif
 
 // CBA SD
 #ifdef HAS_SDCARD
@@ -697,11 +705,13 @@ void setup() {
       RNS::loglevel(RNS::LOG_TRACE);
 #endif
 
+#if defined(LORA_TRANSPORT)
       HEAD("Registering LoRA Interface...", RNS::LOG_TRACE);
       lora_interface = new LoRaInterface();
       lora_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
       RNS::Transport::register_interface(lora_interface);
       TRACEF("LoRaInterface hash: %s", lora_interface.get_hash().toHex().c_str());
+#endif
 
 #if HAS_WIFI && defined(UDP_TRANSPORT)
       if (wifi_mode != WR_WIFI_OFF) {
@@ -825,7 +835,7 @@ void lora_receive() {
 
 inline void kiss_write_packet() {
 
-#ifdef HAS_RNS
+#if defined(HAS_RNS) && defined(LORA_TRANSPORT)
   if (host_write_len > 0) {
     TRACEF("Received %d byte packet", host_write_len);
     // CBA send packet received over LoRa to RNS in addition to connected client
@@ -880,7 +890,7 @@ inline void getPacketData(uint16_t len) {
 }
 
 void ISR_VECT receive_callback(int packet_size) {
-  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
+  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
     BaseType_t int_mask;
   #endif
 
@@ -906,7 +916,7 @@ void ISR_VECT receive_callback(int packet_size) {
       
       seq = sequence;
 
-      #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+      #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
         last_rssi = LoRa->packetRssi();
         last_snr_raw = LoRa->packetSnrRaw();
       #endif
@@ -917,7 +927,7 @@ void ISR_VECT receive_callback(int packet_size) {
       // This is the second part of a split
       // packet, so we add it to the buffer
       // and set the ready flag.
-      #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+      #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
         last_rssi = (last_rssi+LoRa->packetRssi())/2;
         last_snr_raw = (last_snr_raw+LoRa->packetSnrRaw())/2;
       #endif
@@ -938,7 +948,7 @@ void ISR_VECT receive_callback(int packet_size) {
       #endif
       seq = sequence;
 
-      #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+      #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
         last_rssi = LoRa->packetRssi();
         last_snr_raw = LoRa->packetSnrRaw();
       #endif
@@ -961,7 +971,7 @@ void ISR_VECT receive_callback(int packet_size) {
         seq = SEQ_UNSET;
       }
 
-      #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+      #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
         last_rssi = LoRa->packetRssi();
         last_snr_raw = LoRa->packetSnrRaw();
       #endif
@@ -974,7 +984,7 @@ void ISR_VECT receive_callback(int packet_size) {
     // output directly to the host
     read_len = 0;
 
-    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
       last_rssi = LoRa->packetRssi();
       last_snr_raw = LoRa->packetSnrRaw();
       getPacketData(packet_size);
@@ -994,7 +1004,7 @@ void ISR_VECT receive_callback(int packet_size) {
   }
 
   if (ready) {
-    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
       // We first signal the RSSI of the
       // recieved packet to the host.
       kiss_indicate_stat_rssi();
@@ -1080,7 +1090,9 @@ bool startRadio() {
 }
 
 void stopRadio() {
+  #if defined(LORA_TRANSPORT)
   LoRa->end();
+  #endif
   radio_online = false;
 }
 
@@ -2017,6 +2029,13 @@ void validate_status() {
       uint8_t F_POR = 0x00;
       uint8_t F_BOR = 0x00;
       uint8_t F_WDR = 0x01;
+  #elif MCU_VARIANT == MCU_NATIVE
+      // Native userspace daemon — no MCU reset cause registers. Report
+      // a synthetic "power-on, bootloader path" status.
+      uint8_t boot_flags = 0x02;
+      uint8_t F_POR = 0x00;
+      uint8_t F_BOR = 0x00;
+      uint8_t F_WDR = 0x01;
   #endif
 
   if (hw_ready || device_init_done) {
@@ -2394,7 +2413,7 @@ volatile bool serial_polling = false;
 void serial_poll() {
   serial_polling = true;
 
-  #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+  #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
   while (!fifo_isempty_locked(&serialFIFO)) {
   #else
   while (!fifo_isempty(&serialFIFO)) {
@@ -2432,7 +2451,7 @@ void buffer_serial() {
     {
       c++;
 
-      #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+      #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
         if (!fifo_isfull_locked(&serialFIFO)) { fifo_push_locked(&serialFIFO, Serial.read()); }
       #elif HAS_BLUETOOTH || HAS_BLE == true || HAS_WIFI
         if      (bt_state == BT_STATE_CONNECTED) { if (!fifo_isfull(&serialFIFO)) { fifo_push(&serialFIFO, SerialBT.read()); } }

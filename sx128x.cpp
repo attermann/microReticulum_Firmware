@@ -570,7 +570,7 @@ void sx128x::onReceive(void(*callback)(int)) {
 
     executeOpcode(OP_SET_IRQ_FLAGS_8X, buf, 8);
 
-    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
       #ifdef SPI_HAS_NOTUSINGINTERRUPT
         SPI.usingInterrupt(digitalPinToInterrupt(_dio0));
       #endif
@@ -580,7 +580,7 @@ void sx128x::onReceive(void(*callback)(int)) {
 
   } else {
     detachInterrupt(digitalPinToInterrupt(_dio0));
-    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
       #ifdef SPI_HAS_NOTUSINGINTERRUPT
         _spiModem->notUsingInterrupt(digitalPinToInterrupt(_dio0));
       #endif
