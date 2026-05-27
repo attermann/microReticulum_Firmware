@@ -774,12 +774,13 @@ void setup() {
       // discover us immediately. The node name is sent as the announce
       // app_data (plain UTF-8 bytes), matching nomadnet/Node.py:217-222 —
       // this is what other NomadNet clients show in their site listing.
-      //stats_destination.announce("microReticulum Transport Node");
-      char stats_announce_data[64];
-      snprintf(stats_announce_data, sizeof(stats_announce_data),
-               "microReticulum Node [%s]", device_uid_str);
-      TRACEF("Announcing NomadNet pages \"%s\" at destination %s", stats_announce_data, stats_destination.hash().toHex().c_str());
-      stats_destination.announce(stats_announce_data);
+      {
+        char stats_announce_data[64];
+        snprintf(stats_announce_data, sizeof(stats_announce_data),
+                "microReticulum Node [%s]", device_uid_str);
+        TRACEF("Announcing NomadNet pages \"%s\" at destination %s", stats_announce_data, stats_destination.hash().toHex().c_str());
+        stats_destination.announce(stats_announce_data);
+      }
 #endif // URTN_STATS_PAGES
 
       HEAD("RNS is READY!", RNS::LOG_TRACE);

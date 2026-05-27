@@ -242,8 +242,8 @@ void wifi_update_status() {
   //Serial.println(wr_wifi_status);
   if (wr_wifi_status == WL_CONNECTED) {
     wr_device_ip = WiFi.localIP();
-    Serial.print("[WiFi] ip: ");
-    Serial.println(WiFi.localIP());
+    //Serial.print("[WiFi] ip: ");
+    //Serial.println(WiFi.localIP());
   }
   if (wifi_mode == WR_WIFI_AP && wifi_initialized) { wr_device_ip = WiFi.softAPIP(); wr_wifi_status = WL_CONNECTED; }
   if (wifi_init_ran && wifi_mode == WR_WIFI_STA && wr_wifi_status != WL_CONNECTED) {
