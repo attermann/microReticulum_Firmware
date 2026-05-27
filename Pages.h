@@ -29,8 +29,12 @@
 #include <string>
 
 extern RNS::Interface lora_interface;
-#if defined(UDP_TRANSPORT)
+#if HAS_WIFI && defined(UDP_TRANSPORT)
 extern RNS::Interface udp_interface;
+extern IPAddress wr_device_ip;
+extern uint16_t udp_port;
+extern uint8_t wifi_mode;
+extern char wr_ssid[];
 #endif
 
 void add_interface_details(RNS::Bytes& content, const RNS::Interface& interface) {
@@ -242,13 +246,21 @@ RNS::Bytes serve_page(
   	  else if (category == "interfaces") {
         content = "{\n";
         content << "  \"" << lora_interface.name().c_str() << "\": {\n";
-        add_interface_details(content, lora_interface);
+        content << "    \"frequency\": " << std::to_string(lora_freq) << ",\n";
+        content << "    \"bandwidth\": " << std::to_string(lora_bw) << ",\n";
+        content << "    \"tx_power\": " << std::to_string(lora_txp) << ",\n";
+        content << "    \"spreading_factor\": " << std::to_string(lora_sf) << ",\n";
+        content << "    \"coding_rate\": " << std::to_string(lora_cr) << ",\n";
         content << "    \"current_rssi\": " << std::to_string(last_rssi+rssi_offset) << ",\n";
         content << "    \"current_snr\": " << std::to_string(last_snr_raw) << ",\n";
+        add_interface_details(content, lora_interface);
       	content << "  },\n";
 #if defined(UDP_TRANSPORT)
-        if (udp_interface) {
+        if (wifi_mode != WR_WIFI_OFF && udp_interface) {
           content << "  \"" << udp_interface.name().c_str() << "\": {\n";
+          content << "    \"ip_addr\": \"" << wr_device_ip.toString().c_str() << "\",\n";
+          content << "    \"udp_port\": " << std::to_string(udp_port) << ",\n";
+          content << "    \"wifi_ssid\": \"" << wr_ssid << "\",\n";
           add_interface_details(content, udp_interface);
       	  content << "  },\n";
         }

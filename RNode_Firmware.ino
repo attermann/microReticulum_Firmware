@@ -22,7 +22,7 @@
 #include <Log.h>
 #include <Bytes.h>
 #endif
-#include "LoRaInterface.h"
+//#include "LoRaInterface.h"
 #if defined(UDP_TRANSPORT)
 #include "UDPInterface.h"
 #endif
@@ -33,6 +33,7 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include "Utilities.h"
+#include "DeviceUID.h"
 
 // CBA SD
 #if HAS_SDCARD
@@ -93,6 +94,80 @@ void update_csma_parameters();
 #endif
 
 #ifdef HAS_RNS
+// CBA LoRa interface
+class LoRaInterface : public RNS::InterfaceImpl {
+public:
+	LoRaInterface(const char *name) : RNS::InterfaceImpl(name) {
+		_IN = true;
+		_OUT = true;
+		_HW_MTU = 508;
+    _bitrate = lora_bitrate;
+	}
+	LoRaInterface() : LoRaInterface("LoRaInterface") {}
+	virtual ~LoRaInterface() {
+		_name = "deleted";
+	}
+protected:
+	virtual void handle_incoming(const RNS::Bytes& data) {
+    TRACEF("LoRaInterface.handle_incoming: (%u bytes) data: %s", data.size(), data.toHex().c_str());
+    TRACE("LoRaInterface.handle_incoming: sending packet to rns...");
+    try {
+      InterfaceImpl::handle_incoming(data);
+    }
+    catch (const std::bad_alloc&) {
+      ERROR("LoRaInterface::handle_incoming: bad_alloc - out of memory");
+    }
+    catch (std::exception& e) {
+      ERRORF("LoRaInterface::handle_incoming: %s", e.what());
+    }
+  }
+	virtual bool send_outgoing(const RNS::Bytes& data) {
+    // CBA NOTE header will be addded later by transmit function
+    TRACEF("LoRaInterface.send_outgoing: (%u bytes) data: %s", data.size(), data.toHex().c_str());
+    try {
+      TRACE("LoRaInterface.send_outgoing: adding packet to outgoing queue...");
+      for (size_t i = 0; i < data.size(); i++) {
+          if (queue_height < CONFIG_QUEUE_MAX_LENGTH && queued_bytes < CONFIG_QUEUE_SIZE) {
+              queued_bytes++;
+              packet_queue[queue_cursor++] = data.data()[i];
+              if (queue_cursor == CONFIG_QUEUE_SIZE) queue_cursor = 0;
+          }
+      }
+      if (!fifo16_isfull(&packet_starts) && queued_bytes < CONFIG_QUEUE_SIZE) {
+          uint16_t s = current_packet_start;
+          int16_t e = queue_cursor-1; if (e == -1) e = CONFIG_QUEUE_SIZE-1;
+          uint16_t l;
+
+          if (s != e) {
+              l = (s < e) ? e - s + 1 : CONFIG_QUEUE_SIZE - s + e + 1;
+          } else {
+              l = 1;
+          }
+
+          if (l >= MIN_L) {
+              queue_height++;
+
+              fifo16_push(&packet_starts, s);
+              fifo16_push(&packet_lengths, l);
+
+              current_packet_start = queue_cursor;
+          }
+
+      }
+      // Perform post-send housekeeping
+      InterfaceImpl::handle_outgoing(data);
+    }
+    catch (const std::bad_alloc&) {
+      ERROR("LoRaInterface::send_outgoing: bad_alloc - out of memory");
+      return false;
+    }
+    catch (std::exception& e) {
+      ERRORF("LoRaInterface::send_outgoing: %s", e.what());
+      return false;
+    }
+    return true;
+  }
+};
 // CBA logger callback
 void on_log(const char* msg, RNS::LogLevel level) {
   // Using individual Serial.print statements to avoid memory allocation for String
@@ -225,6 +300,9 @@ void setup() {
 	printf("Total PSRAM: %7u bytes\n", ESP.getPsramSize());
 #endif
 	//printf("Total flash: %zu bytes\n", RNS::Utilities::OS::storage_size());
+
+  device_uid_init();
+  printf("Device UID:  %s\n", device_uid_str);
 
   // Configure WDT
   #if MCU_VARIANT == MCU_ESP32
@@ -695,7 +773,12 @@ void setup() {
       // discover us immediately. The node name is sent as the announce
       // app_data (plain UTF-8 bytes), matching nomadnet/Node.py:217-222 —
       // this is what other NomadNet clients show in their site listing.
-      stats_destination.announce("microReticulum Transport Node Stats");
+      //stats_destination.announce("microReticulum Transport Node");
+      char stats_announce_data[64];
+      snprintf(stats_announce_data, sizeof(stats_announce_data),
+               "microReticulum Node [%s]", device_uid_str);
+      TRACEF("Announcing NomadNet pages \"%s\" at destination %s", stats_announce_data, stats_destination.hash().toHex().c_str());
+      stats_destination.announce(stats_announce_data);
 #endif // URTN_STATS_PAGES
 
       HEAD("RNS is READY!", RNS::LOG_TRACE);
