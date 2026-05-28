@@ -6,7 +6,8 @@
 
 #include "config.h"
 #include "EEPROMShim.h"
-#include "../ROM.h"   // CONF_OK_BYTE and ADDR_* offsets
+#include "../Boards.h"   // PRODUCT_NATIVE_LINUX / MODEL_60 / BOARD_NATIVE_LINUX constants
+#include "../ROM.h"      // CONF_OK_BYTE, INFO_LOCK_BYTE, ADDR_* offsets
 #include <cstdio>
 
 #ifdef PORTDUINO_LINUX_HARDWARE
@@ -98,24 +99,50 @@ void bind_linux_gpios() {
 // setup(). Only runs if the EEPROM image lacks the CONF_OK_BYTE sentinel
 // (first boot or after explicit reset).
 void seed_eeprom_if_unprovisioned() {
-    if (EEPROM.read(ADDR_CONF_OK) == CONF_OK_BYTE) return;
+    // The firmware reads logical addresses via Config.h's
+    //   #define eeprom_addr(a) (a + EEPROM_OFFSET)
+    // so we must apply the same translation when writing, or our bytes
+    // land 824 bytes (EEPROM_SIZE - EEPROM_RESERVED) off from where
+    // validate_status() and eeprom_conf_load() look for them. Local
+    // helper avoids repeating the offset on every write.
+    auto write_at = [](int addr, uint8_t val) {
+        EEPROM.write(addr + EEPROM_OFFSET, val);
+    };
+    auto read_at = [](int addr) -> uint8_t {
+        return EEPROM.read(addr + EEPROM_OFFSET);
+    };
 
+    if (read_at(ADDR_CONF_OK) == CONF_OK_BYTE) return;
+
+    // --- Device-identity provisioning ---
+    // Write enough of the rnodeconf-style provisioning header that
+    // eeprom_lock_set(), eeprom_product_valid(), eeprom_model_valid(),
+    // and eeprom_hwrev_valid() in Utilities.h all return true on native
+    // builds. The MD5 checksum check (eeprom_checksum_valid()) is gated
+    // out via -DDISABLE_FIRMWARE_CHECKSUM in the native PlatformIO envs,
+    // so we deliberately don't compute / write ADDR_CHKSUM here.
+    write_at(ADDR_PRODUCT,   PRODUCT_NATIVE_LINUX);   // 0x60
+    write_at(ADDR_MODEL,     MODEL_60);               // 0x60
+    write_at(ADDR_HW_REV,    1);                      // any non-0x00/0xFF
+    write_at(ADDR_INFO_LOCK, INFO_LOCK_BYTE);         // 0x73
+
+    // --- LoRa radio configuration ---
     const auto& c = native_config::g_config;
-    EEPROM.write(ADDR_CONF_SF,  c.lora_sf);
-    EEPROM.write(ADDR_CONF_CR,  c.lora_cr);
-    EEPROM.write(ADDR_CONF_TXP, static_cast<uint8_t>(c.lora_txp));
+    write_at(ADDR_CONF_SF,  c.lora_sf);
+    write_at(ADDR_CONF_CR,  c.lora_cr);
+    write_at(ADDR_CONF_TXP, static_cast<uint8_t>(c.lora_txp));
 
-    EEPROM.write(ADDR_CONF_FREQ + 0, (c.lora_freq_hz >> 24) & 0xFF);
-    EEPROM.write(ADDR_CONF_FREQ + 1, (c.lora_freq_hz >> 16) & 0xFF);
-    EEPROM.write(ADDR_CONF_FREQ + 2, (c.lora_freq_hz >>  8) & 0xFF);
-    EEPROM.write(ADDR_CONF_FREQ + 3, (c.lora_freq_hz      ) & 0xFF);
+    write_at(ADDR_CONF_FREQ + 0, (c.lora_freq_hz >> 24) & 0xFF);
+    write_at(ADDR_CONF_FREQ + 1, (c.lora_freq_hz >> 16) & 0xFF);
+    write_at(ADDR_CONF_FREQ + 2, (c.lora_freq_hz >>  8) & 0xFF);
+    write_at(ADDR_CONF_FREQ + 3, (c.lora_freq_hz      ) & 0xFF);
 
-    EEPROM.write(ADDR_CONF_BW + 0, (c.lora_bw_hz >> 24) & 0xFF);
-    EEPROM.write(ADDR_CONF_BW + 1, (c.lora_bw_hz >> 16) & 0xFF);
-    EEPROM.write(ADDR_CONF_BW + 2, (c.lora_bw_hz >>  8) & 0xFF);
-    EEPROM.write(ADDR_CONF_BW + 3, (c.lora_bw_hz      ) & 0xFF);
+    write_at(ADDR_CONF_BW + 0, (c.lora_bw_hz >> 24) & 0xFF);
+    write_at(ADDR_CONF_BW + 1, (c.lora_bw_hz >> 16) & 0xFF);
+    write_at(ADDR_CONF_BW + 2, (c.lora_bw_hz >>  8) & 0xFF);
+    write_at(ADDR_CONF_BW + 3, (c.lora_bw_hz      ) & 0xFF);
 
-    EEPROM.write(ADDR_CONF_OK, CONF_OK_BYTE);
+    write_at(ADDR_CONF_OK, CONF_OK_BYTE);
     EEPROM.commit();
     std::fprintf(stderr, "[pinmap] seeded EEPROM image from config\n");
 }

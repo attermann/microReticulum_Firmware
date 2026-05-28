@@ -46,6 +46,13 @@ namespace native_pinmap {
     void seed_eeprom_if_unprovisioned();
 }
 
+// Forward declarations matching Config.h. We can't include Config.h
+// directly here because it contains file-scope variable definitions
+// (e.g. `uint8_t op_mode = MODE_HOST;`) that would cause multiple-
+// definition link errors when included from a second TU.
+extern uint8_t op_mode;
+#define FIRMWARE_MODE_TNC 0x12   // mirrors MODE_TNC in Config.h
+
 // Portduino calls this before invoking the Arduino sketch's setup().
 // The symbol replaces Portduino's weak default (which has C++ linkage,
 // no extern "C") — match its signature exactly so the linker picks ours.
@@ -101,4 +108,13 @@ void portduinoSetup() {
     // 7) EEPROM image (file-backed shim — see native/EEPROMShim.h).
     EEPROM.begin(EEPROM_SIZE);
     native_pinmap::seed_eeprom_if_unprovisioned();
+
+    // 8) Force TNC mode on the native daemon. The embedded firmware flips
+    //    op_mode to MODE_TNC only when `hw_ready && eeprom_have_conf()`,
+    //    which requires real radio hardware. On the native daemon — where
+    //    we may run without a connected modem (or where the modem driver
+    //    is fully bypassed on macOS via LORA_TRANSPORT) — we mark the
+    //    daemon as TNC explicitly so the Reticulum Transport runs in
+    //    enabled mode rather than the host-protocol fallback.
+    op_mode = FIRMWARE_MODE_TNC;
 }

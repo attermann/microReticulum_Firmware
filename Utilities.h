@@ -1674,6 +1674,8 @@ bool eeprom_product_valid() {
 	if (rval == PRODUCT_RNODE || rval == BOARD_RNODE_NG_20 || rval == BOARD_RNODE_NG_21 || rval == PRODUCT_HMBRW || rval == PRODUCT_TBEAM || rval == PRODUCT_T32_10 || rval == PRODUCT_T32_20 || rval == PRODUCT_T32_21 || rval == PRODUCT_H32_V2 || rval == PRODUCT_H32_V3 || rval == PRODUCT_H32_V4 || rval == PRODUCT_TDECK_V1 || rval == PRODUCT_TBEAM_S_V1  || rval == PRODUCT_XIAO_S3) {
 	#elif PLATFORM == PLATFORM_NRF52
 	if (rval == PRODUCT_RAK4631 || rval == PRODUCT_HELTEC_T114 || rval == PRODUCT_TECHO || rval == PRODUCT_HMBRW) {
+	#elif PLATFORM == PLATFORM_NATIVE
+	if (rval == PRODUCT_NATIVE_LINUX) {
 	#else
 	if (false) {
 	#endif
@@ -1729,6 +1731,8 @@ bool eeprom_model_valid() {
 	if (model == MODEL_FF) {
 	#elif BOARD_MODEL == BOARD_GENERIC_ESP32
 	if (model == MODEL_FF || model == MODEL_FE) {
+	#elif BOARD_MODEL == BOARD_NATIVE_LINUX
+	if (model == MODEL_60) {
 	#else
 	if (false) {
 	#endif

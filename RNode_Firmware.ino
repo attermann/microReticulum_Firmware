@@ -1102,8 +1102,14 @@ bool startRadio() {
 }
 
 void stopRadio() {
+  // Idempotent: LoRa->end() calls SPI.end() which nulls Portduino's
+  // spiChip on native. The main loop's `else { stopRadio(); }` branch
+  // fires every iteration while radio_online is false, so we must not
+  // re-end an already-stopped radio — otherwise the next SPI access
+  // (e.g. lora_receive() at the tail of flush_queue) asserts on a null
+  // spiChip.
   #if defined(LORA_TRANSPORT)
-  LoRa->end();
+  if (radio_online) LoRa->end();
   #endif
   radio_online = false;
 }
@@ -2082,7 +2088,14 @@ void validate_status() {
   if (boot_vector == START_FROM_BOOTLOADER || boot_vector == START_FROM_POWERON) {
     if (eeprom_lock_set()) {
       if (eeprom_product_valid() && eeprom_model_valid() && eeprom_hwrev_valid()) {
+#ifdef DISABLE_FIRMWARE_CHECKSUM
+        // Native builds self-provision the EEPROM in PinMap.cpp's
+        // seed_eeprom_if_unprovisioned() but skip MD5 computation —
+        // they short-circuit the checksum check here.
+        if (true) {
+#else
         if (eeprom_checksum_valid()) {
+#endif
           eeprom_ok = true;
           if (modem_installed) {
             #if PLATFORM == PLATFORM_ESP32 || PLATFORM == PLATFORM_NRF52 || PLATFORM == PLATFORM_NATIVE
