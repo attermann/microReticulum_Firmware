@@ -115,8 +115,8 @@ RNS::Bytes serve_page(
       content = "> microReticulum Stats\n";
       content << ">> Memory\n";
       content << "`!`[• Heap Memory`:/page/stack.mu`c=heap]`\n";
-      content << "`!`[• Default Allocator`:/page/stack.mu`c=dalloc]`\n";
-      content << "`!`[• Container Allocator`:/page/stack.mu`c=calloc]`\n";
+      content << "`!`[• Memory Pools`:/page/stack.mu`c=pool]`\n";
+      content << "`!`[• Memory Allocators`:/page/stack.mu`c=alloc]`\n";
       content << ">> Storage\n";
       content << "`!`[• Flash Memory`:/page/stack.mu`c=flash]`\n";
       content << "`!`[• Object Stores`:/page/stack.mu`c=store]`\n";
@@ -127,11 +127,11 @@ RNS::Bytes serve_page(
     }
     else if (path == "/page/stack.mu") {
   	  if (category == "heap") {
-#if defined(ESP32)
         content = "{\n";
-        content << "  \"heap_size\": " << std::to_string(ESP.getHeapSize()) << ",\n";
-        content << "  \"heap_free\": " << std::to_string(ESP.getFreeHeap()) << ",\n";
-        content << "  \"heap_freepct\": " << std::to_string((unsigned)((double)ESP.getFreeHeap() / (double)ESP.getHeapSize() * 100.0)) << ",\n";
+        content << "  \"heap_size\": " << std::to_string(RNS::Utilities::Memory::heap_size()) << ",\n";
+        content << "  \"heap_free\": " << std::to_string(RNS::Utilities::Memory::heap_available()) << ",\n";
+        content << "  \"heap_freepct\": " << std::to_string((unsigned)((double)RNS::Utilities::Memory::heap_available() / (double)RNS::Utilities::Memory::heap_size() * 100.0)) << ",\n";
+#if defined(ESP32)
         content << "  \"heap_minfree\": " << std::to_string(ESP.getMinFreeHeap()) << ",\n";
         content << "  \"heap_maxalloc\": " << std::to_string(ESP.getMaxAllocHeap()) << ",\n";
         content << "  \"heap_fragmented\": " << std::to_string((unsigned)(100.0 - (double)ESP.getMaxAllocHeap() / (double)ESP.getFreeHeap() * 100.0)) << ",\n";
@@ -167,6 +167,12 @@ RNS::Bytes serve_page(
         //content << "  \"fs_free\": " << std::to_string(fs_free) << ",\n";
         //content << "  \"fs_freepct\": " << std::to_string(fs_freepct) << ",\n";
       	content << "}";
+      }
+      else if (category == "pool") {
+        content = "NOT YET IMPLEMENTED\n";
+      }
+      else if (category == "alloc") {
+        content = "NOT YET IMPLEMENTED\n";
       }
       else if (category == "store") {
         uint32_t destination_path_responses = 0;
