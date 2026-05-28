@@ -9,6 +9,12 @@
 #include "../ROM.h"   // CONF_OK_BYTE and ADDR_* offsets
 #include <cstdio>
 
+#ifdef PORTDUINO_LINUX_HARDWARE
+#include <PortduinoGPIO.h>
+#include <linux/gpio/LinuxGPIOPin.h>
+#include <string>
+#endif
+
 // --- Pin globals (single definition) ---
 int pin_cs           = -1;
 int pin_reset        = -1;
@@ -45,6 +51,46 @@ void apply() {
     pin_sclk        = c.pin_sclk;
     pin_mosi        = c.pin_mosi;
     pin_miso        = c.pin_miso;
+}
+
+// Bind Portduino's logical pin numbers to real libgpiod-backed lines.
+// Identity-mapping: the value of `pin_*` in microreticulum.conf is treated
+// as both the Portduino logical pin number AND the gpiochip line offset
+// (BCM number on a Raspberry Pi). No-op on macOS / cross_platform — the
+// `#ifdef PORTDUINO_LINUX_HARDWARE` body is empty there.
+//
+// Excludes the SPI bus pins (CS, SCLK, MOSI, MISO). Those lines are owned
+// by the `spidev` kernel driver via the Pi's device tree; requesting them
+// through libgpiod from userspace would conflict.
+void bind_linux_gpios() {
+#ifdef PORTDUINO_LINUX_HARDWARE
+    // gpio_chip from config is a /dev path like "/dev/gpiochip0"; Portduino
+    // wants just the trailing chip label ("gpiochip0").
+    std::string chipLabel = native_config::g_config.gpio_chip;
+    const auto slash = chipLabel.rfind('/');
+    if (slash != std::string::npos) chipLabel = chipLabel.substr(slash + 1);
+
+    auto bind = [&](int pin, const char* name) {
+        if (pin < 0) return;  // -1 = disabled in config
+        gpioBind(new LinuxGPIOPin(pin, chipLabel.c_str(), pin, name));
+    };
+
+    const auto& c = native_config::g_config;
+    bind(c.pin_reset,       "RESET");
+    bind(c.pin_busy,        "BUSY");
+    bind(c.pin_dio,         "DIO1");
+    bind(c.pin_rxen,        "RXEN");
+    bind(c.pin_txen,        "TXEN");
+    bind(c.pin_tcxo_enable, "TCXO_EN");
+    bind(c.pin_led_rx,      "LED_RX");
+    bind(c.pin_led_tx,      "LED_TX");
+    // CS / SCLK / MOSI / MISO intentionally left as Portduino sim pins —
+    // spidev owns them. The modem driver's digitalWrite(_ss, ...) goes to
+    // the sim path, but spidev toggles CS itself per transaction.
+
+    std::fprintf(stderr, "[pinmap] bound Linux GPIOs on %s\n",
+                 chipLabel.c_str());
+#endif
 }
 
 // Seed the EEPROM image with the LoRa radio settings from config so the

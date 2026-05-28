@@ -42,6 +42,7 @@ extern "C" char* strchrnul(const char* s, int c) {
 
 namespace native_pinmap {
     void apply();
+    void bind_linux_gpios();   // no-op on macOS / cross_platform
     void seed_eeprom_if_unprovisioned();
 }
 
@@ -71,16 +72,24 @@ void portduinoSetup() {
         // Portduino started us.
     }
 
-    // 4) Banner. macOS launches headless — no Reticulum interfaces
-    //    registered (LORA_TRANSPORT is removed from build_flags for this
-    //    env). Future UDPInterface support will land separately.
+    // 4) Banner — make the mode obvious in the log.
     #if !defined(LORA_TRANSPORT)
+        // macOS launches headless: no Reticulum interfaces registered
+        // (LORA_TRANSPORT is unflagged from [env:native-macos]).
+        // Future UDPInterface support will land separately.
         std::fprintf(stderr, "[native] no LoRa interface (LORA_TRANSPORT undefined)\n");
+    #elif defined(PORTDUINO_LINUX_HARDWARE)
+        // Linux native: real /dev/spidev + libgpiod backing.
+        std::fprintf(stderr, "[native] Linux hardware mode (spi=%s gpio=%s)\n",
+                     native_config::g_config.spi_dev.c_str(),
+                     native_config::g_config.gpio_chip.c_str());
     #endif
 
-    // 5) Pin map. Still applied for consistency; the values are unused
-    //    by anything on native-macos because no driver touches SPI/GPIO.
+    // 5) Pin map. apply() copies g_config.pin_* into the extern int pin_*
+    //    globals consulted by the modem driver. bind_linux_gpios() then
+    //    registers libgpiod-backed pins with Portduino (no-op on macOS).
     native_pinmap::apply();
+    native_pinmap::bind_linux_gpios();
 
     // 6) Bind a SimSPIChip as a safety net. With LORA_TRANSPORT removed,
     //    the modem driver no longer initiates SPI activity, but Portduino's
