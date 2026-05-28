@@ -14,3 +14,4 @@ Debug*
 microreticulum.conf
 # EEPROM image written by native-build EEPROMShim (user-local, regenerated on boot)
 eeprom
+state/*

@@ -206,10 +206,13 @@ extern RNS::Reticulum reticulum;
 #endif
 
 #if MCU_VARIANT == MCU_1284P || MCU_VARIANT == MCU_2560 || MCU_VARIANT == MCU_NATIVE
-	void led_rx_on()  { digitalWrite(pin_led_rx, HIGH); }
-	void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
-	void led_tx_on()  { digitalWrite(pin_led_tx, HIGH); }
-	void led_tx_off() { digitalWrite(pin_led_tx, LOW); }
+	// -1 = "no LED" — needed for native builds where the LED pins are
+	// optional. On AVR the const-int defaults are always >= 0, so these
+	// guards are trivially true on those boards (no regression).
+	void led_rx_on()  { if (pin_led_rx >= 0) digitalWrite(pin_led_rx, HIGH); }
+	void led_rx_off() { if (pin_led_rx >= 0) digitalWrite(pin_led_rx, LOW);  }
+	void led_tx_on()  { if (pin_led_tx >= 0) digitalWrite(pin_led_tx, HIGH); }
+	void led_tx_off() { if (pin_led_tx >= 0) digitalWrite(pin_led_tx, LOW);  }
 	void led_id_on()  { }
 	void led_id_off() { }
 #elif MCU_VARIANT == MCU_ESP32
@@ -628,7 +631,7 @@ int8_t  led_standby_direction = 0;
 				led_standby_direction = -1;
 			}
 			led_standby_value += led_standby_direction;
-			analogWrite(pin_led_rx, led_standby_value);
+			if (pin_led_rx >= 0) analogWrite(pin_led_rx, led_standby_value);
 			led_tx_off();
 		}
 	}
@@ -745,7 +748,7 @@ int8_t  led_standby_direction = 0;
 				led_standby_direction = -1;
 			}
 			led_standby_value += led_standby_direction;
-			analogWrite(pin_led_tx, led_standby_value);
+			if (pin_led_tx >= 0) analogWrite(pin_led_tx, led_standby_value);
 			led_rx_off();
 		}
 	}

@@ -420,8 +420,10 @@ void setup() {
   #endif
 
   #if HAS_NP == false
-    pinMode(pin_led_rx, OUTPUT);
-    pinMode(pin_led_tx, OUTPUT);
+    // -1 = "no LED" — skip pinMode rather than pass -1 (which Portduino's
+    // pin_size_t-cast turns into 255 and asserts > NUM_GPIOS).
+    if (pin_led_rx >= 0) pinMode(pin_led_rx, OUTPUT);
+    if (pin_led_tx >= 0) pinMode(pin_led_tx, OUTPUT);
   #endif
 
   #if HAS_TCXO == true
