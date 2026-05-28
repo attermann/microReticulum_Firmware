@@ -94,6 +94,16 @@ char sbuf[128];
 void update_csma_parameters();
 #endif
 
+// CBA Forward function declarations for CPP compatibility
+void serial_interrupt_init();
+void validate_status();
+void update_radio_lock();
+void transmit(uint16_t size);
+void update_airtime();
+void update_modem_status();
+void buffer_serial();
+void serial_poll();
+
 #ifdef HAS_RNS
 // CBA LoRa interface
 class LoRaInterface : public RNS::InterfaceImpl {
