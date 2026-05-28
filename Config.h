@@ -213,6 +213,20 @@
 	uint32_t last_status_update = 0;
 	uint32_t last_dcd = 0;
 
+	// SX1262 RX-stall watchdog. handleDio0Rise() bumps rx_done_events on every
+	// RX_DONE; dcd()'s self-heal bumps rx_header_aborts each time it clears a
+	// stuck header-detect. When RX_STALL_ABORT_LIMIT headers abort with no
+	// completed reception in between, the RX path is wedged — and only a full
+	// radio re-init recovers it (re-arming via receive() leaves a latched
+	// RX_DONE / detached DIO0 untouched). Lower for faster recovery, raise to
+	// reduce false re-inits on noisy channels.
+	volatile uint32_t rx_done_events    = 0;
+	volatile uint32_t rx_header_aborts  = 0;
+	uint32_t rx_done_events_seen        = 0;
+	uint32_t rx_aborts_baseline         = 0;
+	bool     rx_stall_recover           = false;
+	#define RX_STALL_ABORT_LIMIT 3
+
     // Power management
     #define BATTERY_STATE_UNKNOWN     0x00
     #define BATTERY_STATE_DISCHARGING 0x01

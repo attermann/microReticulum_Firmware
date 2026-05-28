@@ -50,9 +50,16 @@ prep-nrf:
 	arduino-cli core install rakwireless:nrf52 --config-file arduino-cli.yaml
 	arduino-cli core install Heltec_nRF52:Heltec_nRF52 --config-file arduino-cli.yaml
 	arduino-cli core install adafruit:nrf52 --config-file arduino-cli.yaml
+	arduino-cli lib install "Adafruit SSD1306"
+	arduino-cli lib install "Adafruit SH110X"
+	arduino-cli lib install "Adafruit ST7735 and ST7789 Library"
+	arduino-cli lib install "Adafruit NeoPixel"
+	arduino-cli lib install "XPowersLib"
+	arduino-cli lib install "Crypto"
 	arduino-cli lib install "GxEPD2"
 	arduino-cli config set library.enable_unsafe_install true
 	arduino-cli lib install --git-url https://github.com/liamcottle/esp8266-oled-ssd1306#e16cee124fe26490cb14880c679321ad8ac89c95
+	arduino-cli lib install --git-url https://github.com/RAKWireless/RAK13800-W5100S
 	pip install adafruit-nrfutil --upgrade
 
 console-site:
@@ -496,6 +503,7 @@ release-rak4631:
 	arduino-cli compile --fqbn rakwireless:nrf52:WisCoreRAK4631Board -e --build-property "build.partitions=no_ota" --build-property "upload.maximum_size=2097152" --build-property "compiler.cpp.extra_flags=\"-DBOARD_MODEL=0x51\""
 	cp build/rakwireless.nrf52.WisCoreRAK4631Board/RNode_Firmware.ino.hex build/rnode_firmware_rak4631.hex
 	adafruit-nrfutil dfu genpkg --dev-type 0x0052 --application build/rnode_firmware_rak4631.hex Release/rnode_firmware_rak4631.zip
+
 
 release-heltec_t114:
 	arduino-cli compile --fqbn Heltec_nRF52:Heltec_nRF52:HT-n5262 -e --build-property "build.partitions=no_ota" --build-property "upload.maximum_size=2097152" --build-property "compiler.cpp.extra_flags=\"-DBOARD_MODEL=0x3C\""
