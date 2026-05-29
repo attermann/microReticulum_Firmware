@@ -6,11 +6,11 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
-#include <sys/time.h>
 #include <unistd.h>
 
 namespace native_kiss_tcp {
