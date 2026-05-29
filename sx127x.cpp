@@ -522,47 +522,11 @@ void sx127x::handleDio0IfPending() {
   if (_dio0_pending) {
     _dio0_pending = false;
     handleDio0Rise();
-
-    #if MCU_VARIANT == MCU_NATIVE
-      // Resync Portduino's polled edge detector with the chip's actual
-      // pin state. Portduino caches per-pin status and fires the ISR only
-      // on LOW→HIGH transitions of that cached value, refreshed solely by
-      // its gpioIdle() main-loop poll. After handleDio0Rise() clears the
-      // IRQ flag the chip drops DIO0 LOW, but the cache is still HIGH
-      // from the rising-edge fire we just dispatched. If we let polling
-      // resume as-is and a packet arrives before the next gpioIdle() —
-      // even a microsecond before — refreshState() sees HIGH→HIGH, no
-      // edge fires, and every subsequent packet is silently lost.
-      //
-      // Mimic the meshtastic/RadioLib pattern: detach the ISR (Portduino's
-      // refreshIfNeeded() skips pins with isr == NULL, freezing the
-      // status cache), force a STANDBY→RX_CONTINUOUS round-trip on the
-      // chip (silicon-level guarantee that DIO0 transitions LOW and the
-      // chip re-enters RX with a fresh state), then re-attach the ISR.
-      // The first poll after re-attach reads LOW, the cache updates to
-      // LOW, and the next packet's rising edge is detected cleanly.
-      //
-      // The two SPI writes are ~20 µs total — much shorter than any LoRa
-      // symbol time, so the brief STANDBY window can't drop in-flight
-      // packets. Empty digitalRead() alone (an earlier attempt) didn't
-      // fix the bug: chip DIO0 settle latency after IRQ-clear plus
-      // Portduino's read-then-cache ordering left status cached at HIGH
-      // even after the read, so a packet racing in still got missed.
-      if (_dio0 != -1) {
-        detachInterrupt(digitalPinToInterrupt(_dio0));
-        writeRegister(REG_OP_MODE_7X, MODE_LONG_RANGE_MODE_7X | MODE_STDBY_7X);
-        writeRegister(REG_OP_MODE_7X, MODE_LONG_RANGE_MODE_7X | MODE_RX_CONTINUOUS_7X);
-        attachInterrupt(digitalPinToInterrupt(_dio0), sx127x::onDio0Rise, RISING);
-      }
-    #endif
   }
 }
 
 void ISR_VECT sx127x::handleDio0Rise() {
   int irqFlags = readRegister(REG_IRQ_FLAGS_7X);
-
-  // TEMP RX bring-up diagnostic — remove once RX is verified.
-  Serial.print("sx127x: DIO0 fired, irqFlags=0x"); Serial.println(irqFlags, HEX);
 
   // Clear IRQs
   writeRegister(REG_IRQ_FLAGS_7X, irqFlags);
