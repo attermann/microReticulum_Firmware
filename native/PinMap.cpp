@@ -84,12 +84,35 @@ void bind_linux_gpios() {
     const std::string chipLabel = gpiod_chip_label(probe);
     gpiod_chip_close(probe);
 
+    // We attempt to gpioBind() every non-(-1) pin, including CS. Whether
+    // CS *can* be bound depends on the board:
+    //   - Raspberry Pi (dtparam=spi=on): spidev's own CS line (CE0/CE1) is
+    //     declared in the device tree and owned by the SPI driver. The
+    //     gpiod_line_request inside Portduino's LinuxGPIOPin throws
+    //     std::invalid_argument(EBUSY); the catch below leaves the pin as
+    //     a Portduino sim no-op. spidev itself toggles CS during each
+    //     SPI_IOC_MESSAGE, so the modem driver's digitalWrite(_ss, ...)
+    //     being a no-op is fine on that board.
+    //   - LuckFox / FemtoFox / other Rockchip SBCs: spidev typically does
+    //     NOT claim a CS line. The bind succeeds, and the modem driver's
+    //     digitalWrite(_ss, LOW/HIGH) drives the real GPIO — required to
+    //     actually select the LoRa chip.
+    // SCLK / MOSI / MISO are always claimed by the spidev driver via the
+    // pinctrl device tree node, so we never even try those.
     auto bind = [&](int pin, const char* name) {
         if (pin < 0) return;  // -1 = disabled in config
-        gpioBind(new LinuxGPIOPin(pin, chipLabel.c_str(), pin, name));
+        try {
+            gpioBind(new LinuxGPIOPin(pin, chipLabel.c_str(), pin, name));
+        } catch (const std::exception& e) {
+            std::fprintf(stderr,
+                "[pinmap] %s (line %d on %s) NOT bound: %s — leaving as "
+                "Portduino sim (typically because another driver owns the line)\n",
+                name, pin, chipLabel.c_str(), e.what());
+        }
     };
 
     const auto& c = native_config::g_config;
+    bind(c.pin_cs,          "CS");
     bind(c.pin_reset,       "RESET");
     bind(c.pin_busy,        "BUSY");
     bind(c.pin_dio,         "DIO1");
@@ -98,9 +121,6 @@ void bind_linux_gpios() {
     bind(c.pin_tcxo_enable, "TCXO_EN");
     bind(c.pin_led_rx,      "LED_RX");
     bind(c.pin_led_tx,      "LED_TX");
-    // CS / SCLK / MOSI / MISO intentionally left as Portduino sim pins —
-    // spidev owns them. The modem driver's digitalWrite(_ss, ...) goes to
-    // the sim path, but spidev toggles CS itself per transaction.
 
     std::fprintf(stderr, "[pinmap] bound Linux GPIOs on %s (label=%s)\n",
                  chipPath, chipLabel.c_str());
