@@ -15,12 +15,6 @@
 #include <linux/gpio/LinuxGPIOPin.h>
 #include <gpiod.h>
 #include <string>
-
-// Portduino's PortduinoGPIO.cpp defines this but neglects to declare it in
-// PortduinoGPIO.h — only gpioBind() is publicly exposed. Forward-declare the
-// symbol so we can silence per-pin logging on managed lines. The function
-// lives in the global namespace with external linkage.
-GPIOPinIf *getGPIO(pin_size_t n);
 #endif
 
 // --- Pin globals (single definition) ---
@@ -90,25 +84,28 @@ void bind_linux_gpios() {
     const std::string chipLabel = gpiod_chip_label(probe);
     gpiod_chip_close(probe);
 
-    // We deliberately DO NOT bind CS via libgpiod. spidev owns the SPI
-    // controller's hardware CS line via the device tree pinctrl entry and
-    // toggles it automatically around each SPI_IOC_MESSAGE ioctl. If we
-    // also requested the line through libgpiod we'd either:
-    //   - fight spidev for the same pad (LuckFox / Rockchip-class SBCs
-    //     where SPI0_CS0 is exposed as a regular gpiochip line), or
-    //   - fail with EBUSY (Raspberry Pi, where the SPI driver claims CE0/
-    //     CE1 outright).
-    // Either way, the modem driver's digitalWrite(_ss, LOW/HIGH) becomes a
-    // Portduino sim no-op — harmless, because spidev is the only thing
-    // actually driving the pad. SX127x readRegister/writeRegister now send
-    // address+data as a single ioctl (sx127x.cpp::singleTransfer), so CS
-    // stays asserted across the pair under spidev's automatic toggling.
+    // Pattern adopted from meshtasticd (PortduinoGlue.cpp::initGPIOPin):
+    // construct the pin, mark it silent BEFORE binding, then hand to
+    // gpioBind. Portduino's base GPIOPin::writePin/refreshState/setPinMode
+    // all log unconditionally via the unfiltered Portduino log(); the only
+    // way to quiet them is the per-pin silent flag. Once silenced, normal
+    // SPI activity (CS toggles) and Portduino's ISR-poll thread no longer
+    // drown the output — the modem driver's own Serial logs come through.
+    //
     // SCLK / MOSI / MISO are always claimed by the spidev driver via the
-    // pinctrl device tree node, so we never even try those.
-    auto bind = [&](int pin, const char* name) {
+    // pinctrl device tree node, so we never bind those.
+    //
+    // CS gets a silent SimGPIOPin rather than a LinuxGPIOPin: spidev owns
+    // the SPI controller's hardware CS automatically across each
+    // SPI_IOC_MESSAGE ioctl, so the modem driver's digitalWrite(_ss, ...)
+    // is intentionally a no-op at the OS level. Binding a SimGPIOPin (vs.
+    // letting it default to "Unbound") just lets us flip its silent flag.
+    auto bind_linux = [&](int pin, const char* name) {
         if (pin < 0) return;  // -1 = disabled in config
         try {
-            gpioBind(new LinuxGPIOPin(pin, chipLabel.c_str(), pin, name));
+            GPIOPin* p = new LinuxGPIOPin(pin, chipLabel.c_str(), pin, name);
+            p->setSilent();
+            gpioBind(p);
         } catch (const std::exception& e) {
             std::fprintf(stderr,
                 "[pinmap] %s (line %d on %s) NOT bound: %s — leaving as "
@@ -116,38 +113,23 @@ void bind_linux_gpios() {
                 name, pin, chipLabel.c_str(), e.what());
         }
     };
+    auto bind_sim_silent = [&](int pin, const char* name) {
+        if (pin < 0) return;
+        GPIOPin* p = new SimGPIOPin(pin, name);
+        p->setSilent();
+        gpioBind(p);
+    };
 
     const auto& c = native_config::g_config;
-    bind(c.pin_reset,       "RESET");
-    bind(c.pin_busy,        "BUSY");
-    bind(c.pin_dio,         "DIO1");
-    bind(c.pin_rxen,        "RXEN");
-    bind(c.pin_txen,        "TXEN");
-    bind(c.pin_tcxo_enable, "TCXO_EN");
-    bind(c.pin_led_rx,      "LED_RX");
-    bind(c.pin_led_tx,      "LED_TX");
-
-    // Portduino's GPIOPin base logs every writePin/refreshState/setPinMode
-    // call (via the unfiltered Portduino log()). For our managed lines that
-    // produces a torrent during normal operation — `writePin(Unbound, 16,
-    // 0/1)` for every SPI byte (CS toggling) and `refreshState(DIO1, 0)`
-    // for every Portduino idle-loop poll of the IRQ line. Silence them all;
-    // the modem driver still prints its own meaningful events via Serial.
-    auto silence = [](int pin) {
-        if (pin < 0) return;
-        if (auto* p = dynamic_cast<GPIOPin*>(getGPIO(pin))) {
-            p->setSilent(true);
-        }
-    };
-    silence(c.pin_cs);           // sim pin — toggled on every SPI transaction
-    silence(c.pin_reset);
-    silence(c.pin_busy);
-    silence(c.pin_dio);          // polled by Portduino idle thread for ISR
-    silence(c.pin_rxen);
-    silence(c.pin_txen);
-    silence(c.pin_tcxo_enable);
-    silence(c.pin_led_rx);
-    silence(c.pin_led_tx);
+    bind_sim_silent(c.pin_cs,    "CS");      // spidev owns the real CS
+    bind_linux(c.pin_reset,      "RESET");
+    bind_linux(c.pin_busy,       "BUSY");
+    bind_linux(c.pin_dio,        "DIO1");
+    bind_linux(c.pin_rxen,       "RXEN");
+    bind_linux(c.pin_txen,       "TXEN");
+    bind_linux(c.pin_tcxo_enable,"TCXO_EN");
+    bind_linux(c.pin_led_rx,     "LED_RX");
+    bind_linux(c.pin_led_tx,     "LED_TX");
 
     std::fprintf(stderr, "[pinmap] bound Linux GPIOs on %s (label=%s)\n",
                  chipPath, chipLabel.c_str());

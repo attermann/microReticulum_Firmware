@@ -522,11 +522,27 @@ void sx127x::handleDio0IfPending() {
   if (_dio0_pending) {
     _dio0_pending = false;
     handleDio0Rise();
+
+    #if MCU_VARIANT == MCU_NATIVE
+      // After handleDio0Rise() clears REG_IRQ_FLAGS the chip drops DIO0
+      // back to LOW, but Portduino's polled edge detector still has
+      // `status` cached as HIGH from the rising edge it just dispatched.
+      // If we don't force a re-read here, a packet that arrives before
+      // the next gpioIdle() sweep lands while `status` is already HIGH —
+      // refreshState() sees HIGH→HIGH, no edge fires, and we get stuck
+      // (every subsequent packet is silently lost). digitalRead() calls
+      // refreshState() internally, which reads DIO0 (now LOW) and resets
+      // the cached status before another packet can race in.
+      if (_dio0 != -1) digitalRead(_dio0);
+    #endif
   }
 }
 
 void ISR_VECT sx127x::handleDio0Rise() {
   int irqFlags = readRegister(REG_IRQ_FLAGS_7X);
+
+  // TEMP RX bring-up diagnostic — remove once RX is verified.
+  Serial.print("sx127x: DIO0 fired, irqFlags=0x"); Serial.println(irqFlags, HEX);
 
   // Clear IRQs
   writeRegister(REG_IRQ_FLAGS_7X, irqFlags);
