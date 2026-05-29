@@ -121,6 +121,28 @@ void bind_linux_gpios() {
     bind(c.pin_led_rx,      "LED_RX");
     bind(c.pin_led_tx,      "LED_TX");
 
+    // Portduino's GPIOPin base logs every writePin/refreshState/setPinMode
+    // call (via the unfiltered Portduino log()). For our managed lines that
+    // produces a torrent during normal operation — `writePin(Unbound, 16,
+    // 0/1)` for every SPI byte (CS toggling) and `refreshState(DIO1, 0)`
+    // for every Portduino idle-loop poll of the IRQ line. Silence them all;
+    // the modem driver still prints its own meaningful events via Serial.
+    auto silence = [](int pin) {
+        if (pin < 0) return;
+        if (auto* p = dynamic_cast<GPIOPin*>(getGPIO(pin))) {
+            p->setSilent(true);
+        }
+    };
+    silence(c.pin_cs);           // sim pin — toggled on every SPI transaction
+    silence(c.pin_reset);
+    silence(c.pin_busy);
+    silence(c.pin_dio);          // polled by Portduino idle thread for ISR
+    silence(c.pin_rxen);
+    silence(c.pin_txen);
+    silence(c.pin_tcxo_enable);
+    silence(c.pin_led_rx);
+    silence(c.pin_led_tx);
+
     std::fprintf(stderr, "[pinmap] bound Linux GPIOs on %s (label=%s)\n",
                  chipPath, chipLabel.c_str());
 #endif
