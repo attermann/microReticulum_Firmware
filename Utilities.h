@@ -36,7 +36,17 @@
 #endif
 #include <stddef.h>
 
-#if MODEM == SX1262
+#if MODEM == MODEM_RUNTIME
+// Native target: all three drivers compile in; the runtime-selected one is
+// chosen during portduinoSetup() via the native LoRa factory. The pointer
+// stays null until the factory assigns it before setup() runs.
+#include "sx126x.h"
+#include "sx127x.h"
+#include "sx128x.h"
+#include "LoRaRadio.h"
+ILoRaRadio *LoRa = nullptr;
+uint8_t current_modem = 0;
+#elif MODEM == SX1262
 #include "sx126x.h"
 sx126x *LoRa = &sx126x_modem;
 #elif MODEM == SX1276 || MODEM == SX1278

@@ -45,6 +45,12 @@ struct Config {
     uint8_t  lora_sf      = 8;
     uint8_t  lora_cr      = 5;
     int8_t   lora_txp     = 17;
+
+    // Modem family selected at runtime. Values match the constants in
+    // Modem.h: SX1262 (0x03), SX1276 (0x01), SX1278 (0x02), SX1280 (0x04).
+    // Default 0x03 mirrors what was the compile-time default for the
+    // `native` env before runtime selection landed.
+    uint8_t  modem        = 0x03;
 };
 
 extern Config g_config;

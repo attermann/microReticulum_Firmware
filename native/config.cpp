@@ -79,6 +79,14 @@ bool load(const std::string& path) {
         else if (k == "lora_sf")        g_config.lora_sf = static_cast<uint8_t>(parse_int(v, g_config.lora_sf));
         else if (k == "lora_cr")        g_config.lora_cr = static_cast<uint8_t>(parse_int(v, g_config.lora_cr));
         else if (k == "lora_txp")       g_config.lora_txp = static_cast<int8_t>(parse_int(v, g_config.lora_txp));
+        else if (k == "modem") {
+            // Accept either symbolic names or a numeric value matching Modem.h.
+            if      (v == "SX1262") g_config.modem = 0x03;
+            else if (v == "SX1276") g_config.modem = 0x01;
+            else if (v == "SX1278") g_config.modem = 0x02;
+            else if (v == "SX1280") g_config.modem = 0x04;
+            else                    g_config.modem = static_cast<uint8_t>(parse_int(v, g_config.modem));
+        }
         else {
             std::fprintf(stderr, "[config] %s:%d: unknown key '%s'\n",
                          path.c_str(), lineno, k.c_str());

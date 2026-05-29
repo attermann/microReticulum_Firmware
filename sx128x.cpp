@@ -3,7 +3,7 @@
 
 #include "Boards.h"
 
-#if MODEM == SX1280
+#if MODEM == SX1280 || MODEM == MODEM_RUNTIME
 #include "sx128x.h"
 
 #define MCU_1284P 0x91
@@ -324,7 +324,7 @@ void sx128x::reset() {
   }
 }
 
-int sx128x::begin(unsigned long frequency) {
+int sx128x::begin(uint32_t frequency) {
   reset();
 
   if (_rxen != -1) { pinMode(_rxen, OUTPUT); }
@@ -413,10 +413,10 @@ int sx128x::endPacket() {
   else           { return 1; }
 }
 
-unsigned long preamble_detected_at = 0;
+static unsigned long preamble_detected_at = 0;
 extern long lora_preamble_time_ms;
 extern long lora_header_time_ms;
-bool false_preamble_detected = false;
+static bool false_preamble_detected = false;
 bool sx128x::dcd() {
   uint8_t buf[2] = {0}; executeOpcodeRead(OP_GET_IRQ_STATUS_8X, buf, 2);
   uint32_t now = millis();
@@ -462,6 +462,13 @@ uint8_t sx128x::packetRssiRaw() {
     uint8_t buf[5] = {0};
     executeOpcodeRead(OP_PACKET_STATUS_8X, buf, 5);
     return buf[0];
+}
+
+int ISR_VECT sx128x::packetRssi() {
+    uint8_t buf[5] = {0};
+    executeOpcodeRead(OP_PACKET_STATUS_8X, buf, 5);
+    int pkt_rssi = -buf[0] / 2;
+    return pkt_rssi;
 }
 
 int ISR_VECT sx128x::packetRssi(uint8_t pkt_snr_raw) {

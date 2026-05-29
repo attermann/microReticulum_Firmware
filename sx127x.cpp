@@ -3,7 +3,7 @@
 
 #include "Boards.h"
 
-#if MODEM == SX1276
+#if MODEM == SX1276 || MODEM == MODEM_RUNTIME
 #include "sx127x.h"
 
 #if MCU_VARIANT == MCU_ESP32
@@ -165,7 +165,7 @@ uint8_t ISR_VECT sx127x::singleTransfer(uint8_t address, uint8_t value) {
   return buf[1];
 }
 
-int sx127x::begin(long frequency) {
+int sx127x::begin(uint32_t frequency) {
   if (_reset != -1) {
     pinMode(_reset, OUTPUT);
     digitalWrite(_reset, LOW);
@@ -391,7 +391,7 @@ void sx127x::setTxPower(int level, int outputPin) {
 
 uint8_t sx127x::getTxPower() { byte txp = readRegister(REG_PA_CONFIG_7X); return txp; }
 
-void sx127x::setFrequency(unsigned long frequency) {
+void sx127x::setFrequency(uint32_t frequency) {
   _frequency = frequency;
   uint32_t frf = ((uint64_t)frequency << 19) / 32000000;
 
@@ -430,7 +430,7 @@ void sx127x::setSpreadingFactor(int sf) {
   handleLowDataRate();
 }
 
-long sx127x::getSignalBandwidth() {
+uint32_t sx127x::getSignalBandwidth() {
   byte bw = (readRegister(REG_MODEM_CONFIG_1_7X) >> 4);
   switch (bw) {
     case 0: return 7.8E3;
@@ -447,7 +447,7 @@ long sx127x::getSignalBandwidth() {
   return 0;
 }
 
-void sx127x::setSignalBandwidth(long sbw) {
+void sx127x::setSignalBandwidth(uint32_t sbw) {
   int bw;
   if (sbw <= 7.8E3) {
       bw = 0;

@@ -36,6 +36,10 @@
 #include "DeviceUID.h"
 #include "Platform.h"
 
+#if MODEM == MODEM_RUNTIME
+#include "native/LoRaFactory.h"
+#endif
+
 // CBA SD
 #if HAS_SDCARD
 #include <SD.h>
@@ -456,7 +460,12 @@ void setup() {
   #if defined(LORA_TRANSPORT)
   // Set chip select, reset and interrupt
   // pins for the LoRa module
-  #if MODEM == SX1276 || MODEM == SX1278
+  #if MODEM == MODEM_RUNTIME
+  // Native target: factory instantiates the runtime-selected driver and
+  // performs its driver-native setPins() with the right arity using the
+  // pin_* globals already populated by native_pinmap::apply().
+  LoRa = native_lora::create_radio(current_modem);
+  #elif MODEM == SX1276 || MODEM == SX1278
   LoRa->setPins(pin_cs, pin_reset, pin_dio, pin_busy);
   #elif MODEM == SX1262
   LoRa->setPins(pin_cs, pin_reset, pin_dio, pin_busy, pin_rxen);
@@ -564,7 +573,20 @@ void setup() {
   #endif
 
   #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
-    #if MODEM == SX1280
+    #if MODEM == MODEM_RUNTIME
+      // Native runtime selection: SX1280 (2.4 GHz) skips interference avoidance.
+      if (current_modem == SX1280) {
+        avoid_interference = false;
+      } else {
+        #if HAS_EEPROM
+          uint8_t ia_conf = EEPROM.read(eeprom_addr(ADDR_CONF_DIA));
+          if (ia_conf == 0x00) { avoid_interference = true; }
+          else                 { avoid_interference = false; }
+        #else
+          avoid_interference = false;
+        #endif
+      }
+    #elif MODEM == SX1280
       avoid_interference = false;
     #else
       #if HAS_EEPROM
@@ -1210,13 +1232,35 @@ void add_airtime(uint16_t written) {
     float packet_cost_ms = 0.0;
     int ldr_opt = 0; if (lora_low_datarate) ldr_opt = 1;
 
-    #if MODEM == SX1276 || MODEM == SX1278
+    #if MODEM == MODEM_RUNTIME
+      if (current_modem == SX1276 || current_modem == SX1278) {
+        lora_symbols += (8*written + PHY_CRC_LORA_BITS - 4*lora_sf + 8 + PHY_HEADER_LORA_SYMBOLS);
+        lora_symbols /=                          4*(lora_sf-2*ldr_opt);
+        lora_symbols *= lora_cr;
+        lora_symbols += lora_preamble_symbols + 0.25 + 8;
+        packet_cost_ms += lora_symbols * lora_symbol_time_ms;
+      } else { // SX1262 / SX1280
+        if (lora_sf < 7) {
+          lora_symbols += (8*written + PHY_CRC_LORA_BITS - 4*lora_sf + PHY_HEADER_LORA_SYMBOLS);
+          lora_symbols /=                              4*lora_sf;
+          lora_symbols *= lora_cr;
+          lora_symbols += lora_preamble_symbols + 2.25 + 8;
+          packet_cost_ms += lora_symbols * lora_symbol_time_ms;
+        } else {
+          lora_symbols += (8*written + PHY_CRC_LORA_BITS - 4*lora_sf + 8 + PHY_HEADER_LORA_SYMBOLS);
+          lora_symbols /=                         4*(lora_sf-2*ldr_opt);
+          lora_symbols *= lora_cr;
+          lora_symbols += lora_preamble_symbols + 0.25 + 8;
+          packet_cost_ms += lora_symbols * lora_symbol_time_ms;
+        }
+      }
+    #elif MODEM == SX1276 || MODEM == SX1278
       lora_symbols += (8*written + PHY_CRC_LORA_BITS - 4*lora_sf + 8 + PHY_HEADER_LORA_SYMBOLS);
       lora_symbols /=                          4*(lora_sf-2*ldr_opt);
       lora_symbols *= lora_cr;
       lora_symbols += lora_preamble_symbols + 0.25 + 8;
       packet_cost_ms += lora_symbols * lora_symbol_time_ms;
-      
+
     #elif MODEM == SX1262 || MODEM == SX1280
       if (lora_sf < 7) {
         lora_symbols += (8*written + PHY_CRC_LORA_BITS - 4*lora_sf + PHY_HEADER_LORA_SYMBOLS);
@@ -1232,7 +1276,7 @@ void add_airtime(uint16_t written) {
         lora_symbols += lora_preamble_symbols + 0.25 + 8;
         packet_cost_ms += lora_symbols * lora_symbol_time_ms;
       }
-    
+
     #endif
 
     uint16_t cb = current_airtime_bin();
@@ -1412,7 +1456,15 @@ void serial_callback(uint8_t sbyte) {
         kiss_indicate_txpower();
       } else {
         int txp = sbyte;
-        #if MODEM == SX1262
+        #if MODEM == MODEM_RUNTIME
+          if (current_modem == SX1262) {
+            if (txp > 22) txp = 22;
+          } else if (current_modem == SX1280) {
+            if (txp > 13) txp = 13;
+          } else {
+            if (txp > 17) txp = 17;
+          }
+        #elif MODEM == SX1262
           #if HAS_LORA_PA
             if (txp > PA_MAX_OUTPUT) txp = PA_MAX_OUTPUT;
           #else

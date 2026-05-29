@@ -46,6 +46,11 @@ namespace native_pinmap {
     void seed_eeprom_if_unprovisioned();
 }
 
+// Defined in Utilities.h under the MODEM_RUNTIME branch. The native LoRa
+// factory in RNode_Firmware.ino setup() reads this to instantiate the
+// right concrete driver. Must be assigned before setup() runs.
+extern uint8_t current_modem;
+
 // Forward declarations matching Config.h. We can't include Config.h
 // directly here because it contains file-scope variable definitions
 // (e.g. `uint8_t op_mode = MODE_HOST;`) that would cause multiple-
@@ -97,6 +102,10 @@ void portduinoSetup() {
     //    registers libgpiod-backed pins with Portduino (no-op on macOS).
     native_pinmap::apply();
     native_pinmap::bind_linux_gpios();
+
+    // 5a) Surface the configured modem family to setup() so the native LoRa
+    //     factory can instantiate the right driver. Must precede setup().
+    current_modem = native_config::g_config.modem;
 
     // 6) Bind a SimSPIChip as a safety net. With LORA_TRANSPORT removed,
     //    the modem driver no longer initiates SPI activity, but Portduino's
