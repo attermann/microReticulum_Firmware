@@ -120,7 +120,7 @@ void fill_rx_buffer() {
 
 } // namespace
 
-bool init(uint16_t port) {
+bool init(uint16_t port, bool bind_public) {
     listen_fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (listen_fd < 0) {
         std::fprintf(stderr, "[kiss-tcp] socket(): %s\n", std::strerror(errno));
@@ -130,15 +130,21 @@ bool init(uint16_t port) {
     int yes = 1;
     setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
 
+    // Loopback by default; bind_public flips to 0.0.0.0 so remote hosts
+    // on the same network can connect. No auth/encryption either way —
+    // public binding is an opt-in for trusted networks.
+    const uint32_t bind_addr = bind_public ? INADDR_ANY : INADDR_LOOPBACK;
+    const char* bind_label   = bind_public ? "0.0.0.0"  : "127.0.0.1";
+
     sockaddr_in addr;
     std::memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // 127.0.0.1, localhost only
+    addr.sin_addr.s_addr = htonl(bind_addr);
     addr.sin_port = htons(port);
 
     if (::bind(listen_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        std::fprintf(stderr, "[kiss-tcp] bind(127.0.0.1:%u): %s\n",
-                     port, std::strerror(errno));
+        std::fprintf(stderr, "[kiss-tcp] bind(%s:%u): %s\n",
+                     bind_label, port, std::strerror(errno));
         ::close(listen_fd);
         listen_fd = -1;
         return false;
@@ -152,7 +158,8 @@ bool init(uint16_t port) {
     }
 
     set_nonblocking(listen_fd);
-    std::fprintf(stderr, "[kiss-tcp] listening on 127.0.0.1:%u\n", port);
+    std::fprintf(stderr, "[kiss-tcp] listening on %s:%u%s\n",
+                 bind_label, port, bind_public ? " (PUBLIC — no auth)" : "");
     return true;
 }
 

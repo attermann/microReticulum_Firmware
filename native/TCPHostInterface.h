@@ -20,7 +20,12 @@ namespace native_kiss_tcp {
 // Create the listening socket. Returns false if bind/listen failed; the
 // daemon should keep running anyway (no host connection just means no
 // external control, like an embedded board with no USB cable attached).
-bool init(uint16_t port);
+//
+// `bind_public`: when false, bind only on 127.0.0.1 (loopback, the safe
+// default — no network exposure). When true, bind on 0.0.0.0 so remote
+// hosts on the same network can connect. Public binding has no auth or
+// encryption, so opt in only on trusted networks.
+bool init(uint16_t port, bool bind_public);
 
 // Per-loop housekeeping. Should be called from the firmware's main loop
 // before draining bytes. Accepts any pending connection (or rejects it if

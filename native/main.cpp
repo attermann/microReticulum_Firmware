@@ -120,8 +120,10 @@ void portduinoSetup() {
     // 5b) KISS-over-TCP host transport. The embedded firmware's USB-serial
     //     KISS channel is replaced on native by a localhost TCP server.
     //     A failure to bind isn't fatal — the daemon keeps running like
-    //     an embedded RNode with no USB cable plugged in.
-    native_kiss_tcp::init(native_config::g_config.kiss_tcp_port);
+    //     an embedded RNode with no USB cable plugged in. kiss_tcp_public
+    //     opts into binding on 0.0.0.0; defaults to loopback.
+    native_kiss_tcp::init(native_config::g_config.kiss_tcp_port,
+                          native_config::g_config.kiss_tcp_public);
 
     // 6) Bind a SimSPIChip as a safety net. With LORA_TRANSPORT removed,
     //    the modem driver no longer initiates SPI activity, but Portduino's

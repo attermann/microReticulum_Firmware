@@ -30,6 +30,18 @@ uint32_t parse_u32(const std::string& v, uint32_t fallback) {
     catch (...) { return fallback; }
 }
 
+// Case-insensitive truthy parser. Accepts 1 / true / yes / on (and their
+// uppercase / mixed-case variants) as true; 0 / false / no / off as false.
+// Unrecognized values return the fallback so a typo doesn't silently flip
+// a sensitive flag.
+bool parse_bool(const std::string& v, bool fallback) {
+    std::string lower = v;
+    for (auto& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (lower == "1" || lower == "true"  || lower == "yes" || lower == "on")  return true;
+    if (lower == "0" || lower == "false" || lower == "no"  || lower == "off") return false;
+    return fallback;
+}
+
 } // namespace
 
 bool load(const std::string& path) {
@@ -87,7 +99,8 @@ bool load(const std::string& path) {
             else if (v == "SX1280") g_config.modem = 0x04;
             else                    g_config.modem = static_cast<uint8_t>(parse_int(v, g_config.modem));
         }
-        else if (k == "kiss_tcp_port") g_config.kiss_tcp_port = static_cast<uint16_t>(parse_int(v, g_config.kiss_tcp_port));
+        else if (k == "kiss_tcp_port")   g_config.kiss_tcp_port   = static_cast<uint16_t>(parse_int(v, g_config.kiss_tcp_port));
+        else if (k == "kiss_tcp_public") g_config.kiss_tcp_public = parse_bool(v, g_config.kiss_tcp_public);
         else {
             std::fprintf(stderr, "[config] %s:%d: unknown key '%s'\n",
                          path.c_str(), lineno, k.c_str());

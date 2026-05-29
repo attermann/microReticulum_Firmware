@@ -55,7 +55,13 @@ struct Config {
     // KISS-over-TCP host transport. The native daemon listens on this
     // localhost port for a single client (rnodeconf, an RNS KISSInterface,
     // etc.). 7633 matches the ESP32 WiFi-remote convention in Remote.h.
-    uint16_t kiss_tcp_port = 7633;
+    uint16_t kiss_tcp_port   = 7633;
+
+    // Bind the KISS TCP server on all interfaces (0.0.0.0) instead of just
+    // 127.0.0.1. Off by default — exposing this socket to the network has
+    // no auth/encryption, so the daemon should only be reachable across a
+    // network you trust. Turning this on is the explicit way to opt in.
+    bool     kiss_tcp_public = false;
 };
 
 extern Config g_config;
