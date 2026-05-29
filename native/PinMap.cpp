@@ -84,19 +84,19 @@ void bind_linux_gpios() {
     const std::string chipLabel = gpiod_chip_label(probe);
     gpiod_chip_close(probe);
 
-    // We attempt to gpioBind() every non-(-1) pin, including CS. Whether
-    // CS *can* be bound depends on the board:
-    //   - Raspberry Pi (dtparam=spi=on): spidev's own CS line (CE0/CE1) is
-    //     declared in the device tree and owned by the SPI driver. The
-    //     gpiod_line_request inside Portduino's LinuxGPIOPin throws
-    //     std::invalid_argument(EBUSY); the catch below leaves the pin as
-    //     a Portduino sim no-op. spidev itself toggles CS during each
-    //     SPI_IOC_MESSAGE, so the modem driver's digitalWrite(_ss, ...)
-    //     being a no-op is fine on that board.
-    //   - LuckFox / FemtoFox / other Rockchip SBCs: spidev typically does
-    //     NOT claim a CS line. The bind succeeds, and the modem driver's
-    //     digitalWrite(_ss, LOW/HIGH) drives the real GPIO — required to
-    //     actually select the LoRa chip.
+    // We deliberately DO NOT bind CS via libgpiod. spidev owns the SPI
+    // controller's hardware CS line via the device tree pinctrl entry and
+    // toggles it automatically around each SPI_IOC_MESSAGE ioctl. If we
+    // also requested the line through libgpiod we'd either:
+    //   - fight spidev for the same pad (LuckFox / Rockchip-class SBCs
+    //     where SPI0_CS0 is exposed as a regular gpiochip line), or
+    //   - fail with EBUSY (Raspberry Pi, where the SPI driver claims CE0/
+    //     CE1 outright).
+    // Either way, the modem driver's digitalWrite(_ss, LOW/HIGH) becomes a
+    // Portduino sim no-op — harmless, because spidev is the only thing
+    // actually driving the pad. SX127x readRegister/writeRegister now send
+    // address+data as a single ioctl (sx127x.cpp::singleTransfer), so CS
+    // stays asserted across the pair under spidev's automatic toggling.
     // SCLK / MOSI / MISO are always claimed by the spidev driver via the
     // pinctrl device tree node, so we never even try those.
     auto bind = [&](int pin, const char* name) {
@@ -112,7 +112,6 @@ void bind_linux_gpios() {
     };
 
     const auto& c = native_config::g_config;
-    bind(c.pin_cs,          "CS");
     bind(c.pin_reset,       "RESET");
     bind(c.pin_busy,        "BUSY");
     bind(c.pin_dio,         "DIO1");
