@@ -15,6 +15,12 @@
 #include <linux/gpio/LinuxGPIOPin.h>
 #include <gpiod.h>
 #include <string>
+
+// Portduino's PortduinoGPIO.cpp defines this but neglects to declare it in
+// PortduinoGPIO.h — only gpioBind() is publicly exposed. Forward-declare the
+// symbol so we can silence per-pin logging on managed lines. The function
+// lives in the global namespace with external linkage.
+GPIOPinIf *getGPIO(pin_size_t n);
 #endif
 
 // --- Pin globals (single definition) ---
