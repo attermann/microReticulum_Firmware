@@ -99,7 +99,23 @@ void sx127x::flush() { }
 bool sx127x::preInit() {
   pinMode(_ss, OUTPUT);
   digitalWrite(_ss, HIGH);
-  
+
+  // Pulse RESET to put the chip in a known state before reading the
+  // version register. Without this, preInit runs against whatever state
+  // the chip was left in (relevant on native Linux daemons where the
+  // chip stays powered across daemon restarts — meshtasticd may have
+  // left it half-configured, an earlier crashed run may have left RESET
+  // floating, etc.). On embedded targets the MCU's power-on reset
+  // brings the chip up alongside the MCU, but the extra ~20ms pulse
+  // here is harmless. begin() will reset again later — also harmless.
+  if (_reset != -1) {
+    pinMode(_reset, OUTPUT);
+    digitalWrite(_reset, LOW);
+    delay(10);
+    digitalWrite(_reset, HIGH);
+    delay(10);
+  }
+
   #if BOARD_MODEL == BOARD_T3S3
     SPI.begin(pin_sclk, pin_miso, pin_mosi, pin_cs);
   #else
