@@ -13,6 +13,7 @@
 #ifdef PORTDUINO_LINUX_HARDWARE
 #include <PortduinoGPIO.h>
 #include <linux/gpio/LinuxGPIOPin.h>
+#include <gpiod.h>
 #include <string>
 #endif
 
@@ -65,11 +66,23 @@ void apply() {
 // through libgpiod from userspace would conflict.
 void bind_linux_gpios() {
 #ifdef PORTDUINO_LINUX_HARDWARE
-    // gpio_chip from config is a /dev path like "/dev/gpiochip0"; Portduino
-    // wants just the trailing chip label ("gpiochip0").
-    std::string chipLabel = native_config::g_config.gpio_chip;
-    const auto slash = chipLabel.rfind('/');
-    if (slash != std::string::npos) chipLabel = chipLabel.substr(slash + 1);
+    // Portduino's LinuxGPIOPin::getLine() (LinuxGPIOPin.cpp:225-249)
+    // iterates /dev/gpiochip* and matches by gpiod_chip_label() — the
+    // SoC-specific identifier (e.g. "pinctrl-bcm2711" on a Pi, "gpio1"
+    // on Rockchip), NOT the device filename. So we can't just strip
+    // "/dev/" off the user's gpio_chip path and pass that as the label.
+    // Open the chip ourselves to resolve its real label, then hand that
+    // to LinuxGPIOPin.
+    const char* chipPath = native_config::g_config.gpio_chip.c_str();
+    struct gpiod_chip* probe = gpiod_chip_open(chipPath);
+    if (!probe) {
+        std::fprintf(stderr,
+            "[pinmap] could not open %s: %s — GPIO binding skipped\n",
+            chipPath, std::strerror(errno));
+        return;
+    }
+    const std::string chipLabel = gpiod_chip_label(probe);
+    gpiod_chip_close(probe);
 
     auto bind = [&](int pin, const char* name) {
         if (pin < 0) return;  // -1 = disabled in config
@@ -89,8 +102,8 @@ void bind_linux_gpios() {
     // spidev owns them. The modem driver's digitalWrite(_ss, ...) goes to
     // the sim path, but spidev toggles CS itself per transaction.
 
-    std::fprintf(stderr, "[pinmap] bound Linux GPIOs on %s\n",
-                 chipLabel.c_str());
+    std::fprintf(stderr, "[pinmap] bound Linux GPIOs on %s (label=%s)\n",
+                 chipPath, chipLabel.c_str());
 #endif
 }
 
