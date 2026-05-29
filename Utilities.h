@@ -21,6 +21,9 @@
         // so the EEPROM.read/write/update/commit/begin calls below resolve
         // against a 1 KB buffer flushed to ./eeprom on disk.
         #include "native/EEPROMShim.h"
+        // Localhost TCP transport replacing the embedded USB-serial KISS
+        // channel — declares the native_kiss_tcp namespace.
+        #include "native/TCPHostInterface.h"
     #else
         #include <EEPROM.h>
     #endif
@@ -824,7 +827,13 @@ int8_t  led_standby_direction = 0;
 #endif
 
 void serial_write(uint8_t byte) {
-	#if HAS_BLUETOOTH || HAS_BLE == true
+	#if MCU_VARIANT == MCU_NATIVE
+		// KISS-over-TCP transport. On native the embedded "Serial" channel
+		// doesn't terminate at a useful host process; the localhost TCP
+		// server in native/TCPHostInterface.cpp carries KISS instead.
+		// Logs (on_log, _write printf) keep going to Serial.
+		native_kiss_tcp::write(byte);
+	#elif HAS_BLUETOOTH || HAS_BLE == true
 		if (bt_state != BT_STATE_CONNECTED) {
 			#if HAS_WIFI
 				if (wifi_host_is_connected()) { wifi_remote_write(byte); }

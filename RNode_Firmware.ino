@@ -2336,7 +2336,13 @@ void loop() {
 
     tx_queue_handler();
     check_modem_status();
-  
+    #if MCU_VARIANT == MCU_NATIVE
+      // Drop a TCP host client that's gone silent past the idle window.
+      // poll_accept() in buffer_serial() handles the connect side; this
+      // is the disconnect-side sweep.
+      native_kiss_tcp::check_active();
+    #endif
+
   } else {
     if (hw_ready) {
       if (console_active) {
@@ -2513,6 +2519,16 @@ void buffer_serial() {
 
     uint8_t c = 0;
 
+    #if MCU_VARIANT == MCU_NATIVE
+    // Refill the TCP staging buffer once per buffer_serial() pass —
+    // accept any pending connection (or reject if we're already busy),
+    // then drain whatever the kernel queued for the active client.
+    native_kiss_tcp::poll_accept();
+    while (c < MAX_CYCLES && native_kiss_tcp::available()) {
+      c++;
+      if (!fifo_isfull(&serialFIFO)) { fifo_push(&serialFIFO, native_kiss_tcp::read()); }
+    }
+    #else
     #if HAS_BLUETOOTH || HAS_BLE == true
     while (
       c < MAX_CYCLES &&
@@ -2528,7 +2544,7 @@ void buffer_serial() {
     {
       c++;
 
-      #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
+      #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
         if (!fifo_isfull_locked(&serialFIFO)) { fifo_push_locked(&serialFIFO, Serial.read()); }
       #elif HAS_BLUETOOTH || HAS_BLE == true || HAS_WIFI
         if      (bt_state == BT_STATE_CONNECTED) { if (!fifo_isfull(&serialFIFO)) { fifo_push(&serialFIFO, SerialBT.read()); } }
@@ -2540,6 +2556,7 @@ void buffer_serial() {
         if (!fifo_isfull(&serialFIFO)) { fifo_push(&serialFIFO, Serial.read()); }
       #endif
     }
+    #endif
 
     serial_buffering = false;
   }

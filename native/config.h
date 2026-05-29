@@ -51,6 +51,11 @@ struct Config {
     // Default 0x03 mirrors what was the compile-time default for the
     // `native` env before runtime selection landed.
     uint8_t  modem        = 0x03;
+
+    // KISS-over-TCP host transport. The native daemon listens on this
+    // localhost port for a single client (rnodeconf, an RNS KISSInterface,
+    // etc.). 7633 matches the ESP32 WiFi-remote convention in Remote.h.
+    uint16_t kiss_tcp_port = 7633;
 };
 
 extern Config g_config;

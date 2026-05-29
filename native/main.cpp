@@ -17,6 +17,7 @@
 
 #include "config.h"
 #include "EEPROMShim.h"
+#include "TCPHostInterface.h"
 
 #include <Arduino.h>  // brings in `extern HardwareSPI SPI;` declaration
 
@@ -106,6 +107,21 @@ void portduinoSetup() {
     // 5a) Surface the configured modem family to setup() so the native LoRa
     //     factory can instantiate the right driver. Must precede setup().
     current_modem = native_config::g_config.modem;
+    const char* modem_name;
+    switch (current_modem) {
+        case 0x01: modem_name = "SX1276"; break;
+        case 0x02: modem_name = "SX1278"; break;
+        case 0x03: modem_name = "SX1262"; break;
+        case 0x04: modem_name = "SX1280"; break;
+        default:   modem_name = "UNKNOWN"; break;
+    }
+    std::fprintf(stderr, "[native] modem = %s (0x%02X)\n", modem_name, current_modem);
+
+    // 5b) KISS-over-TCP host transport. The embedded firmware's USB-serial
+    //     KISS channel is replaced on native by a localhost TCP server.
+    //     A failure to bind isn't fatal — the daemon keeps running like
+    //     an embedded RNode with no USB cable plugged in.
+    native_kiss_tcp::init(native_config::g_config.kiss_tcp_port);
 
     // 6) Bind a SimSPIChip as a safety net. With LORA_TRANSPORT removed,
     //    the modem driver no longer initiates SPI activity, but Portduino's

@@ -87,6 +87,7 @@ bool load(const std::string& path) {
             else if (v == "SX1280") g_config.modem = 0x04;
             else                    g_config.modem = static_cast<uint8_t>(parse_int(v, g_config.modem));
         }
+        else if (k == "kiss_tcp_port") g_config.kiss_tcp_port = static_cast<uint16_t>(parse_int(v, g_config.kiss_tcp_port));
         else {
             std::fprintf(stderr, "[config] %s:%d: unknown key '%s'\n",
                          path.c_str(), lineno, k.c_str());
