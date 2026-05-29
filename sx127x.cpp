@@ -123,7 +123,7 @@ bool sx127x::preInit() {
   #endif
 
   // Check modem version
-  uint8_t version;
+  uint8_t version = 0xAA;  // sentinel — overwritten on first read
   long start = millis();
   while (((millis() - start) < 500) && (millis() >= start)) {
       version = readRegister(REG_VERSION_7X);
@@ -131,7 +131,15 @@ bool sx127x::preInit() {
       delay(100);
   }
 
-  if (version != 0x12) { return false; }
+  if (version != 0x12) {
+      // Diagnostic: log what we actually read so the user can tell whether
+      // MISO is floating (0xFF), shorted/pulled low (0x00), or the chip is
+      // talking but returning an unexpected silicon version. Remove once
+      // bring-up is verified.
+      Serial.print("sx127x: version read = 0x");
+      Serial.println(version, HEX);
+      return false;
+  }
   _preinit_done = true;
   return true;
 }
