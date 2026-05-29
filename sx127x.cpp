@@ -524,16 +524,36 @@ void sx127x::handleDio0IfPending() {
     handleDio0Rise();
 
     #if MCU_VARIANT == MCU_NATIVE
-      // After handleDio0Rise() clears REG_IRQ_FLAGS the chip drops DIO0
-      // back to LOW, but Portduino's polled edge detector still has
-      // `status` cached as HIGH from the rising edge it just dispatched.
-      // If we don't force a re-read here, a packet that arrives before
-      // the next gpioIdle() sweep lands while `status` is already HIGH —
-      // refreshState() sees HIGH→HIGH, no edge fires, and we get stuck
-      // (every subsequent packet is silently lost). digitalRead() calls
-      // refreshState() internally, which reads DIO0 (now LOW) and resets
-      // the cached status before another packet can race in.
-      if (_dio0 != -1) digitalRead(_dio0);
+      // Resync Portduino's polled edge detector with the chip's actual
+      // pin state. Portduino caches per-pin status and fires the ISR only
+      // on LOW→HIGH transitions of that cached value, refreshed solely by
+      // its gpioIdle() main-loop poll. After handleDio0Rise() clears the
+      // IRQ flag the chip drops DIO0 LOW, but the cache is still HIGH
+      // from the rising-edge fire we just dispatched. If we let polling
+      // resume as-is and a packet arrives before the next gpioIdle() —
+      // even a microsecond before — refreshState() sees HIGH→HIGH, no
+      // edge fires, and every subsequent packet is silently lost.
+      //
+      // Mimic the meshtastic/RadioLib pattern: detach the ISR (Portduino's
+      // refreshIfNeeded() skips pins with isr == NULL, freezing the
+      // status cache), force a STANDBY→RX_CONTINUOUS round-trip on the
+      // chip (silicon-level guarantee that DIO0 transitions LOW and the
+      // chip re-enters RX with a fresh state), then re-attach the ISR.
+      // The first poll after re-attach reads LOW, the cache updates to
+      // LOW, and the next packet's rising edge is detected cleanly.
+      //
+      // The two SPI writes are ~20 µs total — much shorter than any LoRa
+      // symbol time, so the brief STANDBY window can't drop in-flight
+      // packets. Empty digitalRead() alone (an earlier attempt) didn't
+      // fix the bug: chip DIO0 settle latency after IRQ-clear plus
+      // Portduino's read-then-cache ordering left status cached at HIGH
+      // even after the read, so a packet racing in still got missed.
+      if (_dio0 != -1) {
+        detachInterrupt(digitalPinToInterrupt(_dio0));
+        writeRegister(REG_OP_MODE_7X, MODE_LONG_RANGE_MODE_7X | MODE_STDBY_7X);
+        writeRegister(REG_OP_MODE_7X, MODE_LONG_RANGE_MODE_7X | MODE_RX_CONTINUOUS_7X);
+        attachInterrupt(digitalPinToInterrupt(_dio0), sx127x::onDio0Rise, RISING);
+      }
     #endif
   }
 }
