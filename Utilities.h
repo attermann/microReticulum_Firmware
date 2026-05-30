@@ -412,6 +412,14 @@ void hard_reset(void) {
 		ESP.restart();
 	#elif MCU_VARIANT == MCU_NRF52
     NVIC_SystemReset();
+	#elif MCU_VARIANT == MCU_NATIVE
+		// Defined in native/reboot.cpp. Sets a flag; the main loop performs
+		// the re-exec on its next iteration so any in-progress KISS ACK
+		// finishes flushing first. Returns to the caller (unlike the
+		// embedded branches above), so callers that run cleanup after
+		// hard_reset() behave as expected on native.
+		extern void native_request_reboot();
+		native_request_reboot();
 	#endif
 }
 

@@ -248,4 +248,12 @@ void write(uint8_t byte) {
     close_client();
 }
 
+void shutdown() {
+    close_client();
+    if (listen_fd >= 0) {
+        ::close(listen_fd);
+        listen_fd = -1;
+    }
+}
+
 } // namespace native_kiss_tcp

@@ -55,6 +55,11 @@ uint8_t read();
 // a fatal disconnect, since the host can't recover a half-sent frame).
 void write(uint8_t byte);
 
+// Close any active client and the listening socket. Used by the deferred-
+// reboot path so the re-exec'd process can re-bind the same port without
+// waiting on the kernel's TIME_WAIT.
+void shutdown();
+
 } // namespace native_kiss_tcp
 
 #endif

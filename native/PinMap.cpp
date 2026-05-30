@@ -136,6 +136,33 @@ void bind_linux_gpios() {
 #endif
 }
 
+// Release the libgpiod handles acquired in bind_linux_gpios() so the
+// re-exec'd process can re-acquire the same lines. Portduino owns each
+// bound pin via std::unique_ptr<GPIOPinIf> in its `pins` vector
+// (PortduinoGPIO.cpp:22); gpioBind() destroys the previous occupant. So
+// rebinding each pin to a fresh SimGPIOPin triggers ~LinuxGPIOPin, which
+// in turn calls gpiod_line_release(line).
+//
+// No-op on macOS / cross_platform: nothing was acquired in the first
+// place.
+void release_linux_gpios() {
+#ifdef PORTDUINO_LINUX_HARDWARE
+    const auto& c = native_config::g_config;
+    const int pins[] = {
+        c.pin_cs, c.pin_reset, c.pin_busy, c.pin_dio,
+        c.pin_rxen, c.pin_txen, c.pin_tcxo_enable,
+        c.pin_led_rx, c.pin_led_tx,
+    };
+    for (int pin : pins) {
+        if (pin < 0) continue;
+        GPIOPin* p = new SimGPIOPin(pin, "Released");
+        p->setSilent();
+        gpioBind(p);   // unique_ptr::reset() destroys prior LinuxGPIOPin
+    }
+    std::fprintf(stderr, "[pinmap] released Linux GPIOs\n");
+#endif
+}
+
 // Seed the EEPROM image with the LoRa radio settings from config so the
 // existing eeprom_conf_load() path in Utilities.h picks them up during
 // setup(). Only runs if the EEPROM image lacks the CONF_OK_BYTE sentinel

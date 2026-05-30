@@ -2274,6 +2274,17 @@ void work_while_waiting() { loop(); }
 
 void loop() {
 
+  #if MCU_VARIANT == MCU_NATIVE
+    // Deferred-reboot hook: a KISS-driven property change or CMD_RESET in
+    // a prior iteration called hard_reset() → native_request_reboot(), which
+    // just set a flag. By the time we re-enter loop(), any KISS ACK from
+    // that handler has already been written to the socket. Now perform the
+    // cleanup + re-exec. native_reboot::perform() is [[noreturn]].
+    extern bool native_reboot_pending();
+    extern void native_reboot_perform();
+    if (native_reboot_pending()) native_reboot_perform();
+  #endif
+
 #ifdef HAS_RNS
   // CBA
   if (reticulum) {
