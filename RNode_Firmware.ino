@@ -22,6 +22,9 @@
 #include <Log.h>
 #include <Bytes.h>
 #endif
+#ifdef HAS_PROVISIONING
+#include <Provisioning/Provisioning.h>
+#endif
 //#include "LoRaInterface.h"
 #if defined(UDP_TRANSPORT)
 #include "UDPInterface.h"
@@ -183,8 +186,125 @@ protected:
     return true;
   }
 };
+#ifdef HAS_PROVISIONING
+// Provisioning namespace + field IDs. Namespace 1-2 are RNS built-ins
+// (Reticulum, Transport); 3 is permanently reserved; 100-199 are official
+// app namespaces.
+#define PROV_NS_RADIO      100
+#define PROV_NS_GENERAL    101
+
+#define PROV_RADIO_FREQ      1
+#define PROV_RADIO_BW        2
+#define PROV_RADIO_SF        3
+#define PROV_RADIO_CR        4
+#define PROV_RADIO_TXP       5
+#define PROV_RADIO_IMPLICIT  6
+
+#define PROV_GENERAL_KISS_LOG 1
+
+// Buffer for an in-flight CMD_PROVISION_REQ frame. Per-platform cap below.
+RNS::Bytes provision_rx_buf;
+
+#if MCU_VARIANT == MCU_NRF52
+  #define PROVISION_RX_BUF_MAX 512
+#else
+  #define PROVISION_RX_BUF_MAX 2048
+#endif
+
+// Runtime toggle for KISS-framed log output. Default true; persisted via
+// the general.kiss_enabled provisioning field, loaded at boot.
+bool log_kiss_enabled = true;
+
+bool provisioning_started = false;
+
+// Register the radio + general namespaces. Called from setup() before
+// Manager::begin(). All radio fields are FF_REBOOT_REQUIRED — setters
+// fire only at boot via apply_loaded_to_runtime(), not on post-boot
+// commits, so the live radio is never perturbed mid-flight by a SetState.
+void register_provisioning_namespaces() {
+  using namespace RNS::Provisioning;
+
+  Manager::instance()
+    .register_namespace("radio", PROV_NS_RADIO)
+      .field_int("frequency", PROV_RADIO_FREQ, FF_REBOOT_REQUIRED,
+                 (int64_t)0, (int64_t)100000000, (int64_t)1000000000,
+                 [](const Value& v) { lora_freq = (uint32_t)v.as_int(); return true; })
+      .field_int("bandwidth", PROV_RADIO_BW, FF_REBOOT_REQUIRED,
+                 (int64_t)0, (int64_t)7800, (int64_t)500000,
+                 [](const Value& v) { lora_bw = (uint32_t)v.as_int(); return true; })
+      .field_int("sf", PROV_RADIO_SF, FF_REBOOT_REQUIRED,
+                 (int64_t)0, (int64_t)5, (int64_t)12,
+                 [](const Value& v) { lora_sf = (int)v.as_int(); return true; })
+      .field_int("cr", PROV_RADIO_CR, FF_REBOOT_REQUIRED,
+                 (int64_t)5, (int64_t)5, (int64_t)8,
+                 [](const Value& v) { lora_cr = (int)v.as_int(); return true; })
+      .field_int("txp", PROV_RADIO_TXP, FF_REBOOT_REQUIRED,
+                 (int64_t)0xFF, (int64_t)-9, (int64_t)22,
+                 [](const Value& v) { lora_txp = (int)v.as_int(); return true; })
+      .field_int("implicit_l", PROV_RADIO_IMPLICIT, FF_REBOOT_REQUIRED,
+                 (int64_t)0, (int64_t)0, (int64_t)255,
+                 [](const Value& v) { implicit_l = (uint8_t)v.as_int(); return true; })
+      .end();
+
+  Manager::instance()
+    .register_namespace("general", PROV_NS_GENERAL)
+      .field_bool("kiss_enabled", PROV_GENERAL_KISS_LOG, FF_LIVE_APPLY, true,
+                 [](const Value& v) { log_kiss_enabled = v.as_bool(); return true; })
+      .end();
+}
+
+void init_provisioning() {
+  RNS::Provisioning::Manager::instance().on_reboot_requested([]() {
+    // Host orchestrates reboot via CMD_RESET. We just record needs_reboot
+    // via the Manager's flag; no auto-reboot from here.
+  });
+  register_provisioning_namespaces();
+  RNS::Provisioning::Manager::instance().begin("/config");
+  provisioning_started = true;
+}
+
+// Dispatch one un-escaped MsgPack envelope to the Provisioning Manager and
+// emit the framed response back over KISS. Forward declared so the helper
+// inline in Utilities.h doesn't need to know the Bytes class either.
+void kiss_indicate_provision_response(const RNS::Bytes& payload);
+
+void on_provision_request(const RNS::Bytes& req) {
+  if (!provisioning_started) return;
+  RNS::Bytes response = RNS::Provisioning::Manager::instance().handle_message(req);
+  kiss_indicate_provision_response(response);
+}
+
+// Stage a radio field's new value into the Provisioning radio namespace
+// and persist via commit. Setters are FF_REBOOT_REQUIRED, so the running
+// radio is NOT touched — the new value takes effect at next boot via
+// apply_loaded_to_runtime(). Safe to call before Manager::begin() — it
+// just no-ops.
+void prov_commit_radio_int(uint16_t field_id, int64_t value) {
+  if (!provisioning_started) return;
+  auto& mgr = RNS::Provisioning::Manager::instance();
+  mgr.field(PROV_NS_RADIO, field_id, RNS::Provisioning::Value(value));
+  mgr.commit(PROV_NS_RADIO);
+}
+#endif // HAS_PROVISIONING
+
 // CBA logger callback
 void on_log(const char* msg, RNS::LogLevel level) {
+#ifdef HAS_PROVISIONING
+  if (log_kiss_enabled) {
+    extern void kiss_emit_log(const char* line, size_t len);
+    // Compose "<timestamp> [<level>] <msg>" into a stack buffer to avoid
+    // String heap allocation. 256 bytes covers the longest practical line.
+    char line[256];
+    int n = snprintf(line, sizeof(line), "%s [%s] %s",
+                     RNS::getTimeString().c_str(),
+                     RNS::getLevelName(level),
+                     msg);
+    if (n < 0) n = 0;
+    if ((size_t)n >= sizeof(line)) n = sizeof(line) - 1;
+    kiss_emit_log(line, (size_t)n);
+  } else
+#endif
+  {
   // Using individual Serial.print statements to avoid memory allocation for String
 	Serial.print(RNS::getTimeString());
 	Serial.print(" [");
@@ -192,6 +312,7 @@ void on_log(const char* msg, RNS::LogLevel level) {
 	Serial.print("] ");
 	Serial.println(msg);
 	Serial.flush();
+  }
 /*
   String line = RNS::getTimeString() + String(" [") + RNS::getLevelName(level) + "] " + msg + "\n";
 	Serial.print(line);
@@ -1379,6 +1500,12 @@ void serial_callback(uint8_t sbyte) {
         }
     }
 
+#ifdef HAS_PROVISIONING
+  } else if (IN_FRAME && sbyte == FEND && command == CMD_PROVISION_REQ) {
+    IN_FRAME = false;
+    on_provision_request(provision_rx_buf);
+    provision_rx_buf.clear();
+#endif
   } else if (sbyte == FEND) {
     IN_FRAME = true;
     command = CMD_UNKNOWN;
@@ -1405,6 +1532,21 @@ void serial_callback(uint8_t sbyte) {
               if (queue_cursor == CONFIG_QUEUE_SIZE) queue_cursor = 0;
             }
         }
+#ifdef HAS_PROVISIONING
+    } else if (command == CMD_PROVISION_REQ) {
+        if (sbyte == FESC) {
+            ESCAPE = true;
+        } else {
+            if (ESCAPE) {
+                if (sbyte == TFEND) sbyte = FEND;
+                if (sbyte == TFESC) sbyte = FESC;
+                ESCAPE = false;
+            }
+            if (provision_rx_buf.size() < PROVISION_RX_BUF_MAX) {
+                provision_rx_buf.append(sbyte);
+            }
+        }
+#endif
     } else if (command == CMD_FREQUENCY) {
       if (sbyte == FESC) {
             ESCAPE = true;
@@ -1424,7 +1566,11 @@ void serial_callback(uint8_t sbyte) {
             kiss_indicate_frequency();
           } else {
             lora_freq = freq;
+#ifdef HAS_PROVISIONING
+            prov_commit_radio_int(PROV_RADIO_FREQ, (int64_t)freq);
+#else
             if (op_mode == MODE_HOST) setFrequency();
+#endif
             kiss_indicate_frequency();
           }
         }
@@ -1447,7 +1593,11 @@ void serial_callback(uint8_t sbyte) {
             kiss_indicate_bandwidth();
           } else {
             lora_bw = bw;
+#ifdef HAS_PROVISIONING
+            prov_commit_radio_int(PROV_RADIO_BW, (int64_t)bw);
+#else
             if (op_mode == MODE_HOST) setBandwidth();
+#endif
             kiss_indicate_bandwidth();
           }
         }
@@ -1481,7 +1631,11 @@ void serial_callback(uint8_t sbyte) {
         #endif
 
         lora_txp = txp;
+#ifdef HAS_PROVISIONING
+        prov_commit_radio_int(PROV_RADIO_TXP, (int64_t)txp);
+#else
         if (op_mode == MODE_HOST) setTXPower();
+#endif
         kiss_indicate_txpower();
       }
     } else if (command == CMD_SF) {
@@ -1493,7 +1647,11 @@ void serial_callback(uint8_t sbyte) {
         if (sf > 12) sf = 12;
 
         lora_sf = sf;
+#ifdef HAS_PROVISIONING
+        prov_commit_radio_int(PROV_RADIO_SF, (int64_t)sf);
+#else
         if (op_mode == MODE_HOST) setSpreadingFactor();
+#endif
         kiss_indicate_spreadingfactor();
       }
     } else if (command == CMD_CR) {
@@ -1505,11 +1663,18 @@ void serial_callback(uint8_t sbyte) {
         if (cr > 8) cr = 8;
 
         lora_cr = cr;
+#ifdef HAS_PROVISIONING
+        prov_commit_radio_int(PROV_RADIO_CR, (int64_t)cr);
+#else
         if (op_mode == MODE_HOST) setCodingRate();
+#endif
         kiss_indicate_codingrate();
       }
     } else if (command == CMD_IMPLICIT) {
       set_implicit_length(sbyte);
+#ifdef HAS_PROVISIONING
+      prov_commit_radio_int(PROV_RADIO_IMPLICIT, (int64_t)implicit_l);
+#endif
       kiss_indicate_implicit_length();
     } else if (command == CMD_LEAVE) {
       if (sbyte == 0xFF) {

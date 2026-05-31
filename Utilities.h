@@ -869,6 +869,24 @@ void escaped_serial_write(uint8_t byte) {
     serial_write(byte);
 }
 
+#ifdef HAS_PROVISIONING
+void kiss_indicate_provision_response(const RNS::Bytes& payload) {
+	serial_write(FEND);
+	serial_write(CMD_PROVISION_RSP);
+	const uint8_t* data = payload.data();
+	size_t n = payload.size();
+	for (size_t i = 0; i < n; ++i) escaped_serial_write(data[i]);
+	serial_write(FEND);
+}
+
+void kiss_emit_log(const char* line, size_t len) {
+	serial_write(FEND);
+	serial_write(CMD_LOG);
+	for (size_t i = 0; i < len; ++i) escaped_serial_write((uint8_t)line[i]);
+	serial_write(FEND);
+}
+#endif
+
 void kiss_indicate_reset() {
 	serial_write(FEND);
 	serial_write(CMD_RESET);
