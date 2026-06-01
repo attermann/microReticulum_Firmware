@@ -1,0 +1,1779 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>microReticulum Console</title>
+<style>
+:root {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --ink: #1d2129;
+  --muted: #6a737d;
+  --border: #e1e4e8;
+  --accent: #2563eb;
+  --accent-ink: #ffffff;
+  --ok: #15803d;
+  --warn: #b45309;
+  --err: #b91c1c;
+  --hover: rgba(0,0,0,0.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#0f1115; --panel:#161a20; --ink:#e6e8eb; --muted:#8b949e; --border:#2a313a; --accent:#3b82f6; --hover: rgba(255,255,255,0.05); }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--ink); }
+#app { display: flex; flex-direction: column; height: 100vh; min-height: 0; }
+.topbar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; flex: 0 0 auto; }
+.topbar strong { font-size: 14px; }
+.topbar select, .topbar input, .topbar button { font: inherit; padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--ink); }
+.topbar button { cursor: pointer; }
+.topbar button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.spacer { flex: 1; }
+.sep { width: 1px; height: 18px; background: var(--border); }
+.pill { padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 500; }
+.st-idle { background: rgba(107,114,128,0.15); color: var(--muted); }
+.st-connecting { background: rgba(180,131,9,0.15); color: var(--warn); }
+.st-ok { background: rgba(21,128,61,0.15); color: var(--ok); }
+.st-err { background: rgba(185,28,28,0.15); color: var(--err); }
+.tabbar { display: flex; gap: 2px; padding: 0 12px; background: var(--panel); border-bottom: 1px solid var(--border); overflow-x: auto; flex: 0 0 auto; }
+.tab { padding: 8px 14px; background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--muted); cursor: pointer; font: inherit; white-space: nowrap; }
+.tab:hover:not(:disabled) { color: var(--ink); }
+.tab.active { color: var(--ink); border-bottom-color: var(--accent); }
+.tab:disabled { opacity: 0.4; cursor: not-allowed; }
+.body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.tab-body { flex: 1 1 auto; min-height: 0; padding: 16px; overflow: auto; }
+.tab-body.no-pad { padding: 0; }
+.tab-body h2 { margin: 0 0 12px; font-size: 16px; }
+.tab-body h3 { margin: 16px 0 8px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.kv { border-collapse: collapse; }
+.kv td { padding: 4px 12px 4px 0; }
+.kv td:first-child { color: var(--muted); }
+.field { display: grid; grid-template-columns: 220px 1fr; gap: 12px; padding: 8px 0; align-items: center; border-bottom: 1px solid var(--border); }
+.field label { color: var(--ink); font-weight: 500; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.field input[type=text], .field input[type=number], .field input[type=password], .field textarea, .field select {
+  font: inherit; padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--ink); width: 100%; max-width: 360px;
+}
+.field.has-err input, .field.has-err textarea, .field.has-err select { border-color: var(--err); }
+.field .err { grid-column: 2; color: var(--err); font-size: 12px; min-height: 0; }
+.badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 500; line-height: 1.4; }
+.badge.ro { background: rgba(107,114,128,0.15); color: var(--muted); }
+.badge.secret { background: rgba(180,131,9,0.15); color: var(--warn); }
+.badge.reboot { background: rgba(37,99,235,0.15); color: var(--accent); }
+.badge.draft { background: rgba(37,99,235,0.15); color: var(--accent); }
+.ns-toolbar { display: flex; gap: 8px; padding-bottom: 12px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
+.ns-toolbar button { font: inherit; padding: 5px 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--ink); cursor: pointer; }
+.ns-toolbar button:disabled { opacity: 0.5; cursor: not-allowed; }
+.bottombar { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: var(--panel); border-top: 1px solid var(--border); flex: 0 0 auto; }
+.bottombar button { font: inherit; padding: 6px 14px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--ink); cursor: pointer; }
+.bottombar button:disabled { opacity: 0.5; cursor: not-allowed; }
+.bottombar button:disabled.primary { background: var(--panel); color: var(--muted); border-color: var(--border); }
+.status-sec { margin-bottom: 18px; }
+.config-tab { flex: 1 1 auto; min-height: 0; display: flex; padding: 0; overflow: hidden; }
+.sidenav { width: 180px; flex: 0 0 auto; border-right: 1px solid var(--border); overflow-y: auto; padding: 8px 0; background: var(--panel); }
+.sidenav-btn { display: block; width: 100%; text-align: left; padding: 8px 16px; background: transparent; border: none; color: var(--ink); cursor: pointer; font: inherit; }
+.sidenav-btn:hover { background: var(--hover); }
+.sidenav-btn.active { background: var(--accent); color: var(--accent-ink); }
+.sidenav-btn .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-left: 6px; vertical-align: middle; }
+.sidenav-btn.active .dot { background: var(--accent-ink); }
+.sidenav-detail { flex: 1 1 auto; min-width: 0; min-height: 0; padding: 16px; overflow-y: auto; }
+.logs-tab { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; position: relative; padding: 0; }
+.logs-toolbar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: var(--panel); border-bottom: 1px solid var(--border); }
+.logs-toolbar button { font: inherit; padding: 4px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--ink); cursor: pointer; }
+.logs-toolbar button:hover { background: var(--hover); }
+.logs { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 8px 12px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--panel); }
+.log-line { white-space: pre-wrap; word-break: break-all; }
+.follow-pill { position: absolute; bottom: 14px; right: 18px; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--accent); color: var(--accent-ink); cursor: pointer; font: inherit; box-shadow: 0 1px 4px rgba(0,0,0,0.2); }
+.notice { padding: 8px 12px; background: rgba(180,131,9,0.12); color: var(--warn); border-radius: 4px; margin-bottom: 12px; }
+.toasts { position: fixed; bottom: 16px; right: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 1000; pointer-events: none; }
+.toast { padding: 10px 14px; background: var(--panel); border: 1px solid var(--border); border-left-width: 3px; border-radius: 4px; box-shadow: 0 2px 12px rgba(0,0,0,0.18); min-width: 220px; max-width: 360px; opacity: 0; transform: translateY(8px); transition: opacity 0.2s, transform 0.2s; pointer-events: auto; }
+.toast.show { opacity: 1; transform: translateY(0); }
+.toast.ok { border-left-color: var(--ok); }
+.toast.err { border-left-color: var(--err); }
+.toast.warn { border-left-color: var(--warn); }
+.toast.info { border-left-color: var(--accent); }
+pre { font: 12px/1.5 ui-monospace, Menlo, monospace; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="toasts" class="toasts"></div>
+<script>
+(function(){
+'use strict';
+
+// ===== Protocol constants =====
+const FEND=0xC0, FESC=0xDB, TFEND=0xDC, TFESC=0xDD;
+const CMD_LOG=0x80, CMD_PROVISION_REQ=0x86, CMD_PROVISION_RSP=0x87;
+const CMD_RESET=0x55, CMD_RESET_BYTE=0xF8;
+const STAT_CMD_RANGE = [0x21, 0x29];
+
+const OP = { GetSchema:1, GetInfo:2, GetCapabilities:3, GetState:4, SetState:5, Commit:6, Discard:7, FactoryReset:8, Ack:100, Error:101 };
+const FT = { None:0, Bool:1, Int:2, Float:3, String:4, Bytes:5, Enum:6 };
+const FF = { LIVE_APPLY:1, REBOOT_REQUIRED:2, READ_ONLY:4, SECRET:8 };
+const ERR_NAMES = { 0:'Ok', 1:'MalformedRequest', 2:'UnknownOp', 3:'UnknownNamespace', 4:'UnknownField', 5:'InvalidValue', 6:'ConstraintViolation', 7:'ReadOnly', 8:'StorageError', 9:'NotInitialized', 99:'Internal' };
+const FK = { Id:1, Name:2, Type:3, Flags:4, MinI:5, MaxI:6, MinF:7, MaxF:8, MaxLen:9, EnumValues:10, EnumLabels:11, Default:12 };
+const IK = { FirmwareVersion:1, SchemaVersion:2, NeedsReboot:3 };
+const GK = { NamespaceFilter:1, Pending:2 };
+const SK = { Applied:1, DraftHasReboot:2, FieldErrors:3 };
+const CK = { Applied:1, NeedsReboot:2 };
+const EK = { Code:1, Message:2, Namespace:3, Field:4 };
+const RSSI_OFFSET = 157;
+
+// ===== MsgPack =====
+class Packer {
+  constructor(){ this.bufs=[]; this.size=0; }
+  _push(a){ this.bufs.push(a); this.size+=a.length; }
+  _w8(n){ this._push(new Uint8Array([n&0xff])); }
+  _w16(n){ this._push(new Uint8Array([(n>>8)&0xff,n&0xff])); }
+  _w32(n){ this._push(new Uint8Array([(n>>>24)&0xff,(n>>>16)&0xff,(n>>>8)&0xff,n&0xff])); }
+  _w64(big){ const a=new Uint8Array(8); for(let i=7;i>=0;--i){a[i]=Number(big&0xffn);big>>=8n;} this._push(a); }
+  nil(){ this._w8(0xc0); }
+  bool(b){ this._w8(b?0xc3:0xc2); }
+  int(n){
+    let bn = typeof n==='bigint' ? n : BigInt(Math.trunc(Number(n)));
+    if (bn>=0n) {
+      if (bn<128n) this._w8(Number(bn));
+      else if (bn<256n) { this._w8(0xcc); this._w8(Number(bn)); }
+      else if (bn<65536n) { this._w8(0xcd); this._w16(Number(bn)); }
+      else if (bn<4294967296n) { this._w8(0xce); this._w32(Number(bn)); }
+      else { this._w8(0xcf); this._w64(bn); }
+    } else {
+      if (bn>=-32n) this._w8(Number(bn)&0xff);
+      else if (bn>=-128n) { this._w8(0xd0); this._w8(Number(bn)&0xff); }
+      else if (bn>=-32768n) { this._w8(0xd1); this._w16(Number(bn)&0xffff); }
+      else if (bn>=-2147483648n) { this._w8(0xd2); this._w32(Number(bn)>>>0); }
+      else { this._w8(0xd3); this._w64(bn + (1n<<64n)); }
+    }
+  }
+  float(f){ this._w8(0xcb); const dv=new DataView(new ArrayBuffer(8)); dv.setFloat64(0,f,false); this._push(new Uint8Array(dv.buffer)); }
+  str(s){
+    const b=new TextEncoder().encode(s); const n=b.length;
+    if (n<32) this._w8(0xa0|n);
+    else if (n<256) { this._w8(0xd9); this._w8(n); }
+    else if (n<65536) { this._w8(0xda); this._w16(n); }
+    else { this._w8(0xdb); this._w32(n); }
+    this._push(b);
+  }
+  bin(b){
+    const n=b.length;
+    if (n<256) { this._w8(0xc4); this._w8(n); }
+    else if (n<65536) { this._w8(0xc5); this._w16(n); }
+    else { this._w8(0xc6); this._w32(n); }
+    this._push(b instanceof Uint8Array ? b : new Uint8Array(b));
+  }
+  arr(n){
+    if (n<16) this._w8(0x90|n);
+    else if (n<65536) { this._w8(0xdc); this._w16(n); }
+    else { this._w8(0xdd); this._w32(n); }
+  }
+  map(n){
+    if (n<16) this._w8(0x80|n);
+    else if (n<65536) { this._w8(0xde); this._w16(n); }
+    else { this._w8(0xdf); this._w32(n); }
+  }
+  result(){ const out=new Uint8Array(this.size); let o=0; for(const b of this.bufs){ out.set(b,o); o+=b.length; } return out; }
+}
+class Unpacker {
+  constructor(u8){ this.b=u8; this.p=0; this.dec=new TextDecoder(); }
+  _r8(){ return this.b[this.p++]; }
+  _r16(){ const v=(this.b[this.p]<<8)|this.b[this.p+1]; this.p+=2; return v>>>0; }
+  _r32(){ const v=this.b[this.p]*0x1000000 + ((this.b[this.p+1]<<16)|(this.b[this.p+2]<<8)|this.b[this.p+3]); this.p+=4; return v; }
+  _r64u(){ let v=0n; for(let i=0;i<8;++i){ v=(v<<8n)|BigInt(this.b[this.p+i]); } this.p+=8; return v; }
+  _bytes(n){ const v=this.b.slice(this.p,this.p+n); this.p+=n; return v; }
+  _f32(){ const dv=new DataView(this.b.buffer,this.b.byteOffset+this.p,4); this.p+=4; return dv.getFloat32(0,false); }
+  _f64(){ const dv=new DataView(this.b.buffer,this.b.byteOffset+this.p,8); this.p+=8; return dv.getFloat64(0,false); }
+  _arr(n){ const a=new Array(n); for(let i=0;i<n;++i) a[i]=this.next(); return a; }
+  _map(n){ const m=new Map(); for(let i=0;i<n;++i){ const k=this.next(); m.set(k,this.next()); } return m; }
+  next(){
+    const t=this._r8();
+    if (t<=0x7f) return t;
+    if (t>=0xe0) return t-0x100;
+    if ((t&0xe0)===0xa0) return this.dec.decode(this._bytes(t&0x1f));
+    if ((t&0xf0)===0x90) return this._arr(t&0x0f);
+    if ((t&0xf0)===0x80) return this._map(t&0x0f);
+    switch(t){
+      case 0xc0: return null;
+      case 0xc2: return false;
+      case 0xc3: return true;
+      case 0xc4: return this._bytes(this._r8());
+      case 0xc5: return this._bytes(this._r16());
+      case 0xc6: return this._bytes(this._r32());
+      case 0xca: return this._f32();
+      case 0xcb: return this._f64();
+      case 0xcc: return this._r8();
+      case 0xcd: return this._r16();
+      case 0xce: return this._r32();
+      case 0xcf: { const v=this._r64u(); return v<=BigInt(Number.MAX_SAFE_INTEGER) ? Number(v) : v; }
+      case 0xd0: { const v=this._r8(); return v<128 ? v : v-256; }
+      case 0xd1: { const v=this._r16(); return v<32768 ? v : v-65536; }
+      case 0xd2: { const v=this._r32(); return v<2147483648 ? v : v-4294967296; }
+      case 0xd3: { let v=this._r64u(); if (v>=(1n<<63n)) v-=(1n<<64n); return v>=BigInt(Number.MIN_SAFE_INTEGER)&&v<=BigInt(Number.MAX_SAFE_INTEGER) ? Number(v) : v; }
+      case 0xd9: return this.dec.decode(this._bytes(this._r8()));
+      case 0xda: return this.dec.decode(this._bytes(this._r16()));
+      case 0xdb: return this.dec.decode(this._bytes(this._r32()));
+      case 0xdc: return this._arr(this._r16());
+      case 0xdd: return this._arr(this._r32());
+      case 0xde: return this._map(this._r16());
+      case 0xdf: return this._map(this._r32());
+    }
+    throw new Error('msgpack: unknown type 0x'+t.toString(16));
+  }
+}
+
+// ===== KISS framing =====
+function kissEncode(cmd, payload) {
+  let len = 2;
+  for (let i = 0; i < payload.length; ++i) len += (payload[i] === FEND || payload[i] === FESC) ? 2 : 1;
+  len += 1;
+  const out = new Uint8Array(len);
+  let o = 0;
+  out[o++] = FEND; out[o++] = cmd;
+  for (let i = 0; i < payload.length; ++i) {
+    const b = payload[i];
+    if (b === FEND) { out[o++] = FESC; out[o++] = TFEND; }
+    else if (b === FESC) { out[o++] = FESC; out[o++] = TFESC; }
+    else { out[o++] = b; }
+  }
+  out[o++] = FEND;
+  return out;
+}
+class KissDecoder {
+  constructor(onFrame) {
+    this.onFrame = onFrame; this.state = 'idle'; this.cmd = 0; this.buf = []; this.esc = false;
+  }
+  feed(bytes) {
+    for (let i = 0; i < bytes.length; ++i) {
+      const b = bytes[i];
+      if (this.state === 'idle') { if (b === FEND) this.state = 'cmd'; continue; }
+      if (this.state === 'cmd') {
+        if (b === FEND) continue;
+        this.cmd = b; this.buf = []; this.esc = false; this.state = 'data';
+        continue;
+      }
+      if (b === FEND) {
+        if (this.buf.length > 0) this.onFrame(this.cmd, new Uint8Array(this.buf));
+        this.state = 'cmd';
+        continue;
+      }
+      if (this.esc) { this.buf.push(b === TFEND ? FEND : (b === TFESC ? FESC : b)); this.esc = false; continue; }
+      if (b === FESC) { this.esc = true; continue; }
+      this.buf.push(b);
+    }
+  }
+}
+
+// ===== Transports =====
+class SerialTransport {
+  constructor(){ this.port=null; this.reader=null; this.writer=null; this.onBytes=()=>{}; this.onStatus=()=>{}; this._abort=false; }
+  static available(){ return !!navigator.serial; }
+  _desc(){
+    if (!this.port) return 'serial port';
+    const info = this.port.getInfo();
+    return info.usbVendorId
+      ? `USB ${info.usbVendorId.toString(16).padStart(4,'0')}:${(info.usbProductId||0).toString(16).padStart(4,'0')}`
+      : 'serial port';
+  }
+  async connect(){
+    this.onStatus({state:'connecting'});
+    try {
+      this.port = await navigator.serial.requestPort();
+      await this._open();
+    } catch (e) {
+      this.onStatus({state:'error', info: e.message || String(e)});
+      throw e;
+    }
+  }
+  // Reconnect using the existing port handle — no user gesture needed because
+  // permission was granted during the initial connect.
+  async reconnect(){
+    if (!this.port) throw new Error('no port to reconnect');
+    this.onStatus({state:'connecting'});
+    await this._open();
+  }
+  async _open(){
+    await this.port.open({ baudRate: 115200 });
+    this.writer = this.port.writable.getWriter();
+    this.reader = this.port.readable.getReader();
+    this._abort = false;
+    this.onStatus({state:'connected', info: this._desc()});
+    this._readLoop();
+  }
+  async _releaseStreams(){
+    try { if (this.reader) { try { await this.reader.cancel(); } catch(_) {} try { this.reader.releaseLock(); } catch(_) {} } } catch(_) {}
+    try { if (this.writer) { try { this.writer.releaseLock(); } catch(_) {} } } catch(_) {}
+    try { if (this.port) await this.port.close(); } catch(_) {}
+    this.reader = this.writer = null;
+  }
+  async _readLoop(){
+    try {
+      while (!this._abort) {
+        const { value, done } = await this.reader.read();
+        if (done) break;
+        if (value && value.length) this.onBytes(value);
+      }
+    } catch (e) {
+      // Lost-device or cancelled reader — fall through to teardown.
+    }
+    await this._releaseStreams();
+    // Keep this.port so reconnect() can re-open it without re-prompting.
+    this.onStatus({state:'closed'});
+  }
+  async send(bytes){ if (this.writer) await this.writer.write(bytes); }
+  async disconnect(){
+    this._abort = true;
+    await this._releaseStreams();
+    this.port = null;
+    this.onStatus({state:'idle'});
+  }
+  // Soft-close that preserves the port handle so reconnect() can reopen it.
+  // Used when we know the device is about to disconnect (e.g. after a reboot
+  // command) — on UART-to-USB bridges the underlying serial connection may not
+  // drop on its own, so we have to release it explicitly to trigger 'closed'.
+  // We do NOT fire onStatus('closed') ourselves; cancelling the reader makes
+  // _readLoop exit, and it fires 'closed' on its way out. Firing here too would
+  // double-fire and spawn two parallel reconnect attempts.
+  async forceClose(){
+    this._abort = true;
+    await this._releaseStreams();
+  }
+}
+const NUS_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const NUS_RX_CHAR = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+const NUS_TX_CHAR = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+class BLETransport {
+  constructor(){ this.device=null; this.rx=null; this.tx=null; this.onBytes=()=>{}; this.onStatus=()=>{}; this._writeNoResp=true; this._gattHandler=null; this._notifyHandler=null; }
+  static available(){ return !!navigator.bluetooth; }
+  async connect(){
+    this.onStatus({state:'connecting'});
+    try {
+      this.device = await navigator.bluetooth.requestDevice({ filters: [{ services: [NUS_SERVICE] }] });
+      this._gattHandler = () => this.onStatus({state:'closed'});
+      this.device.addEventListener('gattserverdisconnected', this._gattHandler);
+      await this._attach();
+    } catch (e) {
+      this.onStatus({state:'error', info: e.message || String(e)});
+      throw e;
+    }
+  }
+  // Reconnect using the same device handle. No user gesture required.
+  async reconnect(){
+    if (!this.device) throw new Error('no device to reconnect');
+    this.onStatus({state:'connecting'});
+    await this._attach();
+  }
+  async _attach(){
+    const server = await this.device.gatt.connect();
+    const svc = await server.getPrimaryService(NUS_SERVICE);
+    this.rx = await svc.getCharacteristic(NUS_RX_CHAR);
+    this.tx = await svc.getCharacteristic(NUS_TX_CHAR);
+    await this.tx.startNotifications();
+    this._notifyHandler = (e) => {
+      const v = e.target.value;
+      this.onBytes(new Uint8Array(v.buffer, v.byteOffset, v.byteLength));
+    };
+    this.tx.addEventListener('characteristicvaluechanged', this._notifyHandler);
+    this.onStatus({state:'connected', info: this.device.name || 'BLE device'});
+  }
+  async send(bytes){
+    if (!this.rx) return;
+    for (let off = 0; off < bytes.length; off += 240) {
+      const chunk = bytes.slice(off, Math.min(off+240, bytes.length));
+      try {
+        if (this._writeNoResp) await this.rx.writeValueWithoutResponse(chunk);
+        else await this.rx.writeValue(chunk);
+      } catch (e) {
+        if (this._writeNoResp) { this._writeNoResp = false; await this.rx.writeValue(chunk); }
+        else throw e;
+      }
+    }
+  }
+  async disconnect(){
+    try { if (this.device && this._gattHandler) this.device.removeEventListener('gattserverdisconnected', this._gattHandler); } catch(_) {}
+    try { if (this.device && this.device.gatt.connected) this.device.gatt.disconnect(); } catch(_) {}
+    this.device = this.rx = this.tx = null;
+    this._gattHandler = this._notifyHandler = null;
+    this.onStatus({state:'idle'});
+  }
+  // See SerialTransport.forceClose — drops the GATT link so we get a clean
+  // disconnect/reconnect cycle. The gattserverdisconnected handler installed in
+  // connect() will fire 'closed'. We do NOT fire it again here to avoid
+  // double-triggering startReconnect.
+  async forceClose(){
+    try { if (this.device && this.device.gatt.connected) this.device.gatt.disconnect(); } catch(_) {}
+    this.rx = this.tx = null;
+  }
+}
+class WebSocketTransport {
+  constructor(){ this.ws=null; this.url=null; this.onBytes=()=>{}; this.onStatus=()=>{}; this._userClosing=false; }
+  static available(){ return true; }
+  async connect(url){
+    this.url = url;
+    this.onStatus({state:'connecting'});
+    return new Promise((resolve, reject) => {
+      try {
+        this.ws = new WebSocket(url);
+        this.ws.binaryType = 'arraybuffer';
+        let opened = false;
+        this.ws.onopen = () => { opened = true; this.onStatus({state:'connected', info: url}); resolve(); };
+        this.ws.onmessage = (e) => {
+          if (e.data instanceof ArrayBuffer) this.onBytes(new Uint8Array(e.data));
+          else if (typeof e.data === 'string') this.onBytes(new TextEncoder().encode(e.data));
+        };
+        this.ws.onerror = () => { if (!opened) reject(new Error('connect failed')); };
+        this.ws.onclose = () => this.onStatus({state: this._userClosing ? 'idle' : 'closed'});
+      } catch (e) { this.onStatus({state:'error', info: e.message}); reject(e); }
+    });
+  }
+  // Reconnect using the saved URL. Server-side socket from before the reboot
+  // is gone, so we open a brand-new WebSocket.
+  async reconnect(){
+    if (!this.url) throw new Error('no URL to reconnect');
+    this._userClosing = false;
+    await this.connect(this.url);
+  }
+  async send(bytes){ if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(bytes); }
+  async disconnect(){
+    this._userClosing = true;
+    try { if (this.ws) this.ws.close(); } catch(_) {}
+    this.ws = null;
+    this.url = null;
+    // onclose handler above will fire 'idle' because _userClosing is true.
+  }
+  // See SerialTransport.forceClose — closes the socket but leaves the URL set
+  // so reconnect() can reopen it.
+  async forceClose(){
+    this._userClosing = false;
+    try { if (this.ws) this.ws.close(); } catch(_) {}
+    // ws.onclose will fire 'closed' (because _userClosing was reset to false).
+  }
+}
+
+// ===== Provisioning client =====
+class ProvisioningClient {
+  constructor(transport){
+    this.t = transport;
+    this.seq = 1;
+    this.waiters = new Map();
+    this.onLog = () => {};
+    this.onStatusFrame = () => {};
+    this.decoder = new KissDecoder((cmd, payload) => this._onFrame(cmd, payload));
+    this.t.onBytes = (b) => this.decoder.feed(b);
+  }
+  _onFrame(cmd, payload){
+    if (cmd === CMD_PROVISION_RSP) this._onResponse(payload);
+    else if (cmd === CMD_LOG) this.onLog(new TextDecoder().decode(payload));
+    else if (cmd >= STAT_CMD_RANGE[0] && cmd <= STAT_CMD_RANGE[1]) this.onStatusFrame(cmd, payload);
+  }
+  _onResponse(payload){
+    let env;
+    try { env = new Unpacker(payload).next(); }
+    catch (e) { console.error('msgpack decode failed:', e); return; }
+    if (!Array.isArray(env) || env.length < 2) return;
+    const op = Number(env[0]);
+    const seq = Number(env[1]);
+    const body = env.length >= 3 ? env[2] : null;
+    const w = this.waiters.get(seq);
+    if (!w) return;
+    this.waiters.delete(seq);
+    clearTimeout(w.timeoutId);
+    if (op === OP.Error) {
+      const m = body instanceof Map ? body : new Map();
+      const err = new Error(m.get(EK.Message) || 'Provisioning error');
+      err.code = m.get(EK.Code) ?? 99;
+      err.codeName = ERR_NAMES[err.code] || 'Unknown';
+      err.ns = m.get(EK.Namespace);
+      err.field = m.get(EK.Field);
+      w.reject(err);
+    } else {
+      w.resolve({ op, body });
+    }
+  }
+  async _request(opId, packPayload, timeoutMs){
+    const seq = this.seq++;
+    const p = new Packer();
+    const has = !!packPayload;
+    p.arr(has ? 3 : 2);
+    p.int(opId);
+    p.int(seq);
+    if (has) packPayload(p);
+    const frame = kissEncode(CMD_PROVISION_REQ, p.result());
+    const timeout = (timeoutMs != null) ? timeoutMs : 5000;
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        this.waiters.delete(seq);
+        reject(new Error('Provisioning request timed out (op '+opId+')'));
+      }, timeout);
+      this.waiters.set(seq, { resolve, reject, timeoutId });
+      Promise.resolve(this.t.send(frame)).catch(reject);
+    });
+  }
+  // timeoutMs lets callers override the default 5s — used by the reconnect
+  // probe loop, which wants a short timeout so it can retry rapidly while the
+  // firmware finishes booting.
+  async getInfo(timeoutMs){
+    const { body } = await this._request(OP.GetInfo, null, timeoutMs);
+    const m = body instanceof Map ? body : new Map();
+    return { firmwareVersion: m.get(IK.FirmwareVersion), schemaVersion: m.get(IK.SchemaVersion), needsReboot: !!m.get(IK.NeedsReboot) };
+  }
+  async getSchema(){
+    const { body } = await this._request(OP.GetSchema);
+    const namespaces = [];
+    if (Array.isArray(body)) {
+      for (const nsEntry of body) {
+        if (!Array.isArray(nsEntry) || nsEntry.length < 3) continue;
+        const fields = [];
+        for (const fEntry of nsEntry[2]) {
+          if (!(fEntry instanceof Map)) continue;
+          fields.push({
+            id: Number(fEntry.get(FK.Id)),
+            name: fEntry.get(FK.Name),
+            type: Number(fEntry.get(FK.Type)),
+            flags: Number(fEntry.get(FK.Flags) || 0),
+            minI: fEntry.get(FK.MinI), maxI: fEntry.get(FK.MaxI),
+            minF: fEntry.get(FK.MinF), maxF: fEntry.get(FK.MaxF),
+            maxLen: fEntry.get(FK.MaxLen),
+            enumValues: fEntry.get(FK.EnumValues), enumLabels: fEntry.get(FK.EnumLabels),
+            default: fEntry.get(FK.Default),
+          });
+        }
+        namespaces.push({ id: Number(nsEntry[0]), name: String(nsEntry[1]), fields });
+      }
+    }
+    return { namespaces };
+  }
+  async getState(nsIds, pending){
+    const { body } = await this._request(OP.GetState, (p) => {
+      const hasFilter = Array.isArray(nsIds) && nsIds.length > 0;
+      const entries = (hasFilter ? 1 : 0) + (pending ? 1 : 0);
+      if (entries === 0) { p.nil(); return; }
+      p.map(entries);
+      if (hasFilter) { p.int(GK.NamespaceFilter); p.arr(nsIds.length); for (const n of nsIds) p.int(n); }
+      if (pending) { p.int(GK.Pending); p.bool(true); }
+    });
+    const out = {};
+    if (body instanceof Map) {
+      for (const [nsId, fields] of body) {
+        const f = {};
+        if (fields instanceof Map) for (const [fid, v] of fields) f[Number(fid)] = v;
+        out[Number(nsId)] = f;
+      }
+    }
+    return out;
+  }
+  async setState(stateMap){
+    const { body } = await this._request(OP.SetState, (p) => {
+      const nsIds = Object.keys(stateMap).map(Number);
+      p.map(nsIds.length);
+      for (const nsId of nsIds) {
+        p.int(nsId);
+        const fields = stateMap[nsId];
+        const fids = Object.keys(fields).map(Number);
+        p.map(fids.length);
+        for (const fid of fids) { p.int(fid); packTypedValue(p, fields[fid].type, fields[fid].value); }
+      }
+    });
+    const m = body instanceof Map ? body : new Map();
+    const errs = m.get(SK.FieldErrors);
+    const fieldErrors = Array.isArray(errs) ? errs.map(e => ({
+      ns: Number(e[0]), field: Number(e[1]), code: Number(e[2]), codeName: ERR_NAMES[Number(e[2])] || 'Unknown',
+    })) : [];
+    return { applied: Number(m.get(SK.Applied) || 0), draftHasReboot: !!m.get(SK.DraftHasReboot), fieldErrors };
+  }
+  async commit(nsIds){
+    const { body } = await this._request(OP.Commit, (p) => {
+      if (Array.isArray(nsIds) && nsIds.length > 0) { p.arr(nsIds.length); for (const n of nsIds) p.int(n); }
+      else p.nil();
+    });
+    const m = body instanceof Map ? body : new Map();
+    return { applied: Number(m.get(CK.Applied) || 0), needsReboot: !!m.get(CK.NeedsReboot) };
+  }
+  async discard(nsIds){
+    const { body } = await this._request(OP.Discard, (p) => {
+      if (Array.isArray(nsIds) && nsIds.length > 0) { p.arr(nsIds.length); for (const n of nsIds) p.int(n); }
+      else p.nil();
+    });
+    const m = body instanceof Map ? body : new Map();
+    return { applied: Number(m.get(CK.Applied) || 0) };
+  }
+  async factoryReset(){
+    const { body } = await this._request(OP.FactoryReset);
+    const m = body instanceof Map ? body : new Map();
+    return { needsReboot: !!m.get(CK.NeedsReboot) };
+  }
+  // Fire-and-forget reset via the legacy RNode KISS reset frame
+  // (FEND CMD_RESET CMD_RESET_BYTE FEND). The device reboots immediately,
+  // so there is no response — we just send the bytes.
+  async reboot(){
+    await this.t.send(kissEncode(CMD_RESET, new Uint8Array([CMD_RESET_BYTE])));
+  }
+  // Called after the underlying transport reconnects (post-reboot). Clears
+  // in-flight waiters that will never be answered and re-syncs the KISS decoder
+  // so any half-received frame from before the disconnect doesn't corrupt the
+  // first bytes of the new session.
+  resetSession(){
+    for (const [, w] of this.waiters) {
+      clearTimeout(w.timeoutId);
+      try { w.reject(new Error('connection lost')); } catch(_) {}
+    }
+    this.waiters.clear();
+    this.decoder = new KissDecoder((cmd, payload) => this._onFrame(cmd, payload));
+    this.t.onBytes = (b) => this.decoder.feed(b);
+    this.seq = 1;
+  }
+}
+function packTypedValue(p, type, v){
+  switch (type) {
+    case FT.Bool: p.bool(!!v); return;
+    case FT.Int: case FT.Enum: p.int(v); return;
+    case FT.Float: p.float(Number(v)); return;
+    case FT.String: p.str(String(v == null ? '' : v)); return;
+    case FT.Bytes: p.bin(v instanceof Uint8Array ? v : new Uint8Array(v || [])); return;
+    default: p.nil();
+  }
+}
+
+// ===== Status decoder =====
+function decodeStatusFrame(cmd, payload, st){
+  const dv = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+  st._t = Date.now();
+  switch (cmd) {
+    case 0x21: if (payload.length>=4) st.rxPackets = dv.getUint32(0,false); break;
+    case 0x22: if (payload.length>=4) st.txPackets = dv.getUint32(0,false); break;
+    case 0x23: if (payload.length>=1) st.lastRssi = payload[0] - RSSI_OFFSET; break;
+    case 0x24: if (payload.length>=1) {
+      const raw = payload[0] < 128 ? payload[0] : payload[0] - 256;
+      st.lastSnr = raw / 4.0;
+    } break;
+    case 0x25: if (payload.length>=11) {
+      st.airtimeShort = dv.getUint16(0,false) / 10000;
+      st.airtimeLong = dv.getUint16(2,false) / 10000;
+      st.channelUtilShort = dv.getUint16(4,false) / 10000;
+      st.channelUtilLong = dv.getUint16(6,false) / 10000;
+      st.currentRssi = payload[8] - RSSI_OFFSET;
+      st.noiseFloor = payload[9] - RSSI_OFFSET;
+      st.interferenceRssi = payload[10] === 0xFF ? null : (payload[10] - RSSI_OFFSET);
+    } break;
+    case 0x26: if (payload.length>=12) {
+      st.symbolTimeUs = dv.getUint16(0,false);
+      st.symbolRate = dv.getUint16(2,false);
+      st.preambleSymbols = dv.getUint16(4,false);
+      st.preambleTimeMs = dv.getUint16(6,false);
+      st.csmaSlotMs = dv.getUint16(8,false);
+      st.difsMs = dv.getUint16(10,false);
+    } break;
+    case 0x27: if (payload.length>=2) { st.batteryState = payload[0]; st.batteryPercent = payload[1]; } break;
+    case 0x28: if (payload.length>=3) { st.cwBand = payload[0]; st.cwMin = payload[1]; st.cwMax = payload[2]; } break;
+    case 0x29: if (payload.length>=1) st.temperatureC = payload[0]; break;
+  }
+}
+
+// ===== Reactive helper =====
+function observable(initial){
+  let v = initial;
+  const subs = new Set();
+  return {
+    get: () => v,
+    set: (nv) => { v = nv; subs.forEach(s => s(v)); },
+    update: (fn) => { fn(v); subs.forEach(s => s(v)); },
+    subscribe: (fn) => { subs.add(fn); return () => subs.delete(fn); },
+  };
+}
+// Reflected boolean HTML attributes whose property mirror is the canonical form.
+const BOOL_ATTRS = { disabled: 1, checked: 1, readonly: 1, required: 1, hidden: 1, selected: 1, multiple: 1, autofocus: 1 };
+function el(tag, attrs, children){
+  const e = document.createElement(tag);
+  if (attrs) for (const k in attrs) {
+    const v = attrs[k];
+    if (v == null || v === false) continue;
+    if (k.startsWith('on') && typeof v === 'function') e.addEventListener(k.slice(2).toLowerCase(), v);
+    else if (k === 'class') e.className = v;
+    else if (k === 'style' && typeof v === 'object') Object.assign(e.style, v);
+    else if (BOOL_ATTRS[k]) { e[k] = true; e.setAttribute(k, ''); }
+    else if (v === true) e.setAttribute(k, '');
+    else e.setAttribute(k, v);
+  }
+  if (children != null) {
+    for (const c of (Array.isArray(children) ? children : [children])) {
+      if (c == null || c === false) continue;
+      e.appendChild(typeof c === 'object' && c.nodeType ? c : document.createTextNode(String(c)));
+    }
+  }
+  return e;
+}
+
+// ===== State =====
+const state = {
+  transportName: observable('serial'),
+  wsUrl: observable('ws://localhost:8080'),
+  conn: observable({ state: 'idle' }),
+  info: observable(null),
+  schema: observable(null),
+  activeTab: observable('info'),           // 'info' | 'status' | 'config' | 'logs'
+  activeNsTab: observable(null),           // ns_id within Configuration tab
+  nsState: observable({}),                 // { nsId: { committed:{fid:val}, draft:{fid:val} } }
+  nsLoaded: observable({}),                // { nsId: true }
+  nsLoading: observable({}),               // { nsId: true } while fetch is in flight
+  nsServerErrors: observable({}),
+  nodeStatus: observable({}),
+  hasDraft: observable(false),
+  // True when the firmware holds an uncommitted draft. The per-namespace Save
+  // sends edits to the firmware (where they live as a draft); only then does
+  // Commit have anything to apply. Discard all also operates on the firmware
+  // draft, so both buttons gate on this flag, not on local-only edits.
+  firmwareHasDraft: observable(false),
+  autoReconnect: observable(true),
+  reconnecting: observable(false),
+};
+let transport = null;
+let client = null;
+// When true, the next 'closed' / 'idle' transport event should fully tear down
+// state and NOT trigger auto-reconnect. Set by doDisconnect().
+let userInitiatedDisconnect = false;
+// Set during reboot()/auto-reconnect so we know to attempt re-establishment.
+let lastTransportName = null;
+// Single in-flight reconnect token. Bumping it cancels the previous attempt.
+let reconnectToken = 0;
+
+function createTransport(name){
+  if (name === 'serial') return new SerialTransport();
+  if (name === 'ble') return new BLETransport();
+  if (name === 'ws') return new WebSocketTransport();
+  throw new Error('unknown transport ' + name);
+}
+
+function clearSessionState(){
+  state.info.set(null);
+  state.schema.set(null);
+  state.activeNsTab.set(null);
+  state.nsState.set({});
+  state.nsLoaded.set({});
+  state.nsLoading.set({});
+  state.nsServerErrors.set({});
+  state.nodeStatus.set({});
+  state.hasDraft.set(false);
+  state.firmwareHasDraft.set(false);
+}
+
+function wireClient(c){
+  c.onLog = (text) => {
+    const lines = text.split(/\r?\n/).filter(l => l.length > 0);
+    for (const l of lines) logsBuffer.push(l);
+    while (logsBuffer.length > 1000) logsBuffer.shift();
+    logsListeners.forEach(fn => fn(lines));
+  };
+  c.onStatusFrame = (cmd, payload) => {
+    state.nodeStatus.update(st => decodeStatusFrame(cmd, payload, st));
+  };
+}
+
+function onTransportStatus(s){
+  state.conn.set(s);
+  if (s.state === 'idle') {
+    // Fully torn down (user-initiated disconnect path).
+    client = null; transport = null;
+    clearSessionState();
+    state.reconnecting.set(false);
+  } else if (s.state === 'closed') {
+    if (userInitiatedDisconnect || !state.autoReconnect.get() || !transport) {
+      // No reconnect: clear session, drop handles.
+      client = null; transport = null;
+      clearSessionState();
+      state.reconnecting.set(false);
+    } else {
+      // Device went away (probably a reboot); start auto-reconnect.
+      startReconnect();
+    }
+  }
+}
+
+async function doConnect(){
+  userInitiatedDisconnect = false;
+  reconnectToken++;
+  const name = state.transportName.get();
+  lastTransportName = name;
+  try {
+    transport = createTransport(name);
+    transport.onStatus = onTransportStatus;
+    client = new ProvisioningClient(transport);
+    wireClient(client);
+    if (name === 'ws') await transport.connect(state.wsUrl.get());
+    else await transport.connect();
+    await afterConnect();
+  } catch (e) {
+    console.error('connect failed:', e);
+  }
+}
+
+async function afterConnect(){
+  try { state.info.set(await client.getInfo()); } catch (e) { console.error('getInfo:', e); showToast('Failed to fetch device info: ' + e.message, 'err'); }
+  try {
+    const schema = await client.getSchema();
+    state.schema.set(schema);
+    if (schema.namespaces.length > 0 && state.activeNsTab.get() == null) {
+      state.activeNsTab.set(schema.namespaces[0].id);
+    }
+  } catch (e) { console.error('getSchema:', e); showToast('Failed to fetch schema: ' + e.message, 'err'); }
+}
+
+async function doDisconnect(){
+  userInitiatedDisconnect = true;
+  reconnectToken++;            // cancel any in-flight auto-reconnect
+  state.reconnecting.set(false);
+  if (transport) { try { await transport.disconnect(); } catch(_) {} }
+}
+
+// Poll transport.reconnect() (or a fresh WS) with short backoff so we can catch
+// early boot logs after a device reset. Driven off a token so doDisconnect or
+// a fresh doConnect cancels any prior attempt cleanly.
+async function startReconnect(){
+  if (!transport && lastTransportName !== 'ws') return;  // nothing to reconnect to
+  const myToken = ++reconnectToken;
+  state.reconnecting.set(true);
+  // Stale post-reboot schema/state would render with old committed values; clear
+  // it so the UI doesn't briefly show outdated data after we reconnect.
+  state.nsLoaded.set({});
+  state.nsState.set({});
+  state.nsServerErrors.set({});
+  // Firmware draft cleared by reboot (the new boot starts fresh).
+  state.firmwareHasDraft.set(false);
+  const deadline = Date.now() + 30000;
+  let delay = 150;
+  while (myToken === reconnectToken && Date.now() < deadline && !userInitiatedDisconnect) {
+    try {
+      if (lastTransportName === 'ws') {
+        // WS server-side socket is gone; build a fresh transport+client.
+        transport = new WebSocketTransport();
+        transport.onStatus = onTransportStatus;
+        client = new ProvisioningClient(transport);
+        wireClient(client);
+        await transport.connect(state.wsUrl.get());
+      } else {
+        await transport.reconnect();
+        // Serial/BLE reuse the same client instance — clear stale waiters and
+        // re-sync the decoder. WS gets a fresh client above, so this is skipped.
+        if (client && client.resetSession) client.resetSession();
+      }
+      if (myToken !== reconnectToken) return;  // cancelled mid-flight
+
+      // Probe the device with getInfo until it actually responds. On UART
+      // bridges the host-side port reopens in <10ms but the firmware is still
+      // booting; without this we'd declare success instantly and immediately
+      // hit a 5s getInfo timeout. The probe keeps "Reconnecting…" displayed
+      // for the real duration of the device-side reboot.
+      let info = null;
+      while (myToken === reconnectToken && Date.now() < deadline && !userInitiatedDisconnect) {
+        try { info = await client.getInfo(800); break; }
+        catch (_) { await new Promise(r => setTimeout(r, 200)); }
+      }
+      if (myToken !== reconnectToken) return;
+      if (!info) throw new Error('device did not respond after reconnect');
+
+      state.info.set(info);
+      state.reconnecting.set(false);
+      showToast('Reconnected', 'ok');
+
+      // Refresh schema (usually stable across reboot, but cheap to re-fetch).
+      try {
+        const schema = await client.getSchema();
+        state.schema.set(schema);
+        if (schema.namespaces.length > 0 && state.activeNsTab.get() == null) {
+          state.activeNsTab.set(schema.namespaces[0].id);
+        }
+      } catch (e) {
+        console.error('getSchema after reconnect:', e);
+        showToast('Failed to fetch schema: ' + e.message, 'err');
+      }
+      const cur = state.activeNsTab.get();
+      if (cur != null) fetchNamespaceIfNeeded(cur);
+      return;
+    } catch (e) {
+      // Device not back yet — wait and retry with mild backoff.
+      await new Promise(r => setTimeout(r, delay));
+      delay = Math.min(delay + 100, 1000);
+    }
+  }
+  if (myToken !== reconnectToken) return;
+  state.reconnecting.set(false);
+  if (Date.now() >= deadline) {
+    showToast('Auto-reconnect gave up after 30 seconds', 'warn');
+  }
+  // Treat as fully disconnected.
+  client = null; transport = null;
+  clearSessionState();
+  state.conn.set({ state: 'idle' });
+}
+async function fetchNamespaceIfNeeded(nsId){
+  if (state.nsLoaded.get()[nsId] || state.nsLoading.get()[nsId]) return;
+  if (!client) return;
+  state.nsLoading.update(s => { s[nsId] = true; });
+  try {
+    const committed = (await client.getState([nsId], false))[nsId] || {};
+    const merged = (await client.getState([nsId], true))[nsId] || {};
+    const draft = {};
+    for (const fid in merged) {
+      if (!valuesEqual(merged[fid], committed[fid])) draft[Number(fid)] = merged[fid];
+    }
+    state.nsState.update(s => { s[nsId] = { committed, draft }; });
+    state.nsLoaded.update(s => { s[nsId] = true; });
+    // If the firmware came back with any pending fields for this ns, it means
+    // a draft is already staged on the device (e.g. from a prior session).
+    if (Object.keys(draft).length > 0) state.firmwareHasDraft.set(true);
+    recomputeHasDraft();
+  } catch (e) {
+    console.error('getState failed:', e);
+    showToast('Failed to load ' + nsId + ': ' + e.message, 'err');
+  } finally {
+    state.nsLoading.update(s => { delete s[nsId]; });
+  }
+}
+function valuesEqual(a, b){
+  if (a == null && b == null) return true;
+  if (a == null || b == null) return false;
+  if (a instanceof Uint8Array && b instanceof Uint8Array) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; ++i) if (a[i] !== b[i]) return false;
+    return true;
+  }
+  if (typeof a === 'bigint' || typeof b === 'bigint') return BigInt(a) === BigInt(b);
+  return a === b;
+}
+function getEffectiveValue(nsId, field){
+  const s = state.nsState.get()[nsId];
+  if (!s) return field.default;
+  if (field.id in s.draft) return s.draft[field.id];
+  if (field.id in s.committed) return s.committed[field.id];
+  return field.default;
+}
+function setDraftValue(nsId, field, value){
+  state.nsState.update(s => {
+    if (!s[nsId]) s[nsId] = { committed: {}, draft: {} };
+    const committed = s[nsId].committed[field.id];
+    if (valuesEqual(value, committed)) delete s[nsId].draft[field.id];
+    else s[nsId].draft[field.id] = value;
+  });
+  recomputeHasDraft();
+}
+function recomputeHasDraft(){
+  const s = state.nsState.get();
+  for (const nsId in s) {
+    if (Object.keys(s[nsId].draft || {}).length > 0) { state.hasDraft.set(true); return; }
+  }
+  state.hasDraft.set(false);
+}
+function validateValue(field, value){
+  if (value == null) return null;
+  if (field.type === FT.Int || field.type === FT.Enum) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || Math.trunc(n) !== n) return 'must be an integer';
+    if (field.minI != null && n < Number(field.minI)) return `min ${field.minI}`;
+    if (field.maxI != null && n > Number(field.maxI)) return `max ${field.maxI}`;
+  } else if (field.type === FT.Float) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 'must be a number';
+    if (field.minF != null && n < Number(field.minF)) return `min ${field.minF}`;
+    if (field.maxF != null && n > Number(field.maxF)) return `max ${field.maxF}`;
+  } else if (field.type === FT.String) {
+    if (field.maxLen != null && String(value).length > Number(field.maxLen)) return `max length ${field.maxLen}`;
+  } else if (field.type === FT.Bytes) {
+    const len = value instanceof Uint8Array ? value.length : 0;
+    if (field.maxLen != null && len > Number(field.maxLen)) return `max length ${field.maxLen} bytes`;
+  }
+  return null;
+}
+function nsDraftCount(nsId){
+  const s = state.nsState.get()[nsId];
+  return s ? Object.keys(s.draft || {}).length : 0;
+}
+
+// ===== Toasts =====
+function showToast(text, kind){
+  const host = document.getElementById('toasts');
+  const t = el('div', { class: 'toast ' + (kind || 'info') }, text);
+  host.appendChild(t);
+  requestAnimationFrame(() => t.classList.add('show'));
+  setTimeout(() => {
+    t.classList.remove('show');
+    setTimeout(() => { if (t.parentNode) t.parentNode.removeChild(t); }, 250);
+  }, 3000);
+}
+
+// ===== Operations =====
+async function saveNamespace(nsId){
+  if (!client) return;
+  const nsObj = state.nsState.get()[nsId];
+  const schema = state.schema.get();
+  if (!nsObj || !schema) return;
+  const ns = schema.namespaces.find(n => n.id === nsId);
+  const fields = {};
+  for (const fidStr in nsObj.draft) {
+    const fid = Number(fidStr);
+    const f = ns.fields.find(f => f.id === fid);
+    if (!f) continue;
+    fields[fid] = { type: f.type, value: nsObj.draft[fid] };
+  }
+  try {
+    const r = await client.setState({ [nsId]: fields });
+    const errs = {};
+    for (const fe of r.fieldErrors) if (fe.ns === nsId) errs[fe.field] = fe.codeName;
+    state.nsServerErrors.update(s => { s[nsId] = errs; });
+    state.nsLoaded.update(s => { delete s[nsId]; });
+    if (r.applied > 0) state.firmwareHasDraft.set(true);
+    await fetchNamespaceIfNeeded(nsId);
+    if (r.fieldErrors.length === 0) {
+      showToast(`Saved ${r.applied} field${r.applied !== 1 ? 's' : ''} to "${ns.name}"`, 'ok');
+    } else {
+      showToast(`Saved with ${r.fieldErrors.length} error${r.fieldErrors.length !== 1 ? 's' : ''}`, 'warn');
+    }
+  } catch (e) {
+    showToast('Save failed: ' + e.message, 'err');
+  }
+}
+async function revertNamespace(nsId){
+  if (!client) return;
+  try {
+    await client.discard([nsId]);
+    state.nsServerErrors.update(s => { delete s[nsId]; });
+    state.nsLoaded.update(s => { delete s[nsId]; });
+    await fetchNamespaceIfNeeded(nsId);
+    showToast('Reverted draft changes', 'ok');
+  } catch (e) {
+    showToast('Revert failed: ' + e.message, 'err');
+  }
+}
+async function refreshNamespace(nsId){
+  state.nsLoaded.update(s => { delete s[nsId]; });
+  await fetchNamespaceIfNeeded(nsId);
+}
+async function commitAll(){
+  if (!client) return;
+  try {
+    const r = await client.commit(null);
+    state.nsServerErrors.set({});
+    state.nsLoaded.set({});
+    state.nsState.set({});
+    recomputeHasDraft();
+    state.firmwareHasDraft.set(false);
+    // Banner is derived from state.info.needsReboot; re-fetching info updates it.
+    try { state.info.set(await client.getInfo()); } catch(_) {}
+    const cur = state.activeNsTab.get();
+    if (cur != null) await fetchNamespaceIfNeeded(cur);
+    showToast(`Committed ${r.applied} change${r.applied !== 1 ? 's' : ''}` + (r.needsReboot ? ' — reboot recommended' : ''), r.needsReboot ? 'warn' : 'ok');
+  } catch (e) {
+    showToast('Commit failed: ' + e.message, 'err');
+  }
+}
+async function discardAll(){
+  if (!client) return;
+  if (!confirm('Discard all pending changes on the device?')) return;
+  try {
+    const r = await client.discard(null);
+    state.nsServerErrors.set({});
+    state.nsLoaded.set({});
+    state.nsState.set({});
+    recomputeHasDraft();
+    state.firmwareHasDraft.set(false);
+    const cur = state.activeNsTab.get();
+    if (cur != null) await fetchNamespaceIfNeeded(cur);
+    showToast(`Discarded ${r.applied} pending change${r.applied !== 1 ? 's' : ''}`, 'ok');
+  } catch (e) {
+    showToast('Discard failed: ' + e.message, 'err');
+  }
+}
+async function reboot(){
+  if (!client) return;
+  const auto = state.autoReconnect.get();
+  const msg = auto
+    ? 'Reboot the device now? The console will automatically reconnect.'
+    : 'Reboot the device now? You will be disconnected.';
+  if (!confirm(msg)) return;
+  try {
+    await client.reboot();
+    // Reflect the imminent disconnect immediately, AND force-close the transport.
+    // The force-close matters on UART-to-USB bridges (CP2102, CH340, etc) where
+    // the host's serial connection survives the ESP32 reset — without it, the
+    // read loop never observes a disconnect, 'closed' never fires, startReconnect
+    // never runs, and the UI is stuck in "Reconnecting…" forever.
+    if (auto) state.reconnecting.set(true);
+    showToast(auto
+      ? 'Reboot command sent — reconnecting…'
+      : 'Reboot command sent — device is restarting', 'ok');
+    if (transport && transport.forceClose) {
+      try { await transport.forceClose(); } catch(_) {}
+    }
+  } catch (e) {
+    showToast('Reboot failed: ' + e.message, 'err');
+  }
+}
+async function factoryReset(){
+  if (!client) return;
+  if (!confirm('Factory-reset all namespaces? This cannot be undone.')) return;
+  try {
+    const r = await client.factoryReset();
+    state.nsLoaded.set({});
+    state.nsState.set({});
+    state.nsServerErrors.set({});
+    recomputeHasDraft();
+    state.firmwareHasDraft.set(false);
+    // Banner is derived from state.info.needsReboot; refresh to pick up the change.
+    try { state.info.set(await client.getInfo()); } catch(_) {}
+    showToast('Factory reset complete' + (r.needsReboot ? ' — reboot recommended' : ''), r.needsReboot ? 'warn' : 'ok');
+  } catch (e) {
+    showToast('Factory reset failed: ' + e.message, 'err');
+  }
+}
+
+// ===== Section-based rendering =====
+const slots = {
+  topbar: el('div'),
+  tabbar: el('div'),
+  body: el('div', { class: 'body' }),
+  bottombar: el('div'),
+};
+const app = document.getElementById('app');
+app.appendChild(slots.topbar);
+app.appendChild(slots.tabbar);
+app.appendChild(slots.body);
+app.appendChild(slots.bottombar);
+
+// Cleanup callbacks for the body's currently-mounted tab. Run before building a new
+// tab so the new tab's builder can push its own cleanups into the (now empty) list.
+// Critical: take a *build function*, not an already-built node. Building the node
+// before clearing cleanups would tear down the new tab's subscriptions immediately.
+let bodyCleanups = [];
+let bodyKey = null;
+function setBody(key, buildFn){
+  for (const fn of bodyCleanups) { try { fn(); } catch(_) {} }
+  bodyCleanups = [];
+  const node = buildFn();
+  slots.body.innerHTML = '';
+  slots.body.appendChild(node);
+  bodyKey = key;
+}
+
+// ----- Top bar (in place) -----
+function buildTopBar(){
+  const root = el('div', { class: 'topbar' });
+  const sel = el('select');
+  const wsHost = el('span');
+  const wsInput = el('input', { type: 'text', placeholder: 'ws://host:port', style: { width: '220px' } });
+  wsInput.value = state.wsUrl.get();
+  wsInput.oninput = (e) => state.wsUrl.set(e.target.value);
+  const connectBtn = el('button');
+  const disconnectBtn = el('button', null, 'Disconnect');
+  const autoCheckbox = el('input', { type: 'checkbox' });
+  autoCheckbox.checked = state.autoReconnect.get();
+  autoCheckbox.onchange = (e) => state.autoReconnect.set(e.target.checked);
+  const autoLabel = el('label', { style: { display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--muted)' }, title: 'Reconnect automatically after a reboot to capture early boot logs' }, [autoCheckbox, 'auto-reconnect']);
+  const pill = el('span', { class: 'pill' });
+  const opts = [['serial','Serial'], ['ble','Bluetooth'], ['ws','WebSocket']];
+  for (const [v, lbl] of opts) sel.appendChild(el('option', { value: v }, lbl));
+  sel.value = state.transportName.get();
+  sel.onchange = (e) => state.transportName.set(e.target.value);
+  connectBtn.onclick = doConnect;
+  disconnectBtn.onclick = doDisconnect;
+
+  root.appendChild(el('strong', null, 'microReticulum'));
+  root.appendChild(el('span', { class: 'sep' }));
+  root.appendChild(el('label', null, 'Transport: '));
+  root.appendChild(sel);
+  root.appendChild(wsHost);
+  root.appendChild(connectBtn);
+  root.appendChild(disconnectBtn);
+  root.appendChild(autoLabel);
+  root.appendChild(el('span', { class: 'spacer' }));
+  root.appendChild(pill);
+
+  function update(){
+    const conn = state.conn.get();
+    const tname = state.transportName.get();
+    const reconnecting = state.reconnecting.get();
+    const connecting = conn.state === 'connecting' && !reconnecting;
+    const connected = conn.state === 'connected';
+    sel.disabled = connecting || connected || reconnecting;
+    if (sel.value !== tname) sel.value = tname;
+    wsHost.innerHTML = '';
+    if (tname === 'ws') {
+      wsHost.appendChild(wsInput);
+      if (document.activeElement !== wsInput && wsInput.value !== state.wsUrl.get()) wsInput.value = state.wsUrl.get();
+      wsInput.disabled = connecting || connected || reconnecting;
+    }
+    connectBtn.disabled = connecting || connected || reconnecting;
+    connectBtn.textContent = connecting ? 'Connecting…' : 'Connect';
+    // Disconnect is also the cancel-reconnect button while reconnecting.
+    disconnectBtn.disabled = !connected && !reconnecting;
+    if (autoCheckbox.checked !== state.autoReconnect.get()) autoCheckbox.checked = state.autoReconnect.get();
+    let txt = 'Disconnected', cls = 'st-idle';
+    if (reconnecting) { txt = 'Reconnecting…'; cls = 'st-connecting'; }
+    else if (connecting) { txt = 'Connecting…'; cls = 'st-connecting'; }
+    else if (connected) { txt = 'Connected' + (conn.info ? ` (${conn.info})` : ''); cls = 'st-ok'; }
+    else if (conn.state === 'error') { txt = 'Error: ' + (conn.info || ''); cls = 'st-err'; }
+    pill.className = 'pill ' + cls;
+    pill.textContent = txt;
+  }
+  update();
+  state.conn.subscribe(update);
+  state.transportName.subscribe(update);
+  state.wsUrl.subscribe(update);
+  state.autoReconnect.subscribe(update);
+  state.reconnecting.subscribe(update);
+  return root;
+}
+slots.topbar.appendChild(buildTopBar());
+
+// ----- Tab bar (in place) -----
+function buildTabBar(){
+  const root = el('div', { class: 'tabbar' });
+  const tabs = [
+    { id: 'info', label: 'Info' },
+    { id: 'status', label: 'Node Status' },
+    { id: 'config', label: 'Configuration' },
+    { id: 'logs', label: 'Logs' },
+  ];
+  const buttons = {};
+  for (const t of tabs) {
+    const b = el('button', { class: 'tab', onclick: () => state.activeTab.set(t.id) }, t.label);
+    buttons[t.id] = b;
+    root.appendChild(b);
+  }
+  function update(){
+    const active = state.activeTab.get();
+    // Treat "reconnecting" as not-yet-connected so per-tab actions don't fire
+    // against a transport that's still being re-established.
+    const connected = state.conn.get().state === 'connected' && !state.reconnecting.get();
+    for (const t of tabs) {
+      const b = buttons[t.id];
+      b.classList.toggle('active', active === t.id);
+      b.disabled = !connected && t.id !== 'info';
+    }
+  }
+  update();
+  state.activeTab.subscribe(update);
+  state.conn.subscribe(update);
+  state.reconnecting.subscribe(update);
+  return root;
+}
+slots.tabbar.appendChild(buildTabBar());
+
+// ----- Tab bodies -----
+
+function buildInfoTab(){
+  const root = el('div', { class: 'tab-body' });
+  function update(){
+    root.innerHTML = '';
+    const conn = state.conn.get();
+    const connected = conn.state === 'connected';
+    const info = state.info.get();
+    // Drive the banner directly from the firmware's needsReboot flag — that way
+    // it disappears automatically when the device boots back up (where the flag
+    // resets to false in Manager's constructor).
+    if (info && info.needsReboot) {
+      root.appendChild(el('div', { class: 'notice', style: { display: 'flex', alignItems: 'center', gap: '12px' } }, [
+        el('span', { style: { flex: '1' } }, 'Reboot recommended to apply committed changes.'),
+        el('button', { class: 'primary', onclick: reboot, disabled: !connected }, 'Reboot now'),
+      ]));
+    }
+    if (!info) {
+      root.appendChild(el('em', null, connected ? 'Loading…' : 'Select a transport and click Connect.'));
+      return;
+    }
+    root.appendChild(el('h2', null, 'Device info'));
+    root.appendChild(el('table', { class: 'kv' }, [
+      el('tr', null, [el('td', null, 'Firmware'), el('td', null, String(info.firmwareVersion ?? ''))]),
+      el('tr', null, [el('td', null, 'Schema version'), el('td', null, String(info.schemaVersion ?? ''))]),
+      el('tr', null, [el('td', null, 'Needs reboot'), el('td', null, info.needsReboot ? 'yes' : 'no')]),
+    ]));
+    root.appendChild(el('h3', null, 'Danger zone'));
+    root.appendChild(el('div', { style: { display: 'flex', gap: '8px' } }, [
+      el('button', { onclick: reboot, disabled: !connected }, 'Reboot'),
+      el('button', { onclick: factoryReset, disabled: !connected }, 'Factory reset'),
+    ]));
+  }
+  update();
+  bodyCleanups.push(state.info.subscribe(update));
+  bodyCleanups.push(state.conn.subscribe(update));
+  return root;
+}
+
+function buildStatusTab(){
+  const root = el('div', { class: 'tab-body' });
+  function update(){
+    root.innerHTML = '';
+    const s = state.nodeStatus.get();
+    function row(label, val, unit) {
+      if (val == null) return null;
+      return el('tr', null, [el('td', null, label), el('td', null, val + (unit ? ' ' + unit : ''))]);
+    }
+    function section(title, rows) {
+      const r = rows.filter(x => x != null);
+      if (r.length === 0) return null;
+      return el('div', { class: 'status-sec' }, [el('h3', null, title), el('table', { class: 'kv' }, r)]);
+    }
+    const batStates = ['unknown','discharging','charging','charged'];
+    const sections = [
+      section('Radio link', [
+        row('Last RSSI', s.lastRssi, 'dBm'),
+        row('Last SNR', s.lastSnr != null ? s.lastSnr.toFixed(2) : null, 'dB'),
+        row('Current RSSI', s.currentRssi, 'dBm'),
+        row('Noise floor', s.noiseFloor, 'dBm'),
+        row('Interference', s.interferenceRssi != null ? s.interferenceRssi + ' dBm' : null),
+      ]),
+      section('Channel', [
+        row('Airtime (short)', s.airtimeShort != null ? (s.airtimeShort * 100).toFixed(2) : null, '%'),
+        row('Airtime (long)', s.airtimeLong != null ? (s.airtimeLong * 100).toFixed(2) : null, '%'),
+        row('Utilization (short)', s.channelUtilShort != null ? (s.channelUtilShort * 100).toFixed(2) : null, '%'),
+        row('Utilization (long)', s.channelUtilLong != null ? (s.channelUtilLong * 100).toFixed(2) : null, '%'),
+      ]),
+      section('Counters', [row('RX packets', s.rxPackets), row('TX packets', s.txPackets)]),
+      section('PHY parameters', [
+        row('Symbol time', s.symbolTimeUs, 'µs'),
+        row('Symbol rate', s.symbolRate, 'sym/s'),
+        row('Preamble symbols', s.preambleSymbols),
+        row('Preamble time', s.preambleTimeMs, 'ms'),
+        row('CSMA slot', s.csmaSlotMs, 'ms'),
+        row('DIFS', s.difsMs, 'ms'),
+      ]),
+      section('CSMA', [row('CW band', s.cwBand), row('CW min', s.cwMin), row('CW max', s.cwMax)]),
+      section('Power', [
+        row('Battery', s.batteryPercent != null ? `${s.batteryPercent}% (${batStates[s.batteryState || 0]})` : null),
+        row('Temperature', s.temperatureC, '°C'),
+      ]),
+    ].filter(x => x != null);
+    if (sections.length === 0) {
+      root.appendChild(el('em', null, 'Waiting for status frames…'));
+    } else {
+      for (const sec of sections) root.appendChild(sec);
+    }
+  }
+  update();
+  bodyCleanups.push(state.nodeStatus.subscribe(update));
+  return root;
+}
+
+function formatFieldValueForInput(field, value){
+  if (value == null) return '';
+  if (field.type === FT.Bytes) {
+    if (value instanceof Uint8Array) return Array.from(value).map(b => b.toString(16).padStart(2, '0')).join('');
+    return '';
+  }
+  return String(value);
+}
+
+function buildFieldRow(nsId, f){
+  const row = el('div', { class: 'field' });
+  const labelEl = el('label');
+  const labelText = el('span', null, f.name);
+  const badges = el('span', { style: { display: 'inline-flex', gap: '4px' } });
+  labelEl.appendChild(labelText);
+  labelEl.appendChild(badges);
+  const inputHost = el('div');
+  const errEl = el('div', { class: 'err' });
+  row.appendChild(labelEl);
+  row.appendChild(inputHost);
+  row.appendChild(errEl);
+
+  const ro = !!(f.flags & FF.READ_ONLY);
+  const secret = !!(f.flags & FF.SECRET);
+  const reboot = !!(f.flags & FF.REBOOT_REQUIRED);
+
+  // Build input ONCE; we never recreate it on subsequent state changes.
+  let input;
+  if (f.type === FT.Bool) {
+    input = el('input', { type: 'checkbox', disabled: ro });
+    input.addEventListener('input', () => setDraftValue(nsId, f, input.checked));
+  } else if (f.type === FT.Int) {
+    input = el('input', {
+      type: 'number', step: '1', disabled: ro,
+      min: f.minI != null ? Number(f.minI) : undefined,
+      max: f.maxI != null ? Number(f.maxI) : undefined,
+    });
+    input.addEventListener('input', () => {
+      const v = input.value === '' ? null : parseInt(input.value, 10);
+      setDraftValue(nsId, f, v);
+    });
+  } else if (f.type === FT.Float) {
+    input = el('input', {
+      type: 'number', step: 'any', disabled: ro,
+      min: f.minF != null ? Number(f.minF) : undefined,
+      max: f.maxF != null ? Number(f.maxF) : undefined,
+    });
+    input.addEventListener('input', () => {
+      const v = input.value === '' ? null : parseFloat(input.value);
+      setDraftValue(nsId, f, v);
+    });
+  } else if (f.type === FT.String) {
+    const big = f.maxLen && Number(f.maxLen) > 80;
+    if (big) {
+      input = el('textarea', { rows: '3', maxlength: Number(f.maxLen), disabled: ro });
+    } else {
+      input = el('input', { type: secret ? 'password' : 'text', maxlength: f.maxLen ? Number(f.maxLen) : undefined, disabled: ro });
+    }
+    input.addEventListener('input', () => setDraftValue(nsId, f, input.value));
+  } else if (f.type === FT.Enum) {
+    input = el('select', { disabled: ro });
+    if (Array.isArray(f.enumValues)) {
+      const labels = Array.isArray(f.enumLabels) ? f.enumLabels : null;
+      for (let i = 0; i < f.enumValues.length; ++i) {
+        const ev = Number(f.enumValues[i]);
+        input.appendChild(el('option', { value: String(ev) }, labels && labels[i] ? labels[i] : String(ev)));
+      }
+    }
+    input.addEventListener('change', () => setDraftValue(nsId, f, parseInt(input.value, 10)));
+  } else if (f.type === FT.Bytes) {
+    input = el('input', { type: 'text', placeholder: f.maxLen ? `hex (max ${f.maxLen} bytes)` : 'hex', disabled: ro });
+    input.addEventListener('input', () => {
+      const t = input.value.replace(/[^0-9a-fA-F]/g, '');
+      if (t.length % 2 !== 0) return;
+      const u8 = new Uint8Array(t.length / 2);
+      for (let i = 0; i < u8.length; ++i) u8[i] = parseInt(t.substr(i * 2, 2), 16);
+      setDraftValue(nsId, f, u8);
+    });
+  } else {
+    input = el('span', null, '(unknown type)');
+  }
+  inputHost.appendChild(input);
+
+  function update(){
+    const nsObj = state.nsState.get()[nsId] || { committed: {}, draft: {} };
+    const value = getEffectiveValue(nsId, f);
+    const isDraft = f.id in nsObj.draft;
+    // Sync input value ONLY if it's not currently focused — preserves cursor/selection while typing.
+    if (document.activeElement !== input) {
+      if (f.type === FT.Bool) {
+        input.checked = !!value;
+      } else if (f.type === FT.Enum) {
+        const want = String(Number(value));
+        if (input.value !== want) input.value = want;
+      } else {
+        const fmt = formatFieldValueForInput(f, value);
+        if (input.value !== fmt) input.value = fmt;
+      }
+    }
+    // Badges
+    badges.innerHTML = '';
+    if (ro) badges.appendChild(el('span', { class: 'badge ro' }, 'read-only'));
+    if (secret) badges.appendChild(el('span', { class: 'badge secret' }, 'secret'));
+    if (reboot) badges.appendChild(el('span', { class: 'badge reboot' }, '↻ reboot'));
+    if (isDraft) badges.appendChild(el('span', { class: 'badge draft' }, '• draft'));
+    // Errors — only surface validation errors for fields the user actually edited.
+    // Untouched fields may carry firmware "sentinel" defaults (e.g. radio.frequency=0)
+    // that fall outside the advertised min/max range; the firmware ignores them as
+    // "unconfigured", so we should not flag them as user-facing errors.
+    const serverErr = (state.nsServerErrors.get()[nsId] || {})[f.id];
+    const valErr = (isDraft && validateValue(f, value)) || null;
+    const msg = serverErr ? 'server: ' + serverErr : valErr;
+    errEl.textContent = msg || '';
+    row.classList.toggle('has-err', !!msg);
+  }
+  return {
+    row,
+    update,
+    fieldId: f.id,
+    // hasDraftError: only count validation errors for drafted fields toward
+    // the Save-button gate, for the same reason as the display above.
+    hasDraftError: () => {
+      const draft = (state.nsState.get()[nsId] || {}).draft || {};
+      if (!(f.id in draft)) return false;
+      return !!validateValue(f, getEffectiveValue(nsId, f));
+    },
+  };
+}
+
+function buildNamespacePanel(nsId){
+  const wrap = el('div');
+  const schema = state.schema.get();
+  const ns = schema && schema.namespaces.find(n => n.id === nsId);
+  if (!ns) { wrap.appendChild(el('em', null, 'Unknown namespace')); return { node: wrap, cleanups: [] }; }
+
+  const toolbar = el('div', { class: 'ns-toolbar' });
+  const saveBtn = el('button', null, 'Save namespace');
+  const revertBtn = el('button', null, 'Revert');
+  const refreshBtn = el('button', null, 'Refresh');
+  saveBtn.onclick = () => saveNamespace(nsId);
+  revertBtn.onclick = () => revertNamespace(nsId);
+  refreshBtn.onclick = () => refreshNamespace(nsId);
+  toolbar.appendChild(saveBtn);
+  toolbar.appendChild(revertBtn);
+  toolbar.appendChild(refreshBtn);
+  wrap.appendChild(toolbar);
+
+  const fieldHandles = [];
+  for (const f of ns.fields) {
+    const h = buildFieldRow(nsId, f);
+    wrap.appendChild(h.row);
+    fieldHandles.push(h);
+  }
+
+  function updateButtons(){
+    const hasDraft = nsDraftCount(nsId) > 0;
+    const anyErr = fieldHandles.some(h => h.hasDraftError());
+    saveBtn.disabled = !hasDraft || anyErr;
+    saveBtn.classList.toggle('primary', hasDraft && !anyErr);
+    revertBtn.disabled = !hasDraft;
+  }
+  function updateAll(){
+    for (const h of fieldHandles) h.update();
+    updateButtons();
+  }
+  updateAll();
+
+  const cleanups = [
+    state.nsState.subscribe(updateAll),
+    state.nsServerErrors.subscribe(updateAll),
+  ];
+  return { node: wrap, cleanups };
+}
+
+function buildConfigTab(){
+  const root = el('div', { class: 'tab-body config-tab no-pad' });
+  const sidenav = el('div', { class: 'sidenav' });
+  const detail = el('div', { class: 'sidenav-detail' });
+  root.appendChild(sidenav);
+  root.appendChild(detail);
+
+  // Cleanup for the inner-mounted namespace panel
+  let nsCleanups = [];
+  function mountNs(nsId){
+    for (const fn of nsCleanups) { try { fn(); } catch(_) {} }
+    nsCleanups = [];
+    detail.innerHTML = '';
+    if (nsId == null) { detail.appendChild(el('em', null, 'Select a namespace from the left.')); return; }
+    const loaded = state.nsLoaded.get()[nsId];
+    if (!loaded) {
+      detail.appendChild(el('em', null, 'Loading…'));
+      // Kick off fetch; when nsLoaded fires for this id, the subscription below remounts.
+      fetchNamespaceIfNeeded(nsId);
+      return;
+    }
+    const { node, cleanups } = buildNamespacePanel(nsId);
+    nsCleanups = cleanups;
+    detail.appendChild(node);
+  }
+
+  const navButtons = new Map(); // nsId -> button
+  function rebuildSidenav(){
+    sidenav.innerHTML = '';
+    navButtons.clear();
+    const schema = state.schema.get();
+    if (!schema) { sidenav.appendChild(el('em', { style: { padding: '8px 16px', color: 'var(--muted)' } }, 'No schema')); return; }
+    const activeNs = state.activeNsTab.get();
+    for (const ns of schema.namespaces) {
+      const b = el('button', { class: 'sidenav-btn' + (ns.id === activeNs ? ' active' : ''), onclick: () => state.activeNsTab.set(ns.id) });
+      const lbl = el('span', null, ns.name);
+      const dot = el('span', { class: 'dot', style: { display: nsDraftCount(ns.id) > 0 ? '' : 'none' } });
+      b.appendChild(lbl);
+      b.appendChild(dot);
+      sidenav.appendChild(b);
+      navButtons.set(ns.id, { btn: b, dot });
+    }
+  }
+  function updateNavActive(){
+    const active = state.activeNsTab.get();
+    for (const [nsId, { btn }] of navButtons) {
+      btn.classList.toggle('active', nsId === active);
+    }
+  }
+  function updateNavDots(){
+    for (const [nsId, { dot }] of navButtons) {
+      dot.style.display = nsDraftCount(nsId) > 0 ? '' : 'none';
+    }
+  }
+
+  rebuildSidenav();
+  // If schema arrived but no ns selected, pick the first.
+  const sch = state.schema.get();
+  if (sch && state.activeNsTab.get() == null && sch.namespaces.length > 0) {
+    state.activeNsTab.set(sch.namespaces[0].id);
+  }
+  mountNs(state.activeNsTab.get());
+
+  bodyCleanups.push(state.schema.subscribe(() => { rebuildSidenav(); mountNs(state.activeNsTab.get()); }));
+  bodyCleanups.push(state.activeNsTab.subscribe((nsId) => { updateNavActive(); mountNs(nsId); }));
+  bodyCleanups.push(state.nsLoaded.subscribe(() => {
+    const cur = state.activeNsTab.get();
+    if (cur != null && state.nsLoaded.get()[cur]) mountNs(cur);
+  }));
+  bodyCleanups.push(state.nsState.subscribe(updateNavDots));
+  bodyCleanups.push(() => { for (const fn of nsCleanups) try { fn(); } catch(_) {} });
+  return root;
+}
+
+// ----- Logs tab (persistent container) -----
+const logsBuffer = [];
+const logsListeners = new Set();
+let logsContainer = null;
+let logsFollowing = true;
+let logsSavedScrollTop = 0;
+
+function ensureLogsContainer(){
+  if (logsContainer) return;
+  logsContainer = el('div', { class: 'logs' });
+  logsContainer.addEventListener('scroll', () => {
+    logsFollowing = (logsContainer.scrollHeight - logsContainer.scrollTop - logsContainer.clientHeight) < 16;
+    if (followPill) followPill.style.display = logsFollowing ? 'none' : '';
+  });
+  for (const line of logsBuffer) logsContainer.appendChild(el('div', { class: 'log-line' }, line));
+  logsListeners.add((newLines) => {
+    for (const l of newLines) logsContainer.appendChild(el('div', { class: 'log-line' }, l));
+    while (logsContainer.childNodes.length > 1000) logsContainer.removeChild(logsContainer.firstChild);
+    if (logsFollowing && logsContainer.isConnected) logsContainer.scrollTop = logsContainer.scrollHeight;
+  });
+}
+
+function clearLogs(){
+  logsBuffer.length = 0;
+  if (logsContainer) {
+    while (logsContainer.firstChild) logsContainer.removeChild(logsContainer.firstChild);
+    // After clearing, we're effectively at the bottom of an empty view — re-engage tail.
+    logsFollowing = true;
+    if (followPill) followPill.style.display = 'none';
+  }
+}
+
+let followPill = null;
+function buildLogsTab(){
+  ensureLogsContainer();
+  const root = el('div', { class: 'tab-body logs-tab no-pad' });
+  const toolbar = el('div', { class: 'logs-toolbar' }, [
+    el('button', { onclick: clearLogs, title: 'Clear the log viewer (does not affect the device)' }, 'Clear'),
+    el('span', { class: 'spacer' }),
+  ]);
+  followPill = el('button', { class: 'follow-pill', style: { display: logsFollowing ? 'none' : '' }, onclick: () => {
+    logsFollowing = true; followPill.style.display = 'none';
+    logsContainer.scrollTop = logsContainer.scrollHeight;
+  } }, '▼ Follow tail');
+  root.appendChild(toolbar);
+  root.appendChild(logsContainer);
+  root.appendChild(followPill);
+  // Restore scroll on (re)attach. Use rAF so layout is computed before we set
+  // scrollTop — queueMicrotask runs before layout and the assignment clamps to 0.
+  requestAnimationFrame(() => {
+    if (logsFollowing) logsContainer.scrollTop = logsContainer.scrollHeight;
+    else logsContainer.scrollTop = logsSavedScrollTop;
+  });
+  bodyCleanups.push(() => {
+    // Save scroll position so we can restore on next mount.
+    if (logsContainer && logsContainer.isConnected) {
+      logsSavedScrollTop = logsContainer.scrollTop;
+      logsFollowing = (logsContainer.scrollHeight - logsContainer.scrollTop - logsContainer.clientHeight) < 16;
+    }
+  });
+  return root;
+}
+
+// ----- Body switcher -----
+function updateBody(){
+  const t = state.activeTab.get();
+  if (bodyKey === t) return;
+  if (t === 'info') setBody('info', buildInfoTab);
+  else if (t === 'status') setBody('status', buildStatusTab);
+  else if (t === 'config') setBody('config', buildConfigTab);
+  else if (t === 'logs') setBody('logs', buildLogsTab);
+}
+updateBody();
+state.activeTab.subscribe(updateBody);
+
+// ----- Bottom bar (in place) -----
+function buildBottomBar(){
+  const wrap = el('div');
+  function update(){
+    wrap.innerHTML = '';
+    const hasLocal = state.hasDraft.get();
+    const hasFw = state.firmwareHasDraft.get();
+    if (!hasLocal && !hasFw) return;
+    const drafts = state.nsState.get();
+    let nsCount = 0, fieldCount = 0;
+    for (const nsId in drafts) {
+      const n = Object.keys(drafts[nsId].draft || {}).length;
+      if (n > 0) { nsCount++; fieldCount += n; }
+    }
+    // Commit and Discard operate on the firmware's staged draft, which only
+    // exists once at least one namespace has been Saved. Until then, both
+    // buttons are no-ops on the device side, so disable them.
+    const label = hasFw
+      ? `${fieldCount} field${fieldCount !== 1 ? 's' : ''} pending in ${nsCount} namespace${nsCount !== 1 ? 's' : ''}`
+      : `${fieldCount} local edit${fieldCount !== 1 ? 's' : ''} — save a namespace to enable Commit / Discard`;
+    const bar = el('div', { class: 'bottombar' }, [
+      el('span', null, label),
+      el('span', { class: 'spacer' }),
+      el('button', { onclick: discardAll, disabled: !hasFw, title: hasFw ? '' : 'No firmware-side draft to discard' }, 'Discard all'),
+      el('button', { class: 'primary', onclick: commitAll, disabled: !hasFw, title: hasFw ? '' : 'No firmware-side draft to commit' }, 'Commit all'),
+    ]);
+    wrap.appendChild(bar);
+  }
+  update();
+  state.hasDraft.subscribe(update);
+  state.firmwareHasDraft.subscribe(update);
+  state.nsState.subscribe(update);
+  return wrap;
+}
+slots.bottombar.appendChild(buildBottomBar());
+
+// ===== Self-tests =====
+function runSelfTests(){
+  const out = [];
+  const ok = (n, c, info) => out.push((c ? 'OK  ' : 'FAIL') + ' ' + n + (info ? ' [' + info + ']' : ''));
+  try {
+    const p = new Packer();
+    p.arr(3); p.int(1); p.int(42);
+    p.map(2);
+    p.int(1); p.str('hello');
+    p.int(2); p.bool(true);
+    const u = new Unpacker(p.result());
+    const v = u.next();
+    ok('msgpack envelope', Array.isArray(v) && v.length === 3);
+    ok('msgpack op', v[0] === 1);
+    ok('msgpack seq', v[1] === 42);
+    ok('msgpack payload Map', v[2] instanceof Map);
+    ok('msgpack map[1]', v[2].get(1) === 'hello');
+    ok('msgpack map[2]', v[2].get(2) === true);
+  } catch (e) { ok('msgpack roundtrip', false, e.message); }
+  try {
+    const p2 = new Packer(); p2.int(-300); p2.int(70000); p2.float(3.14159265);
+    const u2 = new Unpacker(p2.result());
+    ok('msgpack int -300', u2.next() === -300);
+    ok('msgpack uint 70000', u2.next() === 70000);
+    const f = u2.next();
+    ok('msgpack float', Math.abs(f - 3.14159265) < 1e-9);
+  } catch (e) { ok('msgpack numerics', false, e.message); }
+  try {
+    const payload = new Uint8Array([0x01, FEND, FESC, 0xFF, FEND, 0x02]);
+    const enc = kissEncode(0x86, payload);
+    let got = null;
+    const dec = new KissDecoder((cmd, p) => { got = { cmd, p }; });
+    dec.feed(enc);
+    ok('kiss cmd', got && got.cmd === 0x86);
+    ok('kiss payload length', got && got.p.length === payload.length);
+    let same = true;
+    if (got) for (let i = 0; i < payload.length; ++i) if (got.p[i] !== payload[i]) { same = false; break; }
+    ok('kiss payload bytes', same);
+  } catch (e) { ok('kiss roundtrip', false, e.message); }
+  try {
+    const st = {};
+    decodeStatusFrame(0x27, new Uint8Array([1, 88]), st);
+    ok('status BAT state', st.batteryState === 1);
+    ok('status BAT %', st.batteryPercent === 88);
+    decodeStatusFrame(0x26, new Uint8Array([0,8, 1,0, 0,4, 0,10, 0,1, 0,2]), st);
+    ok('status PHYPRM symTime', st.symbolTimeUs === 8);
+    ok('status PHYPRM symRate', st.symbolRate === 256);
+    ok('status PHYPRM difs', st.difsMs === 2);
+    decodeStatusFrame(0x25, new Uint8Array([0x27,0x10, 0x13,0x88, 0x03,0xE8, 0x07,0xD0, 60, 100, 0xFF]), st);
+    ok('status CHTM airtimeShort', Math.abs(st.airtimeShort - 1.0) < 1e-9);
+    ok('status CHTM airtimeLong', Math.abs(st.airtimeLong - 0.5) < 1e-9);
+    ok('status CHTM currentRssi', st.currentRssi === 60 - RSSI_OFFSET);
+    ok('status CHTM noiseFloor', st.noiseFloor === 100 - RSSI_OFFSET);
+    ok('status CHTM interference null', st.interferenceRssi === null);
+    decodeStatusFrame(0x23, new Uint8Array([57]), st);
+    ok('status RSSI single', st.lastRssi === 57 - RSSI_OFFSET);
+    decodeStatusFrame(0x24, new Uint8Array([0xFC]), st);
+    ok('status SNR signed', Math.abs(st.lastSnr - (-1.0)) < 1e-9);
+  } catch (e) { ok('status decoder', false, e.message); }
+  document.getElementById('app').innerHTML = '<pre>' + out.join('\n') + '</pre>';
+}
+if (location.search.indexOf('selftest=1') !== -1) runSelfTests();
+})();
+</script>
+</body>
+</html>
