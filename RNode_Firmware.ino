@@ -22,9 +22,7 @@
 #include <Log.h>
 #include <Bytes.h>
 #endif
-#ifdef HAS_PROVISIONING
-#include <Provisioning/Provisioning.h>
-#endif
+#include "Provisioning.h"
 //#include "LoRaInterface.h"
 #if defined(UDP_TRANSPORT)
 #include "UDPInterface.h"
@@ -186,113 +184,10 @@ protected:
     return true;
   }
 };
-#ifdef HAS_PROVISIONING
-// Provisioning namespace + field IDs. Namespace 1-2 are RNS built-ins
-// (Reticulum, Transport); 100-199 are official app namespaces.
-#define PROV_NS_RADIO      100
-#define PROV_NS_GENERAL    101
-
-// NOTE: **NEVER** change these values once they are in production. Only additions can be made.
-#define PROV_RADIO_OP_MODE   1
-#define PROV_RADIO_FREQ      2
-#define PROV_RADIO_BW        3
-#define PROV_RADIO_SF        4
-#define PROV_RADIO_CR        5
-#define PROV_RADIO_TXP       6
-#define PROV_RADIO_IMPLICIT  7
-
-#define PROV_GENERAL_KISS_LOG 1
-
-// Buffer for an in-flight CMD_PROVISION_REQ frame. Per-platform cap below.
-RNS::Bytes provision_rx_buf;
-
-#if MCU_VARIANT == MCU_NRF52
-  #define PROVISION_RX_BUF_MAX 512
-#else
-  #define PROVISION_RX_BUF_MAX 2048
-#endif
-
-// Runtime toggle for KISS-framed log output. Default true; persisted via
-// the general.kiss_enabled provisioning field, loaded at boot.
-bool log_kiss_enabled = true;
-
-bool provisioning_started = false;
-
-// Register Provisioning namespaces. Called from init_provisioning()
-// before Manager::begin(). EEPROM (driven by rnodeconf) remains the
-// source of truth for radio configuration, so the "radio" namespace
-// registration is kept here only as a reference for any future revival
-// of Provisioning-backed radio config — see the commented block below.
-void register_provisioning_namespaces() {
-  using namespace RNS::Provisioning;
-
-  // ----- radio namespace (DISABLED) -----
-  // Left in place as a reference for future use. If re-enabled, the
-  // radio/EEPROM split-authority needs a deliberate migration strategy
-  // (see git history around the original Provisioning integration).
-  //
-  // Manager::instance()
-  //   .register_namespace("radio", PROV_NS_RADIO)
-  //     .field_enum("op_mode", PROV_RADIO_OP_MODE, FF_REBOOT_REQUIRED,
-  //                (int64_t)MODE_HOST,
-  //                std::vector<int64_t>{ (int64_t)MODE_HOST, (int64_t)MODE_TNC },
-  //                std::vector<std::string>{ "host", "tnc" },
-  //                [](const Value& v) { op_mode = (uint8_t)v.as_int(); return true; })
-  //     .field_int("frequency", PROV_RADIO_FREQ, FF_REBOOT_REQUIRED,
-  //                (int64_t)0, (int64_t)100000000, (int64_t)1000000000,
-  //                [](const Value& v) { lora_freq = (uint32_t)v.as_int(); return true; })
-  //     .field_int("bandwidth", PROV_RADIO_BW, FF_REBOOT_REQUIRED,
-  //                (int64_t)0, (int64_t)7800, (int64_t)500000,
-  //                [](const Value& v) { lora_bw = (uint32_t)v.as_int(); return true; })
-  //     .field_int("sf", PROV_RADIO_SF, FF_REBOOT_REQUIRED,
-  //                (int64_t)0, (int64_t)5, (int64_t)12,
-  //                [](const Value& v) { lora_sf = (int)v.as_int(); return true; })
-  //     .field_int("cr", PROV_RADIO_CR, FF_REBOOT_REQUIRED,
-  //                (int64_t)5, (int64_t)5, (int64_t)8,
-  //                [](const Value& v) { lora_cr = (int)v.as_int(); return true; })
-  //     .field_int("txp", PROV_RADIO_TXP, FF_REBOOT_REQUIRED,
-  //                (int64_t)0xFF, (int64_t)-9, (int64_t)22,
-  //                [](const Value& v) { lora_txp = (int)v.as_int(); return true; })
-  //     .field_int("implicit_l", PROV_RADIO_IMPLICIT, FF_REBOOT_REQUIRED,
-  //                (int64_t)0, (int64_t)0, (int64_t)255,
-  //                [](const Value& v) { implicit_l = (uint8_t)v.as_int(); return true; })
-  //     .end();
-
-  // ----- general namespace -----
-  Manager::instance()
-    .register_namespace("general", PROV_NS_GENERAL)
-      .field_bool("kiss_enabled", PROV_GENERAL_KISS_LOG, FF_LIVE_APPLY, true,
-                 [](const Value& v) { log_kiss_enabled = v.as_bool(); return true; })
-      .end();
-}
-
-void init_provisioning() {
-  RNS::Provisioning::Manager::instance().on_reboot_requested([]() {
-    // Host orchestrates reboot via CMD_RESET. We just record needs_reboot
-    // via the Manager's flag; no auto-reboot from here.
-  });
-  register_provisioning_namespaces();
-  RNS::Provisioning::Manager::instance().begin("/config");
-  provisioning_started = true;
-}
-
-// Dispatch one un-escaped MsgPack envelope to the Provisioning Manager and
-// emit the framed response back over KISS. Forward declared so the helper
-// inline in Utilities.h doesn't need to know the Bytes class either.
-void kiss_indicate_provision_response(const RNS::Bytes& payload);
-
-void on_provision_request(const RNS::Bytes& req) {
-  if (!provisioning_started) return;
-  RNS::Bytes response = RNS::Provisioning::Manager::instance().handle_message(req);
-  kiss_indicate_provision_response(response);
-}
-#endif // HAS_PROVISIONING
-
 // CBA logger callback
 void on_log(const char* msg, RNS::LogLevel level) {
 #ifdef HAS_PROVISIONING
   if (log_kiss_enabled) {
-    extern void kiss_emit_log(const char* line, size_t len);
     // Compose "<timestamp> [<level>] <msg>" into a stack buffer to avoid
     // String heap allocation. 256 bytes covers the longest practical line.
     char line[256];
@@ -943,9 +838,12 @@ void setup() {
       // Register the page handler. ALLOW_ALL because page browsing is open
       // to anyone who can reach the node, just like a Python NomadNet
       // node's default policy.
+			//stats_destination.register_request_handler("/page/index.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
       stats_destination.register_request_handler("/page/index.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
-      stats_destination.register_request_handler("/page/stack.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
-      stats_destination.register_request_handler("/page/device.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
+			stats_destination.register_request_handler("/page/stack.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
+      //stats_destination.register_request_handler("/page/stack.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
+			stats_destination.register_request_handler("/page/device.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
+      //stats_destination.register_request_handler("/page/device.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
 
       // Announce once at startup so a client that's already listening can
       // discover us immediately. The node name is sent as the announce

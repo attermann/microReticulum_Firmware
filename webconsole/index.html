@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>microReticulum Console</title>
+<title>RNode Console</title>
 <style>
 :root {
   --bg: #f6f7f9;
@@ -95,6 +95,36 @@ button.primary { background: var(--accent); color: var(--accent-ink); border-col
 .toast.warn { border-left-color: var(--warn); }
 .toast.info { border-left-color: var(--accent); }
 pre { font: 12px/1.5 ui-monospace, Menlo, monospace; }
+/* Node Config */
+.kv-info { border-collapse: collapse; }
+.kv-info td { padding: 4px 12px 4px 0; vertical-align: top; }
+.kv-info td:first-child { color: var(--muted); white-space: nowrap; }
+.kv-info td.hash { font: 11px/1.4 ui-monospace, Menlo, monospace; word-break: break-all; max-width: 360px; }
+.ncfg-section h2 { margin: 0 0 8px; font-size: 16px; }
+.ncfg-trailer { color: var(--muted); font-size: 12px; margin: 8px 0 12px; }
+.danger-zone { padding: 12px; border: 1px solid var(--err); border-radius: 4px; margin-top: 16px; background: rgba(185,28,28,0.04); }
+.danger-zone h3 { margin: 0 0 8px; color: var(--err); font-size: 13px; text-transform: uppercase; }
+.danger-zone button { background: var(--panel); border: 1px solid var(--err); color: var(--err); padding: 6px 14px; border-radius: 4px; font: inherit; cursor: pointer; margin-right: 6px; }
+.danger-zone button:hover { background: rgba(185,28,28,0.08); }
+.danger-zone button:disabled { opacity: 0.5; cursor: not-allowed; }
+.hexview { font: 11px/1.5 ui-monospace, Menlo, monospace; background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 10px 14px; overflow: auto; max-height: 480px; }
+.hexview .hx-row { display: flex; gap: 12px; }
+.hexview .hx-off { color: var(--muted); flex: 0 0 auto; }
+.hexview .hx-bytes { flex: 1 1 auto; }
+.hexview .hx-ascii { color: var(--muted); flex: 0 0 auto; }
+.hexview .hx-mark { background: rgba(37,99,235,0.15); border-radius: 2px; padding: 0 2px; }
+.hexview .hx-legend { color: var(--muted); margin-top: 8px; font-size: 11px; }
+.hexview .hx-legend .hx-mark { margin-right: 4px; padding: 0 6px; }
+.eeprom-toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; flex-wrap: wrap; }
+.eeprom-toolbar button { font: inherit; padding: 5px 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--ink); cursor: pointer; }
+.eeprom-toolbar button:hover { background: var(--hover); }
+.eeprom-toolbar button:disabled { opacity: 0.5; cursor: not-allowed; }
+.bt-mode-row { display: flex; gap: 8px; align-items: center; margin: 12px 0; flex-wrap: wrap; }
+.bt-mode-row button { font: inherit; padding: 6px 14px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--ink); cursor: pointer; }
+.bt-mode-row button:hover:not(:disabled) { background: var(--hover); }
+.bt-mode-row button.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.bt-mode-row button:disabled { opacity: 0.5; cursor: not-allowed; }
+.mode-current { padding: 10px 14px; background: rgba(37,99,235,0.08); border: 1px solid var(--accent); border-radius: 4px; margin-bottom: 16px; }
 </style>
 </head>
 <body>
@@ -111,16 +141,205 @@ const CMD_RESET=0x55, CMD_RESET_BYTE=0xF8;
 const STAT_CMD_RANGE = [0x21, 0x29];
 
 const OP = { GetSchema:1, GetInfo:2, GetCapabilities:3, GetState:4, SetState:5, Commit:6, Discard:7, FactoryReset:8, Ack:100, Error:101 };
-const FT = { None:0, Bool:1, Int:2, Float:3, String:4, Bytes:5, Enum:6 };
+const FT = { None:0, Bool:1, Int:2, Float:3, String:4, Bytes:5, Enum:6, BytesList:7 };
 const FF = { LIVE_APPLY:1, REBOOT_REQUIRED:2, READ_ONLY:4, SECRET:8 };
 const ERR_NAMES = { 0:'Ok', 1:'MalformedRequest', 2:'UnknownOp', 3:'UnknownNamespace', 4:'UnknownField', 5:'InvalidValue', 6:'ConstraintViolation', 7:'ReadOnly', 8:'StorageError', 9:'NotInitialized', 99:'Internal' };
-const FK = { Id:1, Name:2, Type:3, Flags:4, MinI:5, MaxI:6, MinF:7, MaxF:8, MaxLen:9, EnumValues:10, EnumLabels:11, Default:12 };
+const FK = { Id:1, Name:2, Type:3, Flags:4, MinI:5, MaxI:6, MinF:7, MaxF:8, MaxLen:9, EnumValues:10, EnumLabels:11, Default:12, ElementSize:13, MaxCount:14 };
 const IK = { FirmwareVersion:1, SchemaVersion:2, NeedsReboot:3 };
 const GK = { NamespaceFilter:1, Pending:2 };
 const SK = { Applied:1, DraftHasReboot:2, FieldErrors:3 };
 const CK = { Applied:1, NeedsReboot:2 };
 const EK = { Code:1, Message:2, Namespace:3, Field:4 };
 const RSSI_OFFSET = 157;
+
+// ===== Legacy RNode KISS opcodes (Framing.h) — used by Node Config =====
+const CMD_FREQUENCY   = 0x01;
+const CMD_BANDWIDTH   = 0x02;
+const CMD_TXPOWER     = 0x03;
+const CMD_SF          = 0x04;
+const CMD_CR          = 0x05;
+const CMD_RADIO_STATE = 0x06;
+const CMD_RADIO_LOCK  = 0x07;
+const CMD_DETECT      = 0x08;
+const CMD_IMPLICIT    = 0x09;
+const CMD_LEAVE       = 0x0A;
+const CMD_ST_ALOCK    = 0x0B;
+const CMD_LT_ALOCK    = 0x0C;
+const CMD_PROMISC     = 0x0E;
+const CMD_DISP_INT    = 0x45;
+const CMD_BT_CTRL     = 0x46;
+const CMD_BOARD       = 0x47;
+const CMD_PLATFORM    = 0x48;
+const CMD_MCU         = 0x49;
+const CMD_FW_VERSION  = 0x50;
+const CMD_ROM_READ    = 0x51;
+const CMD_ROM_WRITE   = 0x52;
+const CMD_CONF_SAVE   = 0x53;
+const CMD_CONF_DELETE = 0x54;
+const CMD_DEV_HASH    = 0x56;
+const CMD_DEV_SIG     = 0x57;
+const CMD_FW_HASH     = 0x58;
+const CMD_UNLOCK_ROM  = 0x59;
+const ROM_UNLOCK_BYTE = 0xF8;
+const CMD_HASHES      = 0x60;
+const CMD_BT_PIN      = 0x62;
+const CMD_DISP_ADDR   = 0x63;
+const CMD_DISP_BLNK   = 0x64;
+const CMD_NP_INT      = 0x65;
+const CMD_DISP_READ   = 0x66;
+const CMD_DISP_ROT    = 0x67;
+const CMD_DISP_RCND   = 0x68;
+const CMD_DIS_IA      = 0x69;
+const CMD_WIFI_MODE   = 0x6A;
+const CMD_WIFI_SSID   = 0x6B;
+const CMD_WIFI_PSK    = 0x6C;
+const CMD_CFG_READ    = 0x6D;
+const CMD_WIFI_CHN    = 0x6E;
+const CMD_BT_UNPAIR   = 0x70;
+const CMD_WIFI_IP     = 0x84;
+const CMD_WIFI_NM     = 0x85;
+const DETECT_REQ      = 0x73;
+const DETECT_RESP     = 0x46;
+
+// Decode tables for the read-only "Device Info" sub-tab (from Boards.h).
+const PLATFORM_NAMES = {
+  0x60: 'Native', 0x70: 'nRF52', 0x80: 'ESP32', 0x90: 'AVR',
+};
+const MCU_NAMES = {
+  0x61: 'Native', 0x71: 'nRF52840', 0x81: 'ESP32', 0x91: 'ATmega1284P', 0x92: 'ATmega2560',
+};
+const BOARD_NAMES = {
+  0x31:'RNode v1', 0x32:'HMBRW', 0x33:'TTGO T-Beam', 0x34:'Huzzah32', 0x35:'Generic ESP32',
+  0x36:'TTGO LoRa32 v2.0', 0x37:'TTGO LoRa32 v2.1', 0x38:'Heltec LoRa32 v2', 0x39:'TTGO LoRa32 v1.0',
+  0x3A:'Heltec LoRa32 v3', 0x3B:'LilyGO T-Deck', 0x3C:'Heltec T114', 0x3D:'T-Beam Supreme',
+  0x3E:'XIAO ESP32-S3', 0x3F:'Heltec LoRa32 v4', 0x40:'RNode v2.0', 0x41:'RNode v2.1',
+  0x42:'T3S3', 0x44:'LilyGO T-Echo', 0x50:'Generic nRF52', 0x51:'WisCore RAK4631', 0x60:'Native Linux',
+};
+// CONF_OK marker indicating the device boots into TNC mode.
+const CONF_OK_BYTE = 0x73;
+
+// ===== Node Config static schema =====
+// Each section's fields share the shape Provisioning schema fields use (id, name, type,
+// flags, min/max, default), so buildFieldRow can render them. Extra keys carry the
+// wire-format details (`cmd`, `encoding`, `queryPayload`) the LegacyClient consumes.
+const NCFG_ENC = {
+  // Single-byte unsigned (0..255). Query payload: [0xFF] (firmware echoes current value).
+  u8: { width: 1, enc: (n) => new Uint8Array([n & 0xff]),
+        dec: (b) => b.length >= 1 ? b[0] : null,
+        query: () => new Uint8Array([0xFF]) },
+  // Single-byte signed (-128..127). Used for TXP.
+  i8: { width: 1, enc: (n) => new Uint8Array([n & 0xff]),
+        dec: (b) => b.length >= 1 ? (b[0] < 128 ? b[0] : b[0] - 256) : null,
+        query: () => new Uint8Array([0xFF]) },
+  // 4-byte big-endian unsigned. Used for FREQ, BW. Query payload: 4 zero bytes.
+  be32: { width: 4, enc: (n) => { const a = new Uint8Array(4); a[0]=(n>>>24)&0xff; a[1]=(n>>>16)&0xff; a[2]=(n>>>8)&0xff; a[3]=n&0xff; return a; },
+          dec: (b) => b.length >= 4 ? (b[0]*0x1000000 + ((b[1]<<16)|(b[2]<<8)|b[3])) : null,
+          query: () => new Uint8Array(4) },
+  // Null-terminated UTF-8 string. Used for SSID, PSK.
+  str: { encStr: (s, maxLen) => {
+          const u = new TextEncoder().encode(String(s || ''));
+          const len = Math.min(u.length, maxLen);
+          const a = new Uint8Array(len + 1);
+          a.set(u.subarray(0, len), 0);
+          a[len] = 0;
+          return a;
+        } },
+  // 4 octets (IPv4). Used for IP, NETMASK.
+  ip4: { enc: (s) => {
+          if (!s) return new Uint8Array([0,0,0,0]);
+          const parts = String(s).split('.').map(p => parseInt(p, 10));
+          const a = new Uint8Array(4);
+          for (let i = 0; i < 4; ++i) a[i] = Number.isFinite(parts[i]) ? (parts[i] & 0xff) : 0;
+          return a;
+        },
+         dec: (b) => b.length >= 4 ? `${b[0]}.${b[1]}.${b[2]}.${b[3]}` : null },
+};
+
+// FT.String/FT.Int sub-typed via `encoding` field. The LegacyClient picks
+// codec by name. `cmd` is the opcode to write (and usually to query).
+const NODE_CONFIG_SCHEMA = {
+  device_info: {
+    label: 'Device Info',
+    custom: 'device_info',
+  },
+  radio: {
+    label: 'Radio',
+    requiresReboot: true,
+    custom: 'radio',
+    // Custom panel combines the operating-mode selector (HOST/TNC) with the
+    // radio params. Radio config only persists when boot-into-TNC is selected,
+    // since in HOST mode the connected host re-issues radio params on every
+    // boot and the EEPROM values are unused.
+    // Fields defined here so the panel can iterate them via buildFieldRow.
+    fields: [
+      { id: 'frequency', name: 'frequency', label: 'Frequency', type: FT.Int, encoding: 'be32',
+        cmd: CMD_FREQUENCY, minI: 100000000, maxI: 1100000000, unit: 'Hz', default: 0 },
+      { id: 'bandwidth', name: 'bandwidth', label: 'Bandwidth', type: FT.Int, encoding: 'be32',
+        cmd: CMD_BANDWIDTH, minI: 7800, maxI: 500000, unit: 'Hz', default: 0 },
+      { id: 'sf', name: 'sf', label: 'Spreading factor', type: FT.Int, encoding: 'u8',
+        cmd: CMD_SF, minI: 5, maxI: 12, default: 0 },
+      { id: 'cr', name: 'cr', label: 'Coding rate', type: FT.Int, encoding: 'u8',
+        cmd: CMD_CR, minI: 5, maxI: 8, default: 5 },
+      { id: 'txp', name: 'txp', label: 'TX power', type: FT.Int, encoding: 'i8',
+        cmd: CMD_TXPOWER, minI: -9, maxI: 22, unit: 'dBm', default: 0 },
+    ],
+    saveOrder: ['frequency','bandwidth','sf','cr','txp'],
+  },
+  bluetooth: {
+    label: 'Bluetooth',
+    custom: 'bluetooth',
+  },
+  wifi: {
+    label: 'WiFi',
+    requiresReboot: true,
+    fields: [
+      { id: 'mode', name: 'mode', label: 'Mode', type: FT.Enum,
+        cmd: CMD_WIFI_MODE, encoding: 'u8',
+        enumValues: [0x00, 0x01, 0x02], enumLabels: ['Off', 'Station', 'Access Point'],
+        default: 0x00, readable: false },
+      { id: 'channel', name: 'channel', label: 'Channel', type: FT.Int, encoding: 'u8',
+        cmd: CMD_WIFI_CHN, minI: 1, maxI: 13, default: 1, readable: false },
+      { id: 'ssid', name: 'ssid', label: 'SSID', type: FT.String, encoding: 'str',
+        cmd: CMD_WIFI_SSID, maxLen: 32, default: '', readable: false },
+      { id: 'psk', name: 'psk', label: 'PSK', type: FT.String, encoding: 'str',
+        cmd: CMD_WIFI_PSK, maxLen: 32, default: '', flags: FF.SECRET, readable: false },
+      { id: 'ip', name: 'ip', label: 'Static IP (0.0.0.0 = DHCP)', type: FT.String, encoding: 'ip4',
+        cmd: CMD_WIFI_IP, default: '0.0.0.0', readable: false },
+      { id: 'nm', name: 'nm', label: 'Netmask', type: FT.String, encoding: 'ip4',
+        cmd: CMD_WIFI_NM, default: '0.0.0.0', readable: false },
+    ],
+    saveOrder: ['mode','channel','ssid','psk','ip','nm'],
+    saveTrailerNote: 'Settings are written to the WiFi config sector and take effect on the next reboot.',
+  },
+  display: {
+    label: 'Display',
+    fields: [
+      { id: 'intensity', name: 'intensity', label: 'Display intensity', type: FT.Int, encoding: 'u8',
+        cmd: CMD_DISP_INT, minI: 0, maxI: 255, default: 0, readable: false },
+      { id: 'blanking', name: 'blanking', label: 'Blanking timeout (s, 0=off)', type: FT.Int, encoding: 'u8',
+        cmd: CMD_DISP_BLNK, minI: 0, maxI: 255, default: 0, readable: false },
+      { id: 'rotation', name: 'rotation', label: 'Rotation', type: FT.Enum,
+        cmd: CMD_DISP_ROT, encoding: 'u8',
+        enumValues: [0, 1, 2, 3], enumLabels: ['0°', '90°', '180°', '270°'],
+        default: 0, readable: false },
+      { id: 'addr', name: 'addr', label: 'I2C address', type: FT.Int, encoding: 'u8',
+        cmd: CMD_DISP_ADDR, minI: 0, maxI: 255, default: 0x3C, readable: false },
+      { id: 'np', name: 'np', label: 'NeoPixel intensity', type: FT.Int, encoding: 'u8',
+        cmd: CMD_NP_INT, minI: 0, maxI: 255, default: 0, readable: false },
+      // CMD_DIS_IA: firmware byte 0x00 = IA enabled, 0x01 = IA disabled.
+      // We expose it as a positive "Interference avoidance" toggle and invert at the wire.
+      { id: 'ia', name: 'ia', label: 'Interference avoidance', type: FT.Bool,
+        cmd: CMD_DIS_IA, encoding: 'u8',
+        toWire: (v) => v ? 0x00 : 0x01, fromWire: (b) => b === 0x00,
+        default: true, readable: false },
+    ],
+    saveOrder: ['intensity','blanking','rotation','addr','np','ia'],
+  },
+  eeprom: {
+    label: 'EEPROM',
+    custom: 'eeprom',
+  },
+};
 
 // ===== MsgPack =====
 class Packer {
@@ -459,6 +678,9 @@ class ProvisioningClient {
     this.waiters = new Map();
     this.onLog = () => {};
     this.onStatusFrame = () => {};
+    // Fallthrough: any KISS opcode we don't recognise here is offered to the
+    // LegacyClient (for rnodeconf-style CMD_FREQUENCY, CMD_BT_CTRL, etc).
+    this.onLegacyFrame = () => {};
     this.decoder = new KissDecoder((cmd, payload) => this._onFrame(cmd, payload));
     this.t.onBytes = (b) => this.decoder.feed(b);
   }
@@ -466,6 +688,7 @@ class ProvisioningClient {
     if (cmd === CMD_PROVISION_RSP) this._onResponse(payload);
     else if (cmd === CMD_LOG) this.onLog(new TextDecoder().decode(payload));
     else if (cmd >= STAT_CMD_RANGE[0] && cmd <= STAT_CMD_RANGE[1]) this.onStatusFrame(cmd, payload);
+    else this.onLegacyFrame(cmd, payload);
   }
   _onResponse(payload){
     let env;
@@ -536,6 +759,11 @@ class ProvisioningClient {
             minF: fEntry.get(FK.MinF), maxF: fEntry.get(FK.MaxF),
             maxLen: fEntry.get(FK.MaxLen),
             enumValues: fEntry.get(FK.EnumValues), enumLabels: fEntry.get(FK.EnumLabels),
+            // BytesList constraints (Type::BytesList only):
+            // elementSize = required exact byte length per entry (0 = variable)
+            // maxCount    = max number of entries (0 = unlimited)
+            elementSize: fEntry.get(FK.ElementSize),
+            maxCount: fEntry.get(FK.MaxCount),
             default: fEntry.get(FK.Default),
           });
         }
@@ -631,7 +859,203 @@ function packTypedValue(p, type, v){
     case FT.Float: p.float(Number(v)); return;
     case FT.String: p.str(String(v == null ? '' : v)); return;
     case FT.Bytes: p.bin(v instanceof Uint8Array ? v : new Uint8Array(v || [])); return;
+    case FT.BytesList: {
+      // Wire form: MsgPack array of bin entries. JS form: array of Uint8Array.
+      const list = Array.isArray(v) ? v : [];
+      p.arr(list.length);
+      for (const e of list) p.bin(e instanceof Uint8Array ? e : new Uint8Array(e || []));
+      return;
+    }
     default: p.nil();
+  }
+}
+
+// ===== Legacy (rnodeconf-style) client =====
+// Speaks individual KISS opcodes for EEPROM-backed settings: radio, bluetooth,
+// wifi, display, identity, EEPROM ops. Reuses the same transport/decoder via a
+// fallthrough subscription on ProvisioningClient.onLegacyFrame.
+class LegacyClient {
+  constructor(provisioningClient, transport){
+    this.t = transport;
+    // cmd → array of pending {resolve, reject, timeoutId} (FIFO). For each
+    // incoming frame with that cmd, the oldest pending handler resolves with
+    // the payload. Most reads are one-shot, but we use a list to be safe
+    // against rapid-fire queries.
+    this.pending = new Map();
+    provisioningClient.onLegacyFrame = (cmd, payload) => this._onFrame(cmd, payload);
+  }
+  _onFrame(cmd, payload){
+    const q = this.pending.get(cmd);
+    if (!q || q.length === 0) return;
+    const w = q.shift();
+    if (q.length === 0) this.pending.delete(cmd);
+    clearTimeout(w.timeoutId);
+    w.resolve(payload);
+  }
+  // Drop all pending queries with "connection lost" — called from
+  // ProvisioningClient.resetSession (post-reboot).
+  resetSession(){
+    for (const [, q] of this.pending) {
+      for (const w of q) { clearTimeout(w.timeoutId); try { w.reject(new Error('connection lost')); } catch(_) {} }
+    }
+    this.pending.clear();
+  }
+  async write(cmd, payload){
+    let p = payload instanceof Uint8Array ? payload : new Uint8Array(payload || []);
+    // The firmware's serial dispatcher fires its handlers per-byte INSIDE the
+    // frame, not on frame end. For parameterless commands (CMD_CONF_SAVE,
+    // CMD_CONF_DELETE, CMD_ROM_READ, CMD_CFG_READ, etc.) the handler is keyed
+    // on `command == X` and runs against each payload byte; with a zero-byte
+    // payload it never runs. Pad with a single 0x00 sentinel — every such
+    // handler ignores the byte's value.
+    if (p.length === 0) p = new Uint8Array([0x00]);
+    await this.t.send(kissEncode(cmd, p));
+  }
+  // Query: send the opcode with `queryPayload` and resolve when the device
+  // echoes back a frame with the same opcode. Timeout is short by default
+  // because most rnodeconf queries respond within tens of ms.
+  query(cmd, queryPayload, timeoutMs){
+    const timeout = timeoutMs != null ? timeoutMs : 1500;
+    return new Promise((resolve, reject) => {
+      const w = { resolve, reject };
+      w.timeoutId = setTimeout(() => {
+        const q = this.pending.get(cmd);
+        if (q) {
+          const i = q.indexOf(w);
+          if (i >= 0) q.splice(i, 1);
+          if (q.length === 0) this.pending.delete(cmd);
+        }
+        reject(new Error('legacy query timed out (cmd 0x'+cmd.toString(16)+')'));
+      }, timeout);
+      let q = this.pending.get(cmd);
+      if (!q) { q = []; this.pending.set(cmd, q); }
+      q.push(w);
+      Promise.resolve(this.write(cmd, queryPayload)).catch((e) => {
+        clearTimeout(w.timeoutId);
+        const arr = this.pending.get(cmd);
+        if (arr) {
+          const i = arr.indexOf(w);
+          if (i >= 0) arr.splice(i, 1);
+          if (arr.length === 0) this.pending.delete(cmd);
+        }
+        reject(e);
+      });
+    });
+  }
+  // Read one field per the NODE_CONFIG_SCHEMA entry.
+  async readField(f){
+    if (f.readable === false) return undefined;
+    const enc = NCFG_ENC[f.encoding];
+    if (!enc || !enc.query) return undefined;
+    const reply = await this.query(f.cmd, enc.query(), 1500);
+    if (!enc.dec) return undefined;
+    const raw = enc.dec(reply);
+    return (f.fromWire) ? f.fromWire(raw) : raw;
+  }
+  // Encode one field value for the wire (does NOT send it).
+  encodeField(f, value){
+    const enc = NCFG_ENC[f.encoding];
+    if (!enc) throw new Error('unknown encoding ' + f.encoding);
+    const wireVal = (f.toWire) ? f.toWire(value) : value;
+    if (f.encoding === 'str') return enc.encStr(wireVal, f.maxLen || 32);
+    if (f.encoding === 'ip4') return enc.enc(wireVal);
+    return enc.enc(wireVal);
+  }
+  // Read all fields in a section. Returns { fieldId: value } map.
+  async readSection(sectionId){
+    const sec = NODE_CONFIG_SCHEMA[sectionId];
+    if (!sec || !sec.fields) return {};
+    const out = {};
+    for (const f of sec.fields) {
+      if (f.readable === false) continue;
+      try {
+        const v = await this.readField(f);
+        if (v !== undefined) out[f.id] = v;
+      } catch (_) {
+        // Field doesn't reply — skip. UI will show it as empty / default.
+      }
+    }
+    return out;
+  }
+  // Write only the drafted fields in a section, in saveOrder. Each write is a
+  // fire-and-forget KISS frame. The schema may declare:
+  //   - saveLeader: array of {cmd, payload} ops fired BEFORE field writes.
+  //   - saveTrailer: {cmd, payload} OR array of such ops, fired AFTER field
+  //     writes. Used by the radio section to first bring the radio online
+  //     (CMD_RADIO_STATE 0x01) and then persist (CMD_CONF_SAVE).
+  async writeSection(sectionId, draft){
+    const sec = NODE_CONFIG_SCHEMA[sectionId];
+    if (!sec || !sec.fields) return;
+    if (Array.isArray(sec.saveLeader)) {
+      for (const op of sec.saveLeader) await this.write(op.cmd, op.payload || new Uint8Array(0));
+    }
+    const order = sec.saveOrder || sec.fields.map(f => f.id);
+    for (const fid of order) {
+      if (!(fid in draft)) continue;
+      const f = sec.fields.find(ff => ff.id === fid);
+      if (!f) continue;
+      const bytes = this.encodeField(f, draft[fid]);
+      await this.write(f.cmd, bytes);
+    }
+    if (sec.saveTrailer) {
+      const ops = Array.isArray(sec.saveTrailer) ? sec.saveTrailer : [sec.saveTrailer];
+      for (const op of ops) await this.write(op.cmd, op.payload || new Uint8Array(0));
+    }
+  }
+  async readEeprom(){
+    // CMD_ROM_READ replies in a single frame with all 200 EEPROM bytes.
+    return await this.query(CMD_ROM_READ, new Uint8Array(0), 3000);
+  }
+  async readCfgSector(){
+    return await this.query(CMD_CFG_READ, new Uint8Array(0), 3000);
+  }
+  async wipeEeprom(){
+    await this.write(CMD_UNLOCK_ROM, new Uint8Array([ROM_UNLOCK_BYTE]));
+  }
+  async setMode(tnc){
+    // CMD_CONF_SAVE persists radio settings AND sets ADDR_CONF_OK=0x73 (next
+    // boot enters TNC mode). CMD_CONF_DELETE clears that marker.
+    // Switching to TNC requires the radio to be online — eeprom_conf_save()
+    // short-circuits unless radio_online == true. CMD_CONF_DELETE just clears
+    // a byte and doesn't need the radio.
+    if (tnc) await this.write(CMD_RADIO_STATE, new Uint8Array([0x01]));
+    await this.write(tnc ? CMD_CONF_SAVE : CMD_CONF_DELETE, new Uint8Array(0));
+  }
+  async setBluetooth(mode){
+    // mode: 0=off, 1=on, 2=pairing
+    await this.write(CMD_BT_CTRL, new Uint8Array([mode & 0xff]));
+  }
+  async bluetoothUnpair(){
+    await this.write(CMD_BT_UNPAIR, new Uint8Array([0x01]));
+  }
+  async reconditionDisplay(){
+    await this.write(CMD_DISP_RCND, new Uint8Array([0x01]));
+  }
+  // Read the Device Info sub-tab: board, platform, MCU, firmware version, hashes.
+  async readDeviceInfo(){
+    const info = {};
+    const tryGet = async (cmd, queryPayload, timeout, parser) => {
+      try {
+        const reply = await this.query(cmd, queryPayload, timeout || 1500);
+        return parser ? parser(reply) : reply;
+      } catch (_) { return null; }
+    };
+    info.board    = await tryGet(CMD_BOARD,      new Uint8Array([0]), 1500, (b) => b.length >= 1 ? b[0] : null);
+    info.platform = await tryGet(CMD_PLATFORM,   new Uint8Array([0]), 1500, (b) => b.length >= 1 ? b[0] : null);
+    info.mcu      = await tryGet(CMD_MCU,        new Uint8Array([0]), 1500, (b) => b.length >= 1 ? b[0] : null);
+    // Firmware version: MAJ_VERS and MIN_VERS are emitted as raw bytes which
+    // rnodeconf treats as decimal (e.g. MIN_VERS=0x56 → "86", not "56").
+    info.fwVersion = await tryGet(CMD_FW_VERSION, new Uint8Array(0), 1500, (b) => b.length >= 2 ? `${b[0]}.${b[1].toString().padStart(2,'0')}` : null);
+    info.devHash  = await tryGet(CMD_DEV_HASH,   new Uint8Array([0x01]), 1500, (b) => b);
+    // CMD_HASHES: 0x01=target FW, 0x02=actual FW, 0x03=bootloader, 0x04=partition.
+    // Each response is 33 bytes: [type_byte, 32 bytes hash]. Use a single query per type.
+    // The cmd dispatcher's per-cmd FIFO means concurrent queries on the same cmd
+    // would race; serialize them sequentially.
+    info.fwHashTarget   = await tryGet(CMD_HASHES, new Uint8Array([0x01]), 1500, (b) => b && b.length >= 33 ? b.slice(1, 33) : null);
+    info.fwHashActual   = await tryGet(CMD_HASHES, new Uint8Array([0x02]), 1500, (b) => b && b.length >= 33 ? b.slice(1, 33) : null);
+    info.bootloaderHash = await tryGet(CMD_HASHES, new Uint8Array([0x03]), 1500, (b) => b && b.length >= 33 ? b.slice(1, 33) : null);
+    info.partitionHash  = await tryGet(CMD_HASHES, new Uint8Array([0x04]), 1500, (b) => b && b.length >= 33 ? b.slice(1, 33) : null);
+    return info;
   }
 }
 
@@ -666,7 +1090,12 @@ function decodeStatusFrame(cmd, payload, st){
     } break;
     case 0x27: if (payload.length>=2) { st.batteryState = payload[0]; st.batteryPercent = payload[1]; } break;
     case 0x28: if (payload.length>=3) { st.cwBand = payload[0]; st.cwMin = payload[1]; st.cwMax = payload[2]; } break;
-    case 0x29: if (payload.length>=1) st.temperatureC = payload[0]; break;
+    case 0x29: if (payload.length>=1) {
+      // Firmware adds PMU_TEMP_OFFSET=120 to keep negative temps in unsigned
+      // range. Sentinel = PMU_TEMP_MIN-1 = -31 → byte 89 means "no reading".
+      const t = payload[0] - 120;
+      st.temperatureC = (t <= -30) ? null : t;
+    } break;
   }
 }
 
@@ -711,7 +1140,7 @@ const state = {
   conn: observable({ state: 'idle' }),
   info: observable(null),
   schema: observable(null),
-  activeTab: observable('info'),           // 'info' | 'status' | 'config' | 'logs'
+  activeTab: observable('status'),         // 'status' | 'nodeconfig' | 'config' | 'logs'
   activeNsTab: observable(null),           // ns_id within Configuration tab
   nsState: observable({}),                 // { nsId: { committed:{fid:val}, draft:{fid:val} } }
   nsLoaded: observable({}),                // { nsId: true }
@@ -726,9 +1155,39 @@ const state = {
   firmwareHasDraft: observable(false),
   autoReconnect: observable(true),
   reconnecting: observable(false),
+  // Node Config tab — parallel observables to nsState/etc but for legacy-opcode
+  // settings. Keyed by section name ('radio', 'wifi', 'display', …) rather than
+  // numeric ns id.
+  nodeCfgState: observable({}),
+  nodeCfgLoaded: observable({}),
+  nodeCfgLoading: observable({}),
+  nodeCfgHasDraft: observable(false),
+  activeNodeCfgTab: observable('device_info'),
+  // Cached EEPROM hex viewer state.
+  nodeCfgEeprom: observable(null),       // Uint8Array(200) or null
+  nodeCfgCfgSector: observable(null),    // Uint8Array(256) or null
+  nodeCfgDeviceInfo: observable(null),   // {board, platform, mcu, fwVersion, ...}
+  // Set true after a Node Config save touched a `requiresReboot` section
+  // (radio, wifi, mode). Drives the "Reboot recommended" banner alongside the
+  // Provisioning info.needsReboot flag. Cleared on reboot/reconnect.
+  nodeCfgNeedsReboot: observable(false),
+  // null = not yet probed; true = device replied to a legacy KISS query
+  // (CMD_BOARD) so the Node Config tab is meaningful; false = no reply within
+  // the probe window (device is likely in TNC mode or speaks a different
+  // protocol). Drives the visibility of the Node Config tab.
+  legacySupported: observable(null),
+};
+// Node Config store context — passed to buildFieldRow/setDraftValue/etc.
+const NCFG_CTX = {
+  get state(){ return state.nodeCfgState; },
+  get errors(){ return null; },                // Node Config has no server-side per-field errors
+  get hasDraft(){ return state.nodeCfgHasDraft; },
 };
 let transport = null;
 let client = null;
+// LegacyClient instance — speaks rnodeconf-style KISS opcodes for Node Config.
+// Co-located with `client`; rebuilt in wireClient() on each (re)connect.
+let legacy = null;
 // When true, the next 'closed' / 'idle' transport event should fully tear down
 // state and NOT trigger auto-reconnect. Set by doDisconnect().
 let userInitiatedDisconnect = false;
@@ -755,6 +1214,16 @@ function clearSessionState(){
   state.nodeStatus.set({});
   state.hasDraft.set(false);
   state.firmwareHasDraft.set(false);
+  // Node Config side
+  state.nodeCfgState.set({});
+  state.nodeCfgLoaded.set({});
+  state.nodeCfgLoading.set({});
+  state.nodeCfgHasDraft.set(false);
+  state.nodeCfgEeprom.set(null);
+  state.nodeCfgCfgSector.set(null);
+  state.nodeCfgDeviceInfo.set(null);
+  state.nodeCfgNeedsReboot.set(false);
+  state.legacySupported.set(null);
 }
 
 function wireClient(c){
@@ -767,19 +1236,22 @@ function wireClient(c){
   c.onStatusFrame = (cmd, payload) => {
     state.nodeStatus.update(st => decodeStatusFrame(cmd, payload, st));
   };
+  // Node Config legacy-opcode client subscribes to c.onLegacyFrame (set inside
+  // LegacyClient's constructor) and uses the same transport for writes.
+  legacy = new LegacyClient(c, c.t);
 }
 
 function onTransportStatus(s){
   state.conn.set(s);
   if (s.state === 'idle') {
     // Fully torn down (user-initiated disconnect path).
-    client = null; transport = null;
+    client = null; transport = null; legacy = null;
     clearSessionState();
     state.reconnecting.set(false);
   } else if (s.state === 'closed') {
     if (userInitiatedDisconnect || !state.autoReconnect.get() || !transport) {
       // No reconnect: clear session, drop handles.
-      client = null; transport = null;
+      client = null; transport = null; legacy = null;
       clearSessionState();
       state.reconnecting.set(false);
     } else {
@@ -816,6 +1288,17 @@ async function afterConnect(){
       state.activeNsTab.set(schema.namespaces[0].id);
     }
   } catch (e) { console.error('getSchema:', e); showToast('Failed to fetch schema: ' + e.message, 'err'); }
+  // Probe whether the device responds to legacy (rnodeconf-style) KISS queries.
+  // CMD_BOARD is a cheap one-byte query: returns 1 byte board model. In TNC
+  // mode the device speaks RNS log over KISS but doesn't service these legacy
+  // commands — the probe times out and we hide the Node Config tab.
+  if (legacy) {
+    legacy.query(CMD_BOARD, new Uint8Array([0x00]), 1500)
+      .then(() => state.legacySupported.set(true))
+      .catch(() => state.legacySupported.set(false));
+  } else {
+    state.legacySupported.set(false);
+  }
 }
 
 async function doDisconnect(){
@@ -839,6 +1322,15 @@ async function startReconnect(){
   state.nsServerErrors.set({});
   // Firmware draft cleared by reboot (the new boot starts fresh).
   state.firmwareHasDraft.set(false);
+  // Node Config side: drop cached reads (device may have rebooted), keep the
+  // selected sub-tab so the user lands back where they were.
+  state.nodeCfgState.set({});
+  state.nodeCfgLoaded.set({});
+  state.nodeCfgHasDraft.set(false);
+  state.nodeCfgEeprom.set(null);
+  state.nodeCfgCfgSector.set(null);
+  state.nodeCfgDeviceInfo.set(null);
+  state.nodeCfgNeedsReboot.set(false);
   const deadline = Date.now() + 30000;
   let delay = 150;
   while (myToken === reconnectToken && Date.now() < deadline && !userInitiatedDisconnect) {
@@ -855,6 +1347,7 @@ async function startReconnect(){
         // Serial/BLE reuse the same client instance — clear stale waiters and
         // re-sync the decoder. WS gets a fresh client above, so this is skipped.
         if (client && client.resetSession) client.resetSession();
+        if (legacy && legacy.resetSession) legacy.resetSession();
       }
       if (myToken !== reconnectToken) return;  // cancelled mid-flight
 
@@ -901,7 +1394,7 @@ async function startReconnect(){
     showToast('Auto-reconnect gave up after 30 seconds', 'warn');
   }
   // Treat as fully disconnected.
-  client = null; transport = null;
+  client = null; transport = null; legacy = null;
   clearSessionState();
   state.conn.set({ state: 'idle' });
 }
@@ -937,31 +1430,47 @@ function valuesEqual(a, b){
     for (let i = 0; i < a.length; ++i) if (a[i] !== b[i]) return false;
     return true;
   }
+  // BytesList: array of Uint8Array. Element-wise equality.
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; ++i) if (!valuesEqual(a[i], b[i])) return false;
+    return true;
+  }
   if (typeof a === 'bigint' || typeof b === 'bigint') return BigInt(a) === BigInt(b);
   return a === b;
 }
-function getEffectiveValue(nsId, field){
-  const s = state.nsState.get()[nsId];
+// Context object describing a config store. The Provisioning ("Transport Config")
+// store and the Node Config store share these helpers but point at different
+// observables. Callers that pass no ctx default to the Provisioning store —
+// keeps existing call sites backwards-compatible.
+const PROV_CTX = { get state(){ return state.nsState; }, get errors(){ return state.nsServerErrors; }, get hasDraft(){ return state.hasDraft; } };
+const _ctxOr = (ctx) => ctx || PROV_CTX;
+
+function getEffectiveValue(nsId, field, ctx){
+  const c = _ctxOr(ctx);
+  const s = c.state.get()[nsId];
   if (!s) return field.default;
   if (field.id in s.draft) return s.draft[field.id];
   if (field.id in s.committed) return s.committed[field.id];
   return field.default;
 }
-function setDraftValue(nsId, field, value){
-  state.nsState.update(s => {
+function setDraftValue(nsId, field, value, ctx){
+  const c = _ctxOr(ctx);
+  c.state.update(s => {
     if (!s[nsId]) s[nsId] = { committed: {}, draft: {} };
     const committed = s[nsId].committed[field.id];
     if (valuesEqual(value, committed)) delete s[nsId].draft[field.id];
     else s[nsId].draft[field.id] = value;
   });
-  recomputeHasDraft();
+  recomputeHasDraft(ctx);
 }
-function recomputeHasDraft(){
-  const s = state.nsState.get();
+function recomputeHasDraft(ctx){
+  const c = _ctxOr(ctx);
+  const s = c.state.get();
   for (const nsId in s) {
-    if (Object.keys(s[nsId].draft || {}).length > 0) { state.hasDraft.set(true); return; }
+    if (Object.keys(s[nsId].draft || {}).length > 0) { c.hasDraft.set(true); return; }
   }
-  state.hasDraft.set(false);
+  c.hasDraft.set(false);
 }
 function validateValue(field, value){
   if (value == null) return null;
@@ -980,11 +1489,21 @@ function validateValue(field, value){
   } else if (field.type === FT.Bytes) {
     const len = value instanceof Uint8Array ? value.length : 0;
     if (field.maxLen != null && len > Number(field.maxLen)) return `max length ${field.maxLen} bytes`;
+  } else if (field.type === FT.BytesList) {
+    if (!Array.isArray(value)) return 'must be a list';
+    const max = field.maxCount != null ? Number(field.maxCount) : 0;
+    if (max > 0 && value.length > max) return `max ${max} entries`;
+    const sz = field.elementSize != null ? Number(field.elementSize) : 0;
+    for (let i = 0; i < value.length; ++i) {
+      const e = value[i];
+      if (!(e instanceof Uint8Array)) return `entry ${i+1}: not bytes`;
+      if (sz > 0 && e.length !== sz) return `entry ${i+1}: must be exactly ${sz} bytes (got ${e.length})`;
+    }
   }
   return null;
 }
-function nsDraftCount(nsId){
-  const s = state.nsState.get()[nsId];
+function nsDraftCount(nsId, ctx){
+  const s = _ctxOr(ctx).state.get()[nsId];
   return s ? Object.keys(s.draft || {}).length : 0;
 }
 
@@ -1175,7 +1694,7 @@ function buildTopBar(){
   connectBtn.onclick = doConnect;
   disconnectBtn.onclick = doDisconnect;
 
-  root.appendChild(el('strong', null, 'microReticulum'));
+  root.appendChild(el('strong', null, 'RNode Console'));
   root.appendChild(el('span', { class: 'sep' }));
   root.appendChild(el('label', null, 'Transport: '));
   root.appendChild(sel);
@@ -1226,10 +1745,11 @@ slots.topbar.appendChild(buildTopBar());
 // ----- Tab bar (in place) -----
 function buildTabBar(){
   const root = el('div', { class: 'tabbar' });
+  // Info merged into Node Status; that's now the always-available landing tab.
   const tabs = [
-    { id: 'info', label: 'Info' },
     { id: 'status', label: 'Node Status' },
-    { id: 'config', label: 'Configuration' },
+    { id: 'nodeconfig', label: 'Node Config' },
+    { id: 'config', label: 'Transport Config' },
     { id: 'logs', label: 'Logs' },
   ];
   const buttons = {};
@@ -1238,81 +1758,97 @@ function buildTabBar(){
     buttons[t.id] = b;
     root.appendChild(b);
   }
+  // Transport Config is only meaningful when microReticulum is part of the
+  // build — detected by the presence of any namespace with id < 100 (RNS
+  // reserves 1-99 for built-in namespaces per RNode_Firmware.ino comments;
+  // 100+ is for app namespaces like 'general' which exists even with HAS_RNS
+  // undefined). Legacy firmware that doesn't speak Provisioning at all leaves
+  // state.schema = null, in which case we also hide the tab.
+  function transportConfigVisible(){
+    const schema = state.schema.get();
+    if (!schema || !Array.isArray(schema.namespaces)) return false;
+    return schema.namespaces.some(n => Number(n.id) < 100);
+  }
   function update(){
     const active = state.activeTab.get();
     // Treat "reconnecting" as not-yet-connected so per-tab actions don't fire
     // against a transport that's still being re-established.
     const connected = state.conn.get().state === 'connected' && !state.reconnecting.get();
+    const showCfg = transportConfigVisible();
+    // legacySupported starts null (not yet probed) — show Node Config until we
+    // confirm the device doesn't respond, to avoid hiding it before the probe
+    // completes on slower devices.
+    const showNcfg = state.legacySupported.get() !== false;
     for (const t of tabs) {
       const b = buttons[t.id];
       b.classList.toggle('active', active === t.id);
-      b.disabled = !connected && t.id !== 'info';
+      b.disabled = !connected && t.id !== 'status';
+      if (t.id === 'config') b.style.display = showCfg ? '' : 'none';
+      if (t.id === 'nodeconfig') b.style.display = showNcfg ? '' : 'none';
     }
+    // Redirect away from any hidden tab so the user isn't on an invisible body.
+    if (!showCfg && active === 'config') state.activeTab.set('status');
+    if (!showNcfg && active === 'nodeconfig') state.activeTab.set('status');
   }
   update();
   state.activeTab.subscribe(update);
   state.conn.subscribe(update);
   state.reconnecting.subscribe(update);
+  state.schema.subscribe(update);
+  state.legacySupported.subscribe(update);
   return root;
 }
 slots.tabbar.appendChild(buildTabBar());
 
 // ----- Tab bodies -----
 
-function buildInfoTab(){
+function buildStatusTab(){
   const root = el('div', { class: 'tab-body' });
+  function row(label, val, unit) {
+    if (val == null) return null;
+    return el('tr', null, [el('td', null, label), el('td', null, val + (unit ? ' ' + unit : ''))]);
+  }
+  function section(title, rows) {
+    const r = rows.filter(x => x != null);
+    if (r.length === 0) return null;
+    return el('div', { class: 'status-sec' }, [el('h3', null, title), el('table', { class: 'kv' }, r)]);
+  }
   function update(){
     root.innerHTML = '';
     const conn = state.conn.get();
     const connected = conn.state === 'connected';
     const info = state.info.get();
-    // Drive the banner directly from the firmware's needsReboot flag — that way
-    // it disappears automatically when the device boots back up (where the flag
-    // resets to false in Manager's constructor).
-    if (info && info.needsReboot) {
+    // Reboot banner: shown when EITHER the Provisioning subsystem has staged
+    // reboot-required changes (info.needsReboot) OR a Node Config save touched
+    // a reboot-required section (state.nodeCfgNeedsReboot). Cleared on reboot.
+    if ((info && info.needsReboot) || state.nodeCfgNeedsReboot.get()) {
       root.appendChild(el('div', { class: 'notice', style: { display: 'flex', alignItems: 'center', gap: '12px' } }, [
         el('span', { style: { flex: '1' } }, 'Reboot recommended to apply committed changes.'),
         el('button', { class: 'primary', onclick: reboot, disabled: !connected }, 'Reboot now'),
       ]));
     }
-    if (!info) {
-      root.appendChild(el('em', null, connected ? 'Loading…' : 'Select a transport and click Connect.'));
+    if (!connected) {
+      root.appendChild(el('em', null, 'Select a transport and click Connect.'));
       return;
     }
-    root.appendChild(el('h2', null, 'Device info'));
-    root.appendChild(el('table', { class: 'kv' }, [
-      el('tr', null, [el('td', null, 'Firmware'), el('td', null, String(info.firmwareVersion ?? ''))]),
-      el('tr', null, [el('td', null, 'Schema version'), el('td', null, String(info.schemaVersion ?? ''))]),
-      el('tr', null, [el('td', null, 'Needs reboot'), el('td', null, info.needsReboot ? 'yes' : 'no')]),
-    ]));
-    root.appendChild(el('h3', null, 'Danger zone'));
-    root.appendChild(el('div', { style: { display: 'flex', gap: '8px' } }, [
-      el('button', { onclick: reboot, disabled: !connected }, 'Reboot'),
-      el('button', { onclick: factoryReset, disabled: !connected }, 'Factory reset'),
-    ]));
-  }
-  update();
-  bodyCleanups.push(state.info.subscribe(update));
-  bodyCleanups.push(state.conn.subscribe(update));
-  return root;
-}
 
-function buildStatusTab(){
-  const root = el('div', { class: 'tab-body' });
-  function update(){
-    root.innerHTML = '';
+    // ---- Device section (merged from former Info tab) ----
+    const ncDev = state.nodeCfgDeviceInfo.get();
+    const devRows = [
+      info ? row('Firmware', String(info.firmwareVersion ?? '')) : null,
+      info ? row('Schema version', String(info.schemaVersion ?? '')) : null,
+      ncDev && ncDev.board    != null ? row('Board',    `${BOARD_NAMES[ncDev.board] || 'Unknown'} (0x${ncDev.board.toString(16).padStart(2,'0')})`) : null,
+      ncDev && ncDev.platform != null ? row('Platform', `${PLATFORM_NAMES[ncDev.platform] || 'Unknown'} (0x${ncDev.platform.toString(16).padStart(2,'0')})`) : null,
+      ncDev && ncDev.mcu      != null ? row('MCU',      `${MCU_NAMES[ncDev.mcu] || 'Unknown'} (0x${ncDev.mcu.toString(16).padStart(2,'0')})`) : null,
+      info ? row('Needs reboot', info.needsReboot ? 'yes' : 'no') : null,
+    ];
+    const devSection = section('Device', devRows);
+    if (devSection) root.appendChild(devSection);
+
+    // ---- Live status sections (driven by CMD_STAT_*) ----
     const s = state.nodeStatus.get();
-    function row(label, val, unit) {
-      if (val == null) return null;
-      return el('tr', null, [el('td', null, label), el('td', null, val + (unit ? ' ' + unit : ''))]);
-    }
-    function section(title, rows) {
-      const r = rows.filter(x => x != null);
-      if (r.length === 0) return null;
-      return el('div', { class: 'status-sec' }, [el('h3', null, title), el('table', { class: 'kv' }, r)]);
-    }
     const batStates = ['unknown','discharging','charging','charged'];
-    const sections = [
+    const liveSections = [
       section('Radio link', [
         row('Last RSSI', s.lastRssi, 'dBm'),
         row('Last SNR', s.lastSnr != null ? s.lastSnr.toFixed(2) : null, 'dB'),
@@ -1341,14 +1877,30 @@ function buildStatusTab(){
         row('Temperature', s.temperatureC, '°C'),
       ]),
     ].filter(x => x != null);
-    if (sections.length === 0) {
+    for (const sec of liveSections) root.appendChild(sec);
+
+    if (!devSection && liveSections.length === 0) {
       root.appendChild(el('em', null, 'Waiting for status frames…'));
-    } else {
-      for (const sec of sections) root.appendChild(sec);
     }
+
+    // ---- Danger zone (always at the bottom when connected) ----
+    root.appendChild(el('h3', null, 'Danger zone'));
+    root.appendChild(el('div', { style: { display: 'flex', gap: '8px' } }, [
+      el('button', { onclick: reboot, disabled: !connected }, 'Reboot'),
+      el('button', { onclick: factoryReset, disabled: !connected }, 'Factory reset'),
+    ]));
   }
   update();
   bodyCleanups.push(state.nodeStatus.subscribe(update));
+  bodyCleanups.push(state.info.subscribe(update));
+  bodyCleanups.push(state.conn.subscribe(update));
+  bodyCleanups.push(state.nodeCfgDeviceInfo.subscribe(update));
+  bodyCleanups.push(state.nodeCfgNeedsReboot.subscribe(update));
+  // Auto-fetch device info on first activation when connected so board/platform/MCU
+  // appear without the user having to visit a separate sub-tab.
+  if (state.conn.get().state === 'connected' && !state.nodeCfgDeviceInfo.get() && legacy) {
+    legacy.readDeviceInfo().then(d => state.nodeCfgDeviceInfo.set(d)).catch(e => console.error('Node Status device info fetch:', e));
+  }
   return root;
 }
 
@@ -1358,13 +1910,39 @@ function formatFieldValueForInput(field, value){
     if (value instanceof Uint8Array) return Array.from(value).map(b => b.toString(16).padStart(2, '0')).join('');
     return '';
   }
+  if (field.type === FT.BytesList) {
+    if (!Array.isArray(value)) return '';
+    return value.map(e => e instanceof Uint8Array
+      ? Array.from(e).map(b => b.toString(16).padStart(2, '0')).join('')
+      : '').join('\n');
+  }
   return String(value);
 }
 
-function buildFieldRow(nsId, f){
+// Parse a multi-line hex string into an array of Uint8Array. One entry per
+// non-blank line; whitespace within a line is stripped (so users can paste
+// hex with separators). Lines with odd length are rejected by returning null
+// so the caller can hold off updating the draft until the user finishes typing.
+function parseBytesListHex(text){
+  if (text == null || text === '') return [];
+  const out = [];
+  const lines = String(text).split(/\r?\n/);
+  for (const raw of lines) {
+    const h = raw.replace(/[^0-9a-fA-F]/g, '');
+    if (h.length === 0) continue;
+    if (h.length % 2 !== 0) return null;  // not finished typing this line
+    const u = new Uint8Array(h.length / 2);
+    for (let i = 0; i < u.length; ++i) u[i] = parseInt(h.substr(i*2, 2), 16);
+    out.push(u);
+  }
+  return out;
+}
+
+function buildFieldRow(nsId, f, ctx){
+  const c = _ctxOr(ctx);
   const row = el('div', { class: 'field' });
   const labelEl = el('label');
-  const labelText = el('span', null, f.name);
+  const labelText = el('span', null, f.label || f.name);
   const badges = el('span', { style: { display: 'inline-flex', gap: '4px' } });
   labelEl.appendChild(labelText);
   labelEl.appendChild(badges);
@@ -1382,7 +1960,7 @@ function buildFieldRow(nsId, f){
   let input;
   if (f.type === FT.Bool) {
     input = el('input', { type: 'checkbox', disabled: ro });
-    input.addEventListener('input', () => setDraftValue(nsId, f, input.checked));
+    input.addEventListener('input', () => setDraftValue(nsId, f, input.checked, c));
   } else if (f.type === FT.Int) {
     input = el('input', {
       type: 'number', step: '1', disabled: ro,
@@ -1391,7 +1969,7 @@ function buildFieldRow(nsId, f){
     });
     input.addEventListener('input', () => {
       const v = input.value === '' ? null : parseInt(input.value, 10);
-      setDraftValue(nsId, f, v);
+      setDraftValue(nsId, f, v, c);
     });
   } else if (f.type === FT.Float) {
     input = el('input', {
@@ -1401,7 +1979,7 @@ function buildFieldRow(nsId, f){
     });
     input.addEventListener('input', () => {
       const v = input.value === '' ? null : parseFloat(input.value);
-      setDraftValue(nsId, f, v);
+      setDraftValue(nsId, f, v, c);
     });
   } else if (f.type === FT.String) {
     const big = f.maxLen && Number(f.maxLen) > 80;
@@ -1410,7 +1988,7 @@ function buildFieldRow(nsId, f){
     } else {
       input = el('input', { type: secret ? 'password' : 'text', maxlength: f.maxLen ? Number(f.maxLen) : undefined, disabled: ro });
     }
-    input.addEventListener('input', () => setDraftValue(nsId, f, input.value));
+    input.addEventListener('input', () => setDraftValue(nsId, f, input.value, c));
   } else if (f.type === FT.Enum) {
     input = el('select', { disabled: ro });
     if (Array.isArray(f.enumValues)) {
@@ -1420,7 +1998,7 @@ function buildFieldRow(nsId, f){
         input.appendChild(el('option', { value: String(ev) }, labels && labels[i] ? labels[i] : String(ev)));
       }
     }
-    input.addEventListener('change', () => setDraftValue(nsId, f, parseInt(input.value, 10)));
+    input.addEventListener('change', () => setDraftValue(nsId, f, parseInt(input.value, 10), c));
   } else if (f.type === FT.Bytes) {
     input = el('input', { type: 'text', placeholder: f.maxLen ? `hex (max ${f.maxLen} bytes)` : 'hex', disabled: ro });
     input.addEventListener('input', () => {
@@ -1428,16 +2006,43 @@ function buildFieldRow(nsId, f){
       if (t.length % 2 !== 0) return;
       const u8 = new Uint8Array(t.length / 2);
       for (let i = 0; i < u8.length; ++i) u8[i] = parseInt(t.substr(i * 2, 2), 16);
-      setDraftValue(nsId, f, u8);
+      setDraftValue(nsId, f, u8, c);
+    });
+  } else if (f.type === FT.BytesList) {
+    // One hex entry per line. elementSize fixes per-entry length; maxCount
+    // limits total entries. Both are zero/null when unconstrained.
+    const sz = f.elementSize != null ? Number(f.elementSize) : 0;
+    const max = f.maxCount != null ? Number(f.maxCount) : 0;
+    const hints = [];
+    if (sz > 0) hints.push(`${sz} bytes / ${sz*2} hex chars per entry`);
+    if (max > 0) hints.push(`up to ${max} entries`);
+    hints.push('one per line');
+    input = el('textarea', { rows: '5', disabled: ro, placeholder: 'hex (' + hints.join(', ') + ')',
+      style: { fontFamily: 'ui-monospace, Menlo, monospace', minWidth: '360px' } });
+    input.addEventListener('input', () => {
+      const list = parseBytesListHex(input.value);
+      // null = an in-progress odd-length line. Wait for the user to finish
+      // before mutating the draft — prevents lossy round-trip while typing.
+      if (list == null) return;
+      setDraftValue(nsId, f, list, c);
     });
   } else {
     input = el('span', null, '(unknown type)');
   }
-  inputHost.appendChild(input);
+  // Optional unit suffix (e.g. "Hz", "dBm") rendered next to the input.
+  if (f.unit) {
+    inputHost.style.display = 'flex';
+    inputHost.style.alignItems = 'center';
+    inputHost.style.gap = '6px';
+    inputHost.appendChild(input);
+    inputHost.appendChild(el('span', { class: 'unit', style: { color: 'var(--muted)' } }, f.unit));
+  } else {
+    inputHost.appendChild(input);
+  }
 
   function update(){
-    const nsObj = state.nsState.get()[nsId] || { committed: {}, draft: {} };
-    const value = getEffectiveValue(nsId, f);
+    const nsObj = c.state.get()[nsId] || { committed: {}, draft: {} };
+    const value = getEffectiveValue(nsId, f, c);
     const isDraft = f.id in nsObj.draft;
     // Sync input value ONLY if it's not currently focused — preserves cursor/selection while typing.
     if (document.activeElement !== input) {
@@ -1461,7 +2066,7 @@ function buildFieldRow(nsId, f){
     // Untouched fields may carry firmware "sentinel" defaults (e.g. radio.frequency=0)
     // that fall outside the advertised min/max range; the firmware ignores them as
     // "unconfigured", so we should not flag them as user-facing errors.
-    const serverErr = (state.nsServerErrors.get()[nsId] || {})[f.id];
+    const serverErr = c.errors && (c.errors.get()[nsId] || {})[f.id];
     const valErr = (isDraft && validateValue(f, value)) || null;
     const msg = serverErr ? 'server: ' + serverErr : valErr;
     errEl.textContent = msg || '';
@@ -1474,9 +2079,9 @@ function buildFieldRow(nsId, f){
     // hasDraftError: only count validation errors for drafted fields toward
     // the Save-button gate, for the same reason as the display above.
     hasDraftError: () => {
-      const draft = (state.nsState.get()[nsId] || {}).draft || {};
+      const draft = (c.state.get()[nsId] || {}).draft || {};
       if (!(f.id in draft)) return false;
-      return !!validateValue(f, getEffectiveValue(nsId, f));
+      return !!validateValue(f, getEffectiveValue(nsId, f, c));
     },
   };
 }
@@ -1600,6 +2205,611 @@ function buildConfigTab(){
   return root;
 }
 
+// ===== Node Config tab =====
+// Master/detail with a statically-defined sidenav (sections from
+// NODE_CONFIG_SCHEMA). Each section is either standard schema-driven (Radio,
+// WiFi, Display) or custom (Device Info, Mode, Bluetooth, EEPROM).
+
+function ncfgDraftCount(sectionId){
+  const s = state.nodeCfgState.get()[sectionId];
+  return s ? Object.keys(s.draft || {}).length : 0;
+}
+
+async function ncfgFetchSection(sectionId){
+  if (!legacy) return;
+  if (state.nodeCfgLoaded.get()[sectionId] || state.nodeCfgLoading.get()[sectionId]) return;
+  state.nodeCfgLoading.update(s => { s[sectionId] = true; });
+  try {
+    const committed = await legacy.readSection(sectionId);
+    state.nodeCfgState.update(s => { s[sectionId] = { committed, draft: {} }; });
+    state.nodeCfgLoaded.update(s => { s[sectionId] = true; });
+  } catch (e) {
+    console.error('Node Config read failed:', e);
+    showToast('Failed to read ' + sectionId + ': ' + e.message, 'err');
+  } finally {
+    state.nodeCfgLoading.update(s => { delete s[sectionId]; });
+  }
+}
+
+async function ncfgSaveSection(sectionId){
+  if (!legacy) return;
+  const sec = NODE_CONFIG_SCHEMA[sectionId];
+  if (!sec) return;
+  const obj = state.nodeCfgState.get()[sectionId];
+  if (!obj || Object.keys(obj.draft).length === 0) return;
+  try {
+    await legacy.writeSection(sectionId, obj.draft);
+    // Treat the draft as the new committed state. (We don't re-read because many
+    // legacy CMDs are write-only — no read counterpart on the firmware side.)
+    state.nodeCfgState.update(s => {
+      const committed = { ...obj.committed, ...obj.draft };
+      s[sectionId] = { committed, draft: {} };
+    });
+    recomputeHasDraft(NCFG_CTX);
+    const label = sec.label || sectionId;
+    showToast(`Saved ${label} settings`, 'ok');
+    // If any saveTrailer op was CMD_CONF_SAVE, the radio config was persisted —
+    // remind the user that the next boot enters TNC mode.
+    const trailerOps = sec.saveTrailer
+      ? (Array.isArray(sec.saveTrailer) ? sec.saveTrailer : [sec.saveTrailer])
+      : [];
+    if (trailerOps.some(op => op.cmd === CMD_CONF_SAVE)) {
+      showToast('Radio config persisted to EEPROM (device will boot in TNC mode)', 'warn');
+    }
+    // Hint the user to reboot when the saved section's changes take effect at
+    // boot time (radio, wifi). Reflected in the Node Status reboot banner.
+    if (sec.requiresReboot) state.nodeCfgNeedsReboot.set(true);
+  } catch (e) {
+    showToast('Save failed: ' + e.message, 'err');
+  }
+}
+
+function ncfgRevertSection(sectionId){
+  state.nodeCfgState.update(s => {
+    if (s[sectionId]) s[sectionId].draft = {};
+  });
+  recomputeHasDraft(NCFG_CTX);
+}
+
+function buildNcfgSchemaPanel(sectionId){
+  const sec = NODE_CONFIG_SCHEMA[sectionId];
+  const wrap = el('div', { class: 'ncfg-section' });
+  wrap.appendChild(el('h2', null, sec.label));
+
+  const toolbar = el('div', { class: 'ns-toolbar' });
+  const saveBtn = el('button', null, 'Save ' + sec.label);
+  const revertBtn = el('button', null, 'Revert');
+  const refreshBtn = el('button', null, 'Refresh');
+  saveBtn.onclick = () => ncfgSaveSection(sectionId);
+  revertBtn.onclick = () => ncfgRevertSection(sectionId);
+  refreshBtn.onclick = () => {
+    state.nodeCfgLoaded.update(s => { delete s[sectionId]; });
+    ncfgFetchSection(sectionId);
+  };
+  toolbar.appendChild(saveBtn);
+  toolbar.appendChild(revertBtn);
+  toolbar.appendChild(refreshBtn);
+  wrap.appendChild(toolbar);
+
+  if (sec.saveTrailerNote) {
+    wrap.appendChild(el('div', { class: 'ncfg-trailer' }, sec.saveTrailerNote));
+  }
+
+  const fieldHandles = [];
+  for (const f of sec.fields) {
+    const h = buildFieldRow(sectionId, f, NCFG_CTX);
+    wrap.appendChild(h.row);
+    fieldHandles.push(h);
+  }
+
+  function updateButtons(){
+    const hasDraft = ncfgDraftCount(sectionId) > 0;
+    const anyErr = fieldHandles.some(h => h.hasDraftError());
+    saveBtn.disabled = !hasDraft || anyErr;
+    saveBtn.classList.toggle('primary', hasDraft && !anyErr);
+    revertBtn.disabled = !hasDraft;
+  }
+  function updateAll(){
+    for (const h of fieldHandles) h.update();
+    updateButtons();
+  }
+  updateAll();
+  const cleanups = [
+    state.nodeCfgState.subscribe(updateAll),
+  ];
+  return { node: wrap, cleanups };
+}
+
+function buildNcfgDeviceInfoPanel(){
+  const wrap = el('div', { class: 'ncfg-section' });
+  wrap.appendChild(el('h2', null, 'Device Info'));
+  const refreshBtn = el('button', null, 'Refresh');
+  refreshBtn.onclick = async () => {
+    if (!legacy) return;
+    refreshBtn.disabled = true;
+    refreshBtn.textContent = 'Reading…';
+    try {
+      const info = await legacy.readDeviceInfo();
+      state.nodeCfgDeviceInfo.set(info);
+    } catch (e) {
+      showToast('Device info read failed: ' + e.message, 'err');
+    } finally {
+      refreshBtn.disabled = false;
+      refreshBtn.textContent = 'Refresh';
+    }
+  };
+  const toolbar = el('div', { class: 'ns-toolbar' }, [refreshBtn]);
+  wrap.appendChild(toolbar);
+
+  const table = el('table', { class: 'kv-info' });
+  wrap.appendChild(table);
+
+  function hexOf(u8){
+    if (!u8) return '';
+    return Array.from(u8).map(b => b.toString(16).padStart(2,'0')).join('');
+  }
+  function row(label, val, cls){
+    const td = el('td', cls ? { class: cls } : null, val == null ? '—' : val);
+    return el('tr', null, [el('td', null, label), td]);
+  }
+  function update(){
+    table.innerHTML = '';
+    const info = state.nodeCfgDeviceInfo.get();
+    if (!info) {
+      table.appendChild(el('tr', null, [el('td', null, ''), el('td', null,
+        el('em', null, 'Click Refresh to read device information.'))]));
+      return;
+    }
+    const boardLbl = info.board != null ? `${BOARD_NAMES[info.board] || 'Unknown'} (0x${info.board.toString(16).padStart(2,'0')})` : null;
+    const platLbl = info.platform != null ? `${PLATFORM_NAMES[info.platform] || 'Unknown'} (0x${info.platform.toString(16).padStart(2,'0')})` : null;
+    const mcuLbl = info.mcu != null ? `${MCU_NAMES[info.mcu] || 'Unknown'} (0x${info.mcu.toString(16).padStart(2,'0')})` : null;
+    table.appendChild(row('Board', boardLbl));
+    table.appendChild(row('Platform', platLbl));
+    table.appendChild(row('MCU', mcuLbl));
+    table.appendChild(row('Firmware version', info.fwVersion));
+    if (info.devHash) table.appendChild(row('Device hash', hexOf(info.devHash), 'hash'));
+    if (info.fwHashTarget) table.appendChild(row('FW hash (target)', hexOf(info.fwHashTarget), 'hash'));
+    if (info.fwHashActual) table.appendChild(row('FW hash (actual)', hexOf(info.fwHashActual), 'hash'));
+    if (info.bootloaderHash) table.appendChild(row('Bootloader hash', hexOf(info.bootloaderHash), 'hash'));
+    if (info.partitionHash) table.appendChild(row('Partition hash', hexOf(info.partitionHash), 'hash'));
+  }
+  update();
+  const cleanups = [ state.nodeCfgDeviceInfo.subscribe(update) ];
+  return { node: wrap, cleanups };
+}
+
+function buildNcfgRadioPanel(){
+  // Combined Mode + Radio panel. Mode (HOST/TNC) selector sits above the
+  // radio fields. Radio config only persists for TNC mode (the HOST flow
+  // re-issues radio params on every boot via individual KISS opcodes, so the
+  // EEPROM-stored values are unused). Field rows are disabled when HOST is
+  // selected — but kept rendered so the user sees what would be persisted.
+  const sec = NODE_CONFIG_SCHEMA.radio;
+  const wrap = el('div', { class: 'ncfg-section' });
+  wrap.appendChild(el('h2', null, 'Radio'));
+
+  // Persisted mode (from EEPROM byte 0xA7). Source of truth for the Mode
+  // selector's initial state. Null until EEPROM has been read.
+  const persistedMode = () => {
+    const ee = state.nodeCfgEeprom.get();
+    if (!ee || ee.length <= 0xA7) return null;
+    return ee[0xA7] === CONF_OK_BYTE ? 'tnc' : 'host';
+  };
+  let targetMode = persistedMode() || 'host';   // what the user has selected
+
+  // --- Mode selector ---
+  const modeRow = el('div', { class: 'mode-current', style: { display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' } });
+  const modeLabel = el('span');
+  const modeSelect = el('select');
+  modeSelect.appendChild(el('option', { value: 'host' }, 'HOST (KISS radio modem)'));
+  modeSelect.appendChild(el('option', { value: 'tnc' },  'TNC (boot into embedded RNS)'));
+  modeRow.appendChild(el('strong', null, 'Boot mode: '));
+  modeRow.appendChild(modeSelect);
+  modeRow.appendChild(modeLabel);
+  wrap.appendChild(modeRow);
+
+  wrap.appendChild(el('p', { style: { color: 'var(--muted)', margin: '8px 0 14px' } }, [
+    'In ', el('strong', null, 'HOST'), ' mode the device acts as a KISS radio modem driven by this connection — radio settings are sent from the host at runtime and the EEPROM-stored values below are unused. In ',
+    el('strong', null, 'TNC'), ' mode the device boots its embedded Reticulum stack and uses the radio config persisted below; the serial port carries RNS log output and the device stops responding to legacy KISS commands.'
+  ]));
+
+  // --- Toolbar ---
+  const toolbar = el('div', { class: 'ns-toolbar' });
+  const saveBtn = el('button', null, 'Save Radio');
+  const revertBtn = el('button', null, 'Revert');
+  const refreshBtn = el('button', null, 'Refresh');
+  toolbar.appendChild(saveBtn);
+  toolbar.appendChild(revertBtn);
+  toolbar.appendChild(refreshBtn);
+  wrap.appendChild(toolbar);
+
+  // --- Field rows (reused via buildFieldRow) ---
+  const fieldHandles = [];
+  const fieldRows = el('div');
+  for (const f of sec.fields) {
+    const h = buildFieldRow('radio', f, NCFG_CTX);
+    fieldHandles.push(h);
+    fieldRows.appendChild(h.row);
+  }
+  wrap.appendChild(fieldRows);
+
+  // Find each input element so we can enable/disable based on target mode.
+  function setRadioFieldsEnabled(enabled){
+    for (const h of fieldHandles) {
+      const inputs = [];
+      // Walk the row to collect inputs/selects/textareas (we built them above).
+      const collect = (n) => {
+        if (!n || !n._children) return;
+        for (const c of n._children) {
+          if (c && (c.tagName === 'input' || c.tagName === 'select' || c.tagName === 'textarea')) inputs.push(c);
+          collect(c);
+        }
+      };
+      collect(h.row);
+      for (const inp of inputs) inp.disabled = !enabled;
+    }
+    fieldRows.style.opacity = enabled ? '' : '0.55';
+  }
+
+  // --- Auto-read EEPROM so we know the persisted mode ---
+  if (!state.nodeCfgEeprom.get() && legacy) {
+    legacy.readEeprom().then(u => state.nodeCfgEeprom.set(u)).catch(e => {
+      console.error('Radio panel EEPROM read failed:', e);
+    });
+  }
+  // --- Auto-fetch radio field values (custom panels skip the default
+  //     auto-fetch in mountSection) ---
+  if (!state.nodeCfgLoaded.get()['radio']) ncfgFetchSection('radio');
+
+  // --- React to changes ---
+  function syncFromState(){
+    const pm = persistedMode();
+    modeLabel.textContent = pm == null ? '(reading EEPROM…)'
+      : pm === targetMode ? `currently ${pm.toUpperCase()}`
+      : `currently ${pm.toUpperCase()} → will switch to ${targetMode.toUpperCase()} on Save`;
+    // Set select value to targetMode without firing 'change' (avoid loop)
+    if (modeSelect.value !== targetMode) modeSelect.value = targetMode;
+    // Disable radio inputs when target is HOST.
+    setRadioFieldsEnabled(targetMode === 'tnc');
+    updateButtons();
+  }
+  function updateButtons(){
+    const nsObj = state.nodeCfgState.get()['radio'] || { committed: {}, draft: {} };
+    const hasFieldDraft = Object.keys(nsObj.draft).length > 0;
+    const pm = persistedMode();
+    const modeChanged = (pm != null) && (pm !== targetMode);
+    // Save is meaningful when:
+    //   - target=TNC AND we need to (re)write fields/conf (mode changed OR drafts)
+    //   - target=HOST AND we need to clear conf (mode changed from TNC)
+    const anyErr = fieldHandles.some(h => h.hasDraftError());
+    const canSave = !anyErr && ((targetMode === 'tnc' && (modeChanged || hasFieldDraft))
+                                || (targetMode === 'host' && modeChanged));
+    saveBtn.disabled = !canSave;
+    saveBtn.classList.toggle('primary', canSave);
+    revertBtn.disabled = !hasFieldDraft && !modeChanged;
+  }
+  function updateFields(){
+    for (const h of fieldHandles) h.update();
+    updateButtons();
+  }
+  syncFromState();
+  updateFields();
+
+  modeSelect.addEventListener('change', () => { targetMode = modeSelect.value; syncFromState(); });
+  saveBtn.onclick = async () => {
+    if (!legacy) return;
+    const pm = persistedMode();
+    try {
+      if (targetMode === 'tnc') {
+        // Confirm with the user — TNC mode means the device stops responding
+        // to KISS at the next boot.
+        if (pm !== 'tnc') {
+          if (!confirm('Switch to TNC mode? The device will boot into embedded RNS at the next reset and stop responding to KISS on this connection.')) return;
+        }
+        // Persist any drafted radio fields, then bring the radio online, then CMD_CONF_SAVE.
+        const nsObj = state.nodeCfgState.get()['radio'] || { committed:{}, draft:{} };
+        if (Object.keys(nsObj.draft).length > 0) {
+          await legacy.writeSection('radio', nsObj.draft);
+          // Treat drafts as committed.
+          state.nodeCfgState.update(s => {
+            const obj = s['radio'] || { committed: {}, draft: {} };
+            s['radio'] = { committed: { ...obj.committed, ...obj.draft }, draft: {} };
+          });
+          recomputeHasDraft(NCFG_CTX);
+        } else {
+          // No drafts but mode is changing → still ensure radio online + persist
+          // current lora_* via CMD_CONF_SAVE.
+          await legacy.setMode(true);
+        }
+        state.nodeCfgNeedsReboot.set(true);
+        showToast('Radio config persisted (device will boot in TNC mode)', 'warn');
+      } else {
+        // Target HOST: clear TNC marker. EEPROM radio values stay but ADDR_CONF_OK=0x00.
+        if (!confirm('Switch to HOST mode? Cleared TNC config — device boots into HOST (KISS) at the next reset.')) return;
+        await legacy.setMode(false);
+        state.nodeCfgNeedsReboot.set(true);
+        showToast('TNC config cleared — reboot to apply', 'ok');
+      }
+      // Refresh EEPROM so the persisted-mode indicator updates.
+      try { state.nodeCfgEeprom.set(await legacy.readEeprom()); } catch(_) {}
+    } catch (e) {
+      showToast('Save failed: ' + e.message, 'err');
+    }
+  };
+  revertBtn.onclick = () => {
+    state.nodeCfgState.update(s => { if (s['radio']) s['radio'].draft = {}; });
+    recomputeHasDraft(NCFG_CTX);
+    targetMode = persistedMode() || 'host';
+    syncFromState();
+  };
+  refreshBtn.onclick = () => {
+    state.nodeCfgLoaded.update(s => { delete s['radio']; });
+    ncfgFetchSection('radio');
+    if (legacy) legacy.readEeprom().then(u => state.nodeCfgEeprom.set(u)).catch(()=>{});
+  };
+
+  const cleanups = [
+    state.nodeCfgEeprom.subscribe(() => {
+      // When the EEPROM read lands, default targetMode to what's persisted.
+      const pm = persistedMode();
+      if (pm != null) targetMode = pm;
+      syncFromState();
+    }),
+    state.nodeCfgState.subscribe(updateFields),
+  ];
+  return { node: wrap, cleanups };
+}
+
+function buildNcfgBluetoothPanel(){
+  const wrap = el('div', { class: 'ncfg-section' });
+  wrap.appendChild(el('h2', null, 'Bluetooth'));
+  wrap.appendChild(el('p', { style: { color: 'var(--muted)' } },
+    'During pairing, the PIN appears on the device’s OLED display.'));
+
+  const row = el('div', { class: 'bt-mode-row' });
+  const btnOff = el('button', null, 'Turn Off');
+  const btnOn  = el('button', null, 'Turn On');
+  const btnPair = el('button', null, 'Enter pairing mode');
+  btnOff.onclick = async () => { try { await legacy.setBluetooth(0); showToast('Bluetooth disabled', 'ok'); } catch (e) { showToast(e.message, 'err'); } };
+  btnOn.onclick  = async () => { try { await legacy.setBluetooth(1); showToast('Bluetooth enabled', 'ok'); } catch (e) { showToast(e.message, 'err'); } };
+  btnPair.onclick = async () => { try { await legacy.setBluetooth(2); showToast('Pairing mode active — check device display for PIN', 'ok'); } catch (e) { showToast(e.message, 'err'); } };
+  row.appendChild(btnOff);
+  row.appendChild(btnOn);
+  row.appendChild(btnPair);
+  wrap.appendChild(row);
+
+  const danger = el('div', { class: 'danger-zone' });
+  danger.appendChild(el('h3', null, 'Pairing data'));
+  const unpairBtn = el('button', null, 'Unpair all devices');
+  unpairBtn.onclick = async () => {
+    if (!confirm('Remove all paired Bluetooth devices from this RNode?')) return;
+    try { await legacy.bluetoothUnpair(); showToast('Unpaired all devices', 'ok'); }
+    catch (e) { showToast(e.message, 'err'); }
+  };
+  danger.appendChild(unpairBtn);
+  wrap.appendChild(danger);
+  return { node: wrap, cleanups: [] };
+}
+
+// Address annotations for the EEPROM hex viewer.
+const EEPROM_REGIONS = [
+  { from: 0x00, to: 0x0A, label: 'Identity (product/model/HW/serial/date)' },
+  { from: 0x9B, to: 0x9B, label: 'INFO_LOCK' },
+  { from: 0x9C, to: 0x9C, label: 'SF' },
+  { from: 0x9D, to: 0x9D, label: 'CR' },
+  { from: 0x9E, to: 0x9E, label: 'TXP' },
+  { from: 0x9F, to: 0xA2, label: 'BW (BE32)' },
+  { from: 0xA3, to: 0xA6, label: 'FREQ (BE32)' },
+  { from: 0xA7, to: 0xA7, label: 'CONF_OK' },
+  { from: 0xB0, to: 0xB0, label: 'BT enable' },
+  { from: 0xB1, to: 0xB8, label: 'Display' },
+  { from: 0xB9, to: 0xB9, label: 'IA disable' },
+  { from: 0xBA, to: 0xBB, label: 'WiFi enable / channel' },
+];
+
+function buildHexView(u8, regions){
+  const wrap = el('div', { class: 'hexview' });
+  if (!u8 || u8.length === 0) {
+    wrap.appendChild(el('em', { style: { color: 'var(--muted)' } }, 'No data — click "Read EEPROM" above.'));
+    return wrap;
+  }
+  const marks = new Array(u8.length).fill(false);
+  if (Array.isArray(regions)) {
+    for (const r of regions) for (let i = r.from; i <= r.to && i < u8.length; ++i) marks[i] = true;
+  }
+  for (let off = 0; off < u8.length; off += 16) {
+    const offStr = '0x' + off.toString(16).padStart(4, '0');
+    const bytesEl = el('span', { class: 'hx-bytes' });
+    let asciiStr = '';
+    for (let i = 0; i < 16 && off + i < u8.length; ++i) {
+      const b = u8[off + i];
+      const span = el('span', marks[off + i] ? { class: 'hx-mark' } : null, b.toString(16).padStart(2, '0'));
+      bytesEl.appendChild(span);
+      bytesEl.appendChild(document.createTextNode(' '));
+      asciiStr += (b >= 0x20 && b <= 0x7E) ? String.fromCharCode(b) : '.';
+    }
+    const row = el('div', { class: 'hx-row' }, [
+      el('span', { class: 'hx-off' }, offStr),
+      bytesEl,
+      el('span', { class: 'hx-ascii' }, '|' + asciiStr + '|'),
+    ]);
+    wrap.appendChild(row);
+  }
+  if (regions && regions.length) {
+    const legend = el('div', { class: 'hx-legend' });
+    legend.appendChild(el('span', { class: 'hx-mark' }, ' '));
+    legend.appendChild(document.createTextNode('Highlighted bytes correspond to known config regions.'));
+    wrap.appendChild(legend);
+  }
+  return wrap;
+}
+
+function downloadBlob(name, data){
+  const blob = new Blob([data], { type: 'application/octet-stream' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { try { document.body.removeChild(a); URL.revokeObjectURL(url); } catch(_) {} }, 200);
+}
+
+function buildNcfgEepromPanel(){
+  const wrap = el('div', { class: 'ncfg-section' });
+  wrap.appendChild(el('h2', null, 'EEPROM'));
+
+  const toolbar = el('div', { class: 'eeprom-toolbar' });
+  const readBtn = el('button', null, 'Read EEPROM');
+  const readCfgBtn = el('button', null, 'Read WiFi config sector');
+  const backupBtn = el('button', null, 'Backup EEPROM to file');
+  const status = el('span', { style: { color: 'var(--muted)' } });
+  readBtn.onclick = async () => {
+    if (!legacy) return;
+    readBtn.disabled = true; status.textContent = 'Reading EEPROM…';
+    try { state.nodeCfgEeprom.set(await legacy.readEeprom()); status.textContent = ''; }
+    catch (e) { status.textContent = ''; showToast('EEPROM read failed: ' + e.message, 'err'); }
+    finally { readBtn.disabled = false; }
+  };
+  readCfgBtn.onclick = async () => {
+    if (!legacy) return;
+    readCfgBtn.disabled = true; status.textContent = 'Reading WiFi config sector…';
+    try { state.nodeCfgCfgSector.set(await legacy.readCfgSector()); status.textContent = ''; }
+    catch (e) { status.textContent = ''; showToast('Config sector read failed: ' + e.message, 'err'); }
+    finally { readCfgBtn.disabled = false; }
+  };
+  backupBtn.onclick = async () => {
+    if (!legacy) return;
+    backupBtn.disabled = true; status.textContent = 'Reading EEPROM for backup…';
+    try {
+      const u8 = await legacy.readEeprom();
+      state.nodeCfgEeprom.set(u8);
+      const ts = new Date().toISOString().replace(/[:.]/g,'-').replace(/T/,'_').slice(0,19);
+      downloadBlob(`eeprom-backup-${ts}.bin`, u8);
+      status.textContent = '';
+    } catch (e) { status.textContent = ''; showToast('Backup failed: ' + e.message, 'err'); }
+    finally { backupBtn.disabled = false; }
+  };
+  toolbar.appendChild(readBtn);
+  toolbar.appendChild(readCfgBtn);
+  toolbar.appendChild(backupBtn);
+  toolbar.appendChild(status);
+  wrap.appendChild(toolbar);
+
+  // EEPROM hex view
+  const eeHost = el('div');
+  wrap.appendChild(el('h3', null, 'EEPROM (reserved region, 200 bytes)'));
+  wrap.appendChild(eeHost);
+  // WiFi config sector hex view
+  const cfgHost = el('div');
+  wrap.appendChild(el('h3', null, 'WiFi config sector (256 bytes)'));
+  wrap.appendChild(cfgHost);
+
+  function updateEe(){
+    eeHost.innerHTML = '';
+    eeHost.appendChild(buildHexView(state.nodeCfgEeprom.get(), EEPROM_REGIONS));
+  }
+  function updateCfg(){
+    cfgHost.innerHTML = '';
+    cfgHost.appendChild(buildHexView(state.nodeCfgCfgSector.get(),
+      [ { from: 0x00, to: 0x20, label: 'SSID' },
+        { from: 0x21, to: 0x41, label: 'PSK' },
+        { from: 0x42, to: 0x45, label: 'Static IP' },
+        { from: 0x46, to: 0x49, label: 'Netmask' } ]));
+  }
+  updateEe();
+  updateCfg();
+
+  // Danger zone: EEPROM wipe
+  const danger = el('div', { class: 'danger-zone' });
+  danger.appendChild(el('h3', null, 'Wipe EEPROM'));
+  danger.appendChild(el('p', null,
+    'Unlocks and erases the entire 200-byte reserved EEPROM region. The device will reboot. ' +
+    'Identity bytes (product/model/HW rev/serial) are NOT preserved — you will need to re-provision the device using rnodeconf -f.'));
+  const wipeBtn = el('button', null, 'Wipe EEPROM');
+  wipeBtn.onclick = async () => {
+    if (!legacy) return;
+    const typed = prompt('Type WIPE in uppercase to confirm EEPROM erase:');
+    if (typed !== 'WIPE') { showToast('Wipe cancelled', 'ok'); return; }
+    try {
+      await legacy.wipeEeprom();
+      showToast('EEPROM wipe sent — device is erasing and rebooting', 'warn');
+    } catch (e) { showToast('Wipe failed: ' + e.message, 'err'); }
+  };
+  danger.appendChild(wipeBtn);
+  wrap.appendChild(danger);
+
+  const cleanups = [
+    state.nodeCfgEeprom.subscribe(updateEe),
+    state.nodeCfgCfgSector.subscribe(updateCfg),
+  ];
+  return { node: wrap, cleanups };
+}
+
+function buildNodeConfigTab(){
+  const root = el('div', { class: 'tab-body config-tab no-pad' });
+  const sidenav = el('div', { class: 'sidenav' });
+  const detail = el('div', { class: 'sidenav-detail' });
+  root.appendChild(sidenav);
+  root.appendChild(detail);
+
+  let secCleanups = [];
+  function mountSection(sectionId){
+    for (const fn of secCleanups) { try { fn(); } catch(_) {} }
+    secCleanups = [];
+    detail.innerHTML = '';
+    const sec = NODE_CONFIG_SCHEMA[sectionId];
+    if (!sec) { detail.appendChild(el('em', null, 'Unknown section.')); return; }
+    let h;
+    if (sec.custom === 'device_info')      h = buildNcfgDeviceInfoPanel();
+    else if (sec.custom === 'radio')        h = buildNcfgRadioPanel();
+    else if (sec.custom === 'bluetooth')    h = buildNcfgBluetoothPanel();
+    else if (sec.custom === 'eeprom')       h = buildNcfgEepromPanel();
+    else                                    h = buildNcfgSchemaPanel(sectionId);
+    secCleanups = h.cleanups;
+    detail.appendChild(h.node);
+    // For schema-driven sections, kick off an async read if not loaded yet.
+    if (!sec.custom && !state.nodeCfgLoaded.get()[sectionId]) {
+      ncfgFetchSection(sectionId);
+    }
+  }
+
+  const navButtons = new Map();
+  function rebuildSidenav(){
+    sidenav.innerHTML = '';
+    navButtons.clear();
+    const active = state.activeNodeCfgTab.get();
+    for (const sectionId of Object.keys(NODE_CONFIG_SCHEMA)) {
+      const sec = NODE_CONFIG_SCHEMA[sectionId];
+      const b = el('button', {
+        class: 'sidenav-btn' + (sectionId === active ? ' active' : ''),
+        onclick: () => state.activeNodeCfgTab.set(sectionId),
+      });
+      const lbl = el('span', null, sec.label);
+      const dot = el('span', { class: 'dot', style: { display: ncfgDraftCount(sectionId) > 0 ? '' : 'none' } });
+      b.appendChild(lbl);
+      b.appendChild(dot);
+      sidenav.appendChild(b);
+      navButtons.set(sectionId, { btn: b, dot });
+    }
+  }
+  function updateNavActive(){
+    const active = state.activeNodeCfgTab.get();
+    for (const [sectionId, { btn }] of navButtons) btn.classList.toggle('active', sectionId === active);
+  }
+  function updateNavDots(){
+    for (const [sectionId, { dot }] of navButtons) dot.style.display = ncfgDraftCount(sectionId) > 0 ? '' : 'none';
+  }
+
+  rebuildSidenav();
+  mountSection(state.activeNodeCfgTab.get());
+
+  bodyCleanups.push(state.activeNodeCfgTab.subscribe((id) => { updateNavActive(); mountSection(id); }));
+  bodyCleanups.push(state.nodeCfgState.subscribe(updateNavDots));
+  bodyCleanups.push(() => { for (const fn of secCleanups) try { fn(); } catch(_) {} });
+  return root;
+}
+
 // ----- Logs tab (persistent container) -----
 const logsBuffer = [];
 const logsListeners = new Set();
@@ -1667,8 +2877,8 @@ function buildLogsTab(){
 function updateBody(){
   const t = state.activeTab.get();
   if (bodyKey === t) return;
-  if (t === 'info') setBody('info', buildInfoTab);
-  else if (t === 'status') setBody('status', buildStatusTab);
+  if (t === 'status') setBody('status', buildStatusTab);
+  else if (t === 'nodeconfig') setBody('nodeconfig', buildNodeConfigTab);
   else if (t === 'config') setBody('config', buildConfigTab);
   else if (t === 'logs') setBody('logs', buildLogsTab);
 }
@@ -1712,7 +2922,7 @@ function buildBottomBar(){
 slots.bottombar.appendChild(buildBottomBar());
 
 // ===== Self-tests =====
-function runSelfTests(){
+async function runSelfTests(){
   const out = [];
   const ok = (n, c, info) => out.push((c ? 'OK  ' : 'FAIL') + ' ' + n + (info ? ' [' + info + ']' : ''));
   try {
@@ -1769,7 +2979,134 @@ function runSelfTests(){
     ok('status RSSI single', st.lastRssi === 57 - RSSI_OFFSET);
     decodeStatusFrame(0x24, new Uint8Array([0xFC]), st);
     ok('status SNR signed', Math.abs(st.lastSnr - (-1.0)) < 1e-9);
+    // CMD_STAT_TEMP: firmware adds PMU_TEMP_OFFSET=120; we subtract it back.
+    decodeStatusFrame(0x29, new Uint8Array([171]), st);
+    ok('status TEMP 171→51°C', st.temperatureC === 51);
+    decodeStatusFrame(0x29, new Uint8Array([89]), st);   // PMU_TEMP_MIN-1 sentinel
+    ok('status TEMP sentinel→null', st.temperatureC === null);
+    decodeStatusFrame(0x29, new Uint8Array([145]), st);  // 145 - 120 = 25°C
+    ok('status TEMP 145→25°C', st.temperatureC === 25);
   } catch (e) { ok('status decoder', false, e.message); }
+  // Firmware version is rendered as decimal "major.minor" (rnodeconf convention),
+  // not hex. MIN_VERS=0x56 → "86", not "56".
+  try {
+    const fmt = (b) => b.length >= 2 ? `${b[0]}.${b[1].toString().padStart(2,'0')}` : null;
+    ok('fwVersion 0x01,0x56 → 1.86', fmt(new Uint8Array([0x01, 0x56])) === '1.86');
+    ok('fwVersion 0x02,0x0a → 2.10', fmt(new Uint8Array([0x02, 0x0a])) === '2.10');
+  } catch (e) { ok('fwVersion format', false, e.message); }
+  // BytesList: round-trip through MsgPack packer/unpacker.
+  try {
+    const a = new Uint8Array([0x01,0x02,0x03,0x04, 0x05,0x06,0x07,0x08, 0x09,0x0a,0x0b,0x0c, 0x0d,0x0e,0x0f,0x10]);
+    const b = new Uint8Array([0xff, 0xee, 0xdd, 0xcc]);
+    const p = new Packer();
+    packTypedValue(p, FT.BytesList, [a, b]);
+    const decoded = new Unpacker(p.result()).next();
+    ok('BytesList round-trip is array', Array.isArray(decoded) && decoded.length === 2);
+    ok('BytesList entry 0 length', decoded[0].length === 16);
+    ok('BytesList entry 0 bytes',
+      decoded[0] instanceof Uint8Array && decoded[0][0] === 0x01 && decoded[0][15] === 0x10);
+    ok('BytesList entry 1 bytes',
+      decoded[1] instanceof Uint8Array && decoded[1][0] === 0xff && decoded[1][3] === 0xcc);
+    // Empty list
+    const p2 = new Packer(); packTypedValue(p2, FT.BytesList, []);
+    const dec2 = new Unpacker(p2.result()).next();
+    ok('BytesList empty', Array.isArray(dec2) && dec2.length === 0);
+  } catch (e) { ok('BytesList round-trip', false, e.message); }
+  // valuesEqual for BytesList
+  try {
+    const x1 = [new Uint8Array([1,2,3]), new Uint8Array([4,5])];
+    const x2 = [new Uint8Array([1,2,3]), new Uint8Array([4,5])];
+    const x3 = [new Uint8Array([1,2,3]), new Uint8Array([4,6])];
+    const x4 = [new Uint8Array([1,2,3])];
+    ok('BytesList valuesEqual same', valuesEqual(x1, x2));
+    ok('BytesList valuesEqual differs', !valuesEqual(x1, x3));
+    ok('BytesList valuesEqual length differs', !valuesEqual(x1, x4));
+  } catch (e) { ok('BytesList valuesEqual', false, e.message); }
+  // parseBytesListHex
+  try {
+    const r = parseBytesListHex('aabb ccdd\n11 22 33 44');
+    ok('parseBytesListHex line count', r.length === 2);
+    ok('parseBytesListHex strips separators',
+      r[0].length === 4 && r[0][0] === 0xaa && r[0][3] === 0xdd);
+    ok('parseBytesListHex line 2 length', r[1].length === 4 && r[1][3] === 0x44);
+    // Odd hex returns null (incomplete byte)
+    ok('parseBytesListHex odd nibble → null', parseBytesListHex('abc') === null);
+    // Empty input → empty list
+    ok('parseBytesListHex empty', Array.isArray(parseBytesListHex('')) && parseBytesListHex('').length === 0);
+  } catch (e) { ok('parseBytesListHex', false, e.message); }
+  // validateValue for BytesList with constraints
+  try {
+    const f = { type: FT.BytesList, elementSize: 16, maxCount: 4 };
+    const ok16 = new Uint8Array(16);
+    const ok16b = new Uint8Array(16);
+    ok('BytesList validate empty', validateValue(f, []) === null);
+    ok('BytesList validate ok', validateValue(f, [ok16, ok16b]) === null);
+    ok('BytesList validate too few bytes', validateValue(f, [new Uint8Array(15)]) != null);
+    ok('BytesList validate too many entries',
+      validateValue(f, [ok16, ok16b, new Uint8Array(16), new Uint8Array(16), new Uint8Array(16)]) != null);
+  } catch (e) { ok('BytesList validate', false, e.message); }
+  // ----- Node Config codec round-trips -----
+  try {
+    // be32 frequency encode/decode (867500000 Hz = 0x33B4FFE0)
+    const freq = NCFG_ENC.be32.enc(867500000);
+    ok('ncfg be32 enc length', freq.length === 4);
+    ok('ncfg be32 enc bytes', freq[0]===0x33 && freq[1]===0xB4 && freq[2]===0xFF && freq[3]===0xE0);
+    ok('ncfg be32 dec', NCFG_ENC.be32.dec(freq) === 867500000);
+    // u8 SF
+    ok('ncfg u8 enc', NCFG_ENC.u8.enc(7)[0] === 7);
+    ok('ncfg u8 dec', NCFG_ENC.u8.dec(new Uint8Array([12])) === 12);
+    // i8 TXP signed
+    ok('ncfg i8 enc -9',  NCFG_ENC.i8.enc(-9)[0] === (256 - 9));
+    ok('ncfg i8 dec -1',  NCFG_ENC.i8.dec(new Uint8Array([0xFF])) === -1);
+    ok('ncfg i8 dec  22', NCFG_ENC.i8.dec(new Uint8Array([22])) === 22);
+    // str null-terminated
+    const sBytes = NCFG_ENC.str.encStr('hello', 32);
+    ok('ncfg str null-term', sBytes.length === 6 && sBytes[5] === 0);
+    // ip4 round-trip
+    const ip = NCFG_ENC.ip4.enc('192.168.1.42');
+    ok('ncfg ip4 enc', ip[0]===192 && ip[1]===168 && ip[2]===1 && ip[3]===42);
+    ok('ncfg ip4 dec', NCFG_ENC.ip4.dec(ip) === '192.168.1.42');
+    ok('ncfg ip4 DHCP zero', NCFG_ENC.ip4.dec(new Uint8Array([0,0,0,0])) === '0.0.0.0');
+  } catch (e) { ok('ncfg codec', false, e.message); }
+  // KISS-frame assembly for the legacy opcodes
+  try {
+    // BT_CTRL "on" → FEND 0x46 0x01 FEND
+    const f = kissEncode(CMD_BT_CTRL, new Uint8Array([0x01]));
+    ok('ncfg BT_CTRL frame', f.length === 4 && f[0]===0xC0 && f[1]===0x46 && f[2]===0x01 && f[3]===0xC0);
+    // CMD_CONF_SAVE with empty payload → FEND 0x53 FEND
+    const cs = kissEncode(CMD_CONF_SAVE, new Uint8Array(0));
+    ok('ncfg CMD_CONF_SAVE frame', cs.length === 3 && cs[0]===0xC0 && cs[1]===0x53 && cs[2]===0xC0);
+    // CMD_UNLOCK_ROM with magic byte
+    const ur = kissEncode(CMD_UNLOCK_ROM, new Uint8Array([ROM_UNLOCK_BYTE]));
+    ok('ncfg ROM unlock frame', ur.length === 4 && ur[1]===0x59 && ur[2]===0xF8);
+  } catch (e) { ok('ncfg frames', false, e.message); }
+  // LegacyClient.query() round-trip via a synthetic transport.
+  try {
+    const sent = [];
+    const fakeT = { send: async (b) => { sent.push(b); }, onBytes: ()=>{} };
+    const fakeProv = { onLegacyFrame: null, _onFrame: () => {} };
+    const lc = new LegacyClient(fakeProv, fakeT);
+    let resolvedVal = null;
+    lc.query(CMD_FREQUENCY, NCFG_ENC.be32.query(), 1000).then(p => { resolvedVal = NCFG_ENC.be32.dec(p); });
+    // Yield once so the lc.query's send() promise can land its handler.
+    await Promise.resolve();
+    // Simulate the device's echoed response by invoking onLegacyFrame.
+    fakeProv.onLegacyFrame(CMD_FREQUENCY, new Uint8Array([0x33, 0xB4, 0xFF, 0xE0]));
+    await Promise.resolve(); await Promise.resolve();
+    ok('LegacyClient query echo', resolvedVal === 867500000);
+    ok('LegacyClient query sent one frame', sent.length === 1);
+  } catch (e) { ok('LegacyClient query', false, e.message); }
+  // Hex-viewer rendering
+  try {
+    const u = new Uint8Array(32);
+    for (let i = 0; i < 32; ++i) u[i] = i;
+    const view = buildHexView(u, [{ from: 0x9C, to: 0x9C, label: 'SF' }]);
+    // Top-level wrapper has class hexview; should contain 2 rows (16-byte each)
+    let rowCount = 0;
+    function walk(n) { if (!n || !n._children) return; for (const c of n._children) { if (c._classes && c._classes.has && c._classes.has('hx-row')) rowCount++; walk(c); } }
+    walk(view);
+    ok('hexview row count', rowCount === 2);
+  } catch (e) { ok('hexview', false, e.message); }
   document.getElementById('app').innerHTML = '<pre>' + out.join('\n') + '</pre>';
 }
 if (location.search.indexOf('selftest=1') !== -1) runSelfTests();
