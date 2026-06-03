@@ -15,6 +15,7 @@
 
 // CBA Reticulum includes must come before local to avoid collision with local defines
 #ifdef HAS_RNS
+#include <Provisioning/Provisioning.h>
 #include <Transport.h>
 #include <Reticulum.h>
 #include <Identity.h>
@@ -73,6 +74,8 @@ volatile bool serial_buffering = false;
 #if HAS_BLUETOOTH || HAS_BLE == true
   bool bt_init_ran = false;
 #endif
+
+bool kiss_framed_logs = true;
 
 #if HAS_CONSOLE
   #include "Console.h"
@@ -186,8 +189,8 @@ protected:
 };
 // CBA logger callback
 void on_log(const char* msg, RNS::LogLevel level) {
-#ifdef HAS_PROVISIONING
-  if (log_kiss_enabled) {
+  if (kiss_framed_logs) {
+Serial.print("[K]");
     // Compose "<timestamp> [<level>] <msg>" into a stack buffer to avoid
     // String heap allocation. 256 bytes covers the longest practical line.
     char line[256];
@@ -197,23 +200,18 @@ void on_log(const char* msg, RNS::LogLevel level) {
                      msg);
     if (n < 0) n = 0;
     if ((size_t)n >= sizeof(line)) n = sizeof(line) - 1;
-    kiss_emit_log(line, (size_t)n);
-  } else
-#endif
-  {
-  // Using individual Serial.print statements to avoid memory allocation for String
-	Serial.print(RNS::getTimeString());
-	Serial.print(" [");
-	Serial.print(RNS::getLevelName(level));
-	Serial.print("] ");
-	Serial.println(msg);
-	Serial.flush();
+    kiss_indicate_log(line, (size_t)n);
   }
-/*
-  String line = RNS::getTimeString() + String(" [") + RNS::getLevelName(level) + "] " + msg + "\n";
-	Serial.print(line);
-	Serial.flush();
-*/
+  else {
+Serial.print("[S]");
+    // Using individual Serial.print statements to avoid memory allocation for String
+    Serial.print(RNS::getTimeString());
+    Serial.print(" [");
+    Serial.print(RNS::getLevelName(level));
+    Serial.print("] ");
+    Serial.println(msg);
+    Serial.flush();
+  }
 
 #ifdef HAS_SDCARD
 	File file = SD.open("/logfile.txt", FILE_APPEND);
@@ -303,9 +301,16 @@ RNS::Interface udp_interface(RNS::Type::NONE);
 
 // CBA For printf
 int _write(int file, char *ptr, int len) {
-    size_t wrote = Serial.write(ptr, len);
+  size_t wrote = 0;
+  if (kiss_framed_logs) {
+    kiss_indicate_log(ptr, len);
+    wrote = len;
+  }
+  else {
+    wrote = Serial.write(ptr, len);
     Serial.flush();
-    return wrote;
+  }
+  return wrote;
 }
 
 void setup() {
@@ -669,6 +674,11 @@ void setup() {
   //RNS::Reticulum::persist_interval(60*10); // 10 minutes
   //RNS::Reticulum::persist_interval(60); // 1 minute
 
+  // Configure callbacks
+  RNS::set_log_callback(&on_log);
+  RNS::Transport::set_receive_packet_callback(on_receive_packet);
+  RNS::Transport::set_transmit_packet_callback(on_transmit_packet);
+
   try {
     // CBA Init filesystem
     HEAD("Initializing filesystem...", RNS::LOG_TRACE);
@@ -725,17 +735,6 @@ void setup() {
     TRACE("Registering filesystem...");
     RNS::Utilities::OS::register_filesystem(filesystem);
 
-#ifdef HAS_PROVISIONING
-    // Bring the Provisioning subsystem up. Loads persisted MsgPack files
-    // (including the radio + general namespaces registered here) and fires
-    // FF_LIVE_APPLY setters. FF_REBOOT_REQUIRED setters only fire if the
-    // disk value differs from the declared default — so on a fresh device
-    // the lora_* globals stay at their Config.h defaults until either
-    // eeprom_conf_load() runs or a Provisioning SetState arrives.
-    HEAD("Initializing Provisioning subsystem...", RNS::LOG_TRACE);
-    init_provisioning();
-#endif
-
 #if !defined(NDEBUG) && defined(RNS_USE_FS)
 #if 0
     filesystem.format();
@@ -753,12 +752,28 @@ void setup() {
     //if (hw_ready) {
     if (true) {
 
-      //reticulum.clear_caches();
+#if defined(LORA_TRANSPORT)
+      lora_interface = new LoRaInterface();
+#endif
+#if HAS_WIFI && defined(UDP_TRANSPORT)
+      if (wifi_mode != WR_WIFI_OFF) {
+        udp_interface = new UDPInterface();
+      }
+#endif
 
-      // Configure callbacks
-      RNS::set_log_callback(&on_log);
-      RNS::Transport::set_receive_packet_callback(on_receive_packet);
-      RNS::Transport::set_transmit_packet_callback(on_transmit_packet);
+#ifdef HAS_PROVISIONING
+      // Bring the Provisioning subsystem up. Loads persisted MsgPack files
+      // (including the radio + general namespaces registered here) and fires
+      // FF_LIVE_APPLY setters. FF_REBOOT_REQUIRED setters only fire if the
+      // disk value differs from the declared default — so on a fresh device
+      // the lora_* globals stay at their Config.h defaults until either
+      // eeprom_conf_load() runs or a Provisioning SetState arrives.
+      HEAD("Initializing Provisioning subsystem...", RNS::LOG_TRACE);
+      init_provisioning();
+      auto& prov = RNS::Provisioning::Manager::instance();
+#endif
+
+      //reticulum.clear_caches();
 
       HEAD("Starting RNS...\r\n", RNS::LOG_VERBOSE);
 #if defined(RNS_MEM_LOG)
@@ -769,17 +784,16 @@ void setup() {
 
 #if defined(LORA_TRANSPORT)
       HEAD("Registering LoRA Interface...", RNS::LOG_TRACE);
-      lora_interface = new LoRaInterface();
-      lora_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
+        // Provisioning
+      //lora_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
       RNS::Transport::register_interface(lora_interface);
       TRACEF("LoRaInterface hash: %s", lora_interface.get_hash().toHex().c_str());
 #endif
-
 #if HAS_WIFI && defined(UDP_TRANSPORT)
       if (wifi_mode != WR_WIFI_OFF) {
         HEAD("Registering UDP Interface...", RNS::LOG_TRACE);
-        udp_interface = new UDPInterface();
-        udp_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
+        // Provisioning
+        //udp_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
         RNS::Transport::register_interface(udp_interface);
         TRACEF("UDPInterface hash: %s", udp_interface.get_hash().toHex().c_str());
       }
@@ -787,8 +801,10 @@ void setup() {
 
       HEAD("Creating Reticulum instance...", RNS::LOG_TRACE);
       reticulum = RNS::Reticulum();
-      reticulum.transport_enabled(op_mode == MODE_TNC);
-      reticulum.probe_destination_enabled(true);
+      // Provisioning
+      //reticulum.transport_enabled(op_mode == MODE_TNC);
+      // Provisioning
+      //reticulum.probe_destination_enabled(true);
       reticulum.start();
 
       // Set loop callback only after the Reticulum instance is started
@@ -815,46 +831,48 @@ void setup() {
       RNS::Destination destination(RNS::Transport::identity(), RNS::Type::Destination::IN, RNS::Type::Destination::SINGLE, "rnstransport", "local");
 
 #ifdef URTN_STATS_PAGES
-      // Create an IN/SINGLE destination on the NomadNet aspect, so
-      // clients (this example, or a Python NomadNet browser) can find
-      // us by aspect/announce and open a Link.
-      RNS::Destination stats_destination = RNS::Destination(
-        RNS::Transport::identity(),
-        RNS::Type::Destination::IN,
-        RNS::Type::Destination::SINGLE,
-        "nomadnetwork",
-        "node"
-      );
+      if (prov.field(PROV_NS_GENERAL, PROV_GENERAL_NOMADNET).as_bool()) {
+        // Create an IN/SINGLE destination on the NomadNet aspect, so
+        // clients (this example, or a Python NomadNet browser) can find
+        // us by aspect/announce and open a Link.
+        RNS::Destination stats_destination = RNS::Destination(
+          RNS::Transport::identity(),
+          RNS::Type::Destination::IN,
+          RNS::Type::Destination::SINGLE,
+          "nomadnetwork",
+          "node"
+        );
 /*
-      RNS::Destination stats_destination = RNS::Destination(
-        RNS::Transport::identity(),
-        RNS::Type::Destination::IN,
-        RNS::Type::Destination::SINGLE,
-        "rnstransport",
-        "remote.management"
-      );
+        RNS::Destination stats_destination = RNS::Destination(
+          RNS::Transport::identity(),
+          RNS::Type::Destination::IN,
+          RNS::Type::Destination::SINGLE,
+          "rnstransport",
+          "remote.management"
+        );
 */
 
-      // Register the page handler. ALLOW_ALL because page browsing is open
-      // to anyone who can reach the node, just like a Python NomadNet
-      // node's default policy.
-			//stats_destination.register_request_handler("/page/index.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
-      stats_destination.register_request_handler("/page/index.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
-			stats_destination.register_request_handler("/page/stack.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
-      //stats_destination.register_request_handler("/page/stack.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
-			stats_destination.register_request_handler("/page/device.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
-      //stats_destination.register_request_handler("/page/device.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
+        // Register the page handler. ALLOW_ALL because page browsing is open
+        // to anyone who can reach the node, just like a Python NomadNet
+        // node's default policy.
+        //stats_destination.register_request_handler("/page/index.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
+        stats_destination.register_request_handler("/page/index.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
+        stats_destination.register_request_handler("/page/stack.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
+        //stats_destination.register_request_handler("/page/stack.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
+        stats_destination.register_request_handler("/page/device.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
+        //stats_destination.register_request_handler("/page/device.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
 
-      // Announce once at startup so a client that's already listening can
-      // discover us immediately. The node name is sent as the announce
-      // app_data (plain UTF-8 bytes), matching nomadnet/Node.py:217-222 —
-      // this is what other NomadNet clients show in their site listing.
-      {
-        char stats_announce_data[64];
-        snprintf(stats_announce_data, sizeof(stats_announce_data),
-                "microReticulum Node [%s]", device_uid_str);
-        TRACEF("Announcing NomadNet pages \"%s\" at destination %s", stats_announce_data, stats_destination.hash().toHex().c_str());
-        stats_destination.announce(stats_announce_data);
+        // Announce once at startup so a client that's already listening can
+        // discover us immediately. The node name is sent as the announce
+        // app_data (plain UTF-8 bytes), matching nomadnet/Node.py:217-222 —
+        // this is what other NomadNet clients show in their site listing.
+        {
+          char stats_announce_data[64];
+          snprintf(stats_announce_data, sizeof(stats_announce_data),
+                  "microReticulum Node [%s]", device_uid_str);
+          TRACEF("Announcing NomadNet pages \"%s\" at destination %s", stats_announce_data, stats_destination.hash().toHex().c_str());
+          stats_destination.announce(stats_announce_data);
+        }
       }
 #endif // URTN_STATS_PAGES
 

@@ -12,6 +12,8 @@
 
 #include "Provisioning.h"
 
+//#include "Config.h"
+
 #ifdef HAS_PROVISIONING
 
 // KISS framing constants. We don't include "Framing.h" because it defines
@@ -23,10 +25,39 @@
 #define CMD_LOG           0x80
 #define CMD_PROVISION_RSP 0x87
 
+#include <Interface.h>
 #include <Provisioning/Provisioning.h>
 
 #include <string>
 #include <vector>
+
+// lora_interface is always declared in RNode_Firmware.ino (constructed
+// with RNS::Type::NONE), even when LORA_TRANSPORT is not defined. Its
+// operator bool() returns true only after setup() assigns it a real
+// LoRaInterface implementation — so a single runtime check works in
+// both compile configurations.
+extern RNS::Interface lora_interface;
+extern int lora_sf;
+extern int lora_cr;
+extern int lora_txp;
+extern uint32_t lora_bw;
+extern uint32_t lora_freq;
+extern uint32_t lora_bitrate;
+extern int noise_floor;
+extern int current_rssi;
+extern int last_rssi;
+extern uint8_t last_rssi_raw;
+extern uint8_t last_snr_raw;
+#if defined(UDP_TRANSPORT)
+// udp_interface is only declared in RNode_Firmware.ino under UDP_TRANSPORT,
+// so this extern (and its dependents) must stay behind the same guard.
+extern RNS::Interface udp_interface;
+extern IPAddress wr_device_ip;
+extern uint16_t udp_port;
+extern uint8_t wifi_mode;
+extern char wr_ssid[];
+#endif
+extern bool kiss_framed_logs;
 
 // ---------------------------------------------------------------------------
 // External hooks into the rest of the firmware.
@@ -47,32 +78,8 @@ extern void escaped_serial_write(uint8_t byte);
 // ---------------------------------------------------------------------------
 // Public globals
 // ---------------------------------------------------------------------------
-bool log_kiss_enabled = true;
 bool provisioning_started = false;
 RNS::Bytes provision_rx_buf;
-
-// ---------------------------------------------------------------------------
-// Provisioning namespace + field IDs.
-//
-// Namespace IDs 1-2 are RNS built-ins (Reticulum, Transport); 100-199
-// are the official app range. PROV_NS_RADIO and its field IDs are kept
-// here as a reference for the (currently disabled) radio namespace —
-// EEPROM (driven by rnodeconf) remains the source of truth for radio
-// configuration. See register_provisioning_namespaces() below.
-// ---------------------------------------------------------------------------
-#define PROV_NS_RADIO         100
-#define PROV_NS_GENERAL       101
-
-// NOTE: **NEVER** change these values once they are in production. Only additions can be made.
-#define PROV_RADIO_OP_MODE      1
-#define PROV_RADIO_FREQ         2
-#define PROV_RADIO_BW           3
-#define PROV_RADIO_SF           4
-#define PROV_RADIO_CR           5
-#define PROV_RADIO_TXP          6
-#define PROV_RADIO_IMPLICIT     7
-
-#define PROV_GENERAL_KISS_LOG   1
 
 // ---------------------------------------------------------------------------
 // Register Provisioning namespaces. Called from init_provisioning()
@@ -87,41 +94,157 @@ RNS::Bytes provision_rx_buf;
 static void register_provisioning_namespaces() {
   using namespace RNS::Provisioning;
 
+  // ----- general namespace -----
+  auto general = Manager::instance()
+    .register_namespace("General", PROV_NS_GENERAL)
+      .field_bool("kiss_framed_logs", PROV_GENERAL_KISS_LOG, FF_LIVE_APPLY, true,
+        [](const Value& v) { kiss_framed_logs = v.as_bool(); return true; },
+        []() { return kiss_framed_logs; });
+
+#ifdef URTN_STATS_PAGES
+    general
+      .field_bool("enable_nomadnet", PROV_GENERAL_NOMADNET, FF_REBOOT_REQUIRED, true);
+#endif
+
+#if defined(LORA_TRANSPORT)
+  if (lora_interface) {
+    general
+      .field_enum(
+          "lora_interface_mode", PROV_GENERAL_LORA_MODE, FF_LIVE_APPLY,
+          (fint_t)RNS::Type::Interface::MODE_GATEWAY,
+          /* values   */ {
+            RNS::Type::Interface::MODE_GATEWAY,
+            RNS::Type::Interface::MODE_FULL,
+            RNS::Type::Interface::MODE_POINT_TO_POINT,
+            RNS::Type::Interface::MODE_ACCESS_POINT,
+            RNS::Type::Interface::MODE_ROAMING,
+            RNS::Type::Interface::MODE_BOUNDARY,
+          },
+          /* labels   */ {
+            "gateway",
+            "full",
+            "point-to-point",
+            "access-point",
+            "roaming",
+            "boundary" },
+          /* setter   */ [](const Value& v) {
+            lora_interface.mode(static_cast<RNS::Type::Interface::modes>(v.as_int())); return true;
+          },
+          /* getter   */ []() {
+            return static_cast<fint_t>(lora_interface.mode());
+          }
+      );
+  }
+#endif
+
+#if defined(UDP_TRANSPORT)
+  if (udp_interface) {
+    general
+      .field_enum(
+          "udp_interface_mode", PROV_GENERAL_UDP_MODE, FF_LIVE_APPLY,
+          (fint_t)RNS::Type::Interface::MODE_GATEWAY,
+          /* values   */ {
+            RNS::Type::Interface::MODE_GATEWAY,
+            RNS::Type::Interface::MODE_FULL,
+            RNS::Type::Interface::MODE_POINT_TO_POINT,
+            RNS::Type::Interface::MODE_ACCESS_POINT,
+            RNS::Type::Interface::MODE_ROAMING,
+            RNS::Type::Interface::MODE_BOUNDARY,
+          },
+          /* labels   */ {
+            "gateway",
+            "full",
+            "point-to-point",
+            "access-point",
+            "roaming",
+            "boundary" },
+          /* setter   */ [](const Value& v) {
+            udp_interface.mode(static_cast<RNS::Type::Interface::modes>(v.as_int())); return true;
+          },
+          /* getter   */ []() {
+            return static_cast<fint_t>(udp_interface.mode());
+          }
+      );
+  }
+#endif
+
+  general
+    .end();   // close "General"
+
+  // ----- Metrics namespace -----
+  //
+  // The Metrics > Interfaces parent chain is opened unconditionally; the
+  // per-interface child namespaces are added only when the corresponding
+  // interface object reports it has a live implementation (operator bool
+  // on RNS::Interface). Compile-time guards remain only where they need
+  // to — UDP's externs aren't declared without UDP_TRANSPORT.
+  auto metrics_ifaces = Manager::instance()
+      .namespace_("Metrics", PROV_NS_METRICS)
+        .namespace_("Interfaces", PROV_NS_METRICS_IFACE);
+
+#if defined(LORA_TRANSPORT)
+  if (lora_interface) {
+    metrics_ifaces
+      //.namespace_("LoRa", PROV_NS_IFACE_LORA)
+      .namespace_(lora_interface.name().c_str(), PROV_NS_IFACE_LORA)
+        .metric_int("frequency", PROV_METRICS_LORA_FREQ, []() { return lora_freq; })
+        .metric_int("bandwidth", PROV_METRICS_LORA_BW, []() { return lora_bw; })
+        .metric_int("spreading_factor", PROV_METRICS_LORA_SF, []() { return lora_sf; })
+        .metric_int("coding_rate", PROV_METRICS_LORA_CR, []() { return lora_cr; })
+        .metric_int("tx_power", PROV_METRICS_LORA_TXP, []() { return lora_txp; })
+        //.metric_int("current_rssi", PROV_METRICS_LORA_CRSSI, []() { return last_rssi+rssi_offset; })
+        .metric_int("current_rssi", PROV_METRICS_LORA_CRSSI, []() { return current_rssi; })
+        .metric_int("noise_floor", PROV_METRICS_LORA_NF, []() { return noise_floor; })
+        .metric_int("last_rssi", PROV_METRICS_LORA_LRSSI, []() { return last_rssi+157; })
+        .metric_int("last_snr", PROV_METRICS_LORA_LSNR, []() { return last_snr_raw; })
+        .end();
+  }
+#endif
+
+#if defined(UDP_TRANSPORT)
+  if (udp_interface) {
+    metrics_ifaces
+      //.namespace_("UDP", PROV_NS_IFACE_UDP)
+      .namespace_(udp_interface.name().c_str(), PROV_NS_IFACE_LORA)
+        .metric_string("ip_addr", PROV_METRICS_UDP_ADDR, []() { return wr_device_ip.toString().c_str(); })
+        .metric_int("udp_port", PROV_METRICS_UDP_PORT, []() { return udp_port; })
+        .metric_string("wifi_ssid", PROV_METRICS_WIFI_SSID, []() { return wr_ssid; })
+        .end();
+  }
+#endif
+
+  metrics_ifaces
+      .end()  // close "Interfaces"
+    .end();   // close "Metrics"
+
   // ----- radio namespace (DISABLED) -----
   //
   // Manager::instance()
   //   .register_namespace("radio", PROV_NS_RADIO)
   //     .field_enum("op_mode", PROV_RADIO_OP_MODE, FF_REBOOT_REQUIRED,
-  //                (int64_t)MODE_HOST,
-  //                std::vector<int64_t>{ (int64_t)MODE_HOST, (int64_t)MODE_TNC },
+  //                (fint_t)MODE_HOST,
+  //                std::vector<fint_t>{ (fint_t)MODE_HOST, (fint_t)MODE_TNC },
   //                std::vector<std::string>{ "host", "tnc" },
   //                [](const Value& v) { op_mode = (uint8_t)v.as_int(); return true; })
   //     .field_int("frequency", PROV_RADIO_FREQ, FF_REBOOT_REQUIRED,
-  //                (int64_t)0, (int64_t)100000000, (int64_t)1000000000,
+  //                (fint_t)0, (fint_t)100000000, (fint_t)1000000000,
   //                [](const Value& v) { lora_freq = (uint32_t)v.as_int(); return true; })
   //     .field_int("bandwidth", PROV_RADIO_BW, FF_REBOOT_REQUIRED,
-  //                (int64_t)0, (int64_t)7800, (int64_t)500000,
+  //                (fint_t)0, (fint_t)7800, (fint_t)500000,
   //                [](const Value& v) { lora_bw = (uint32_t)v.as_int(); return true; })
   //     .field_int("sf", PROV_RADIO_SF, FF_REBOOT_REQUIRED,
-  //                (int64_t)0, (int64_t)5, (int64_t)12,
+  //                (fint_t)0, (fint_t)5, (fint_t)12,
   //                [](const Value& v) { lora_sf = (int)v.as_int(); return true; })
   //     .field_int("cr", PROV_RADIO_CR, FF_REBOOT_REQUIRED,
-  //                (int64_t)5, (int64_t)5, (int64_t)8,
+  //                (fint_t)5, (fint_t)5, (fint_t)8,
   //                [](const Value& v) { lora_cr = (int)v.as_int(); return true; })
   //     .field_int("txp", PROV_RADIO_TXP, FF_REBOOT_REQUIRED,
-  //                (int64_t)0xFF, (int64_t)-9, (int64_t)22,
+  //                (fint_t)0xFF, (fint_t)-9, (fint_t)22,
   //                [](const Value& v) { lora_txp = (int)v.as_int(); return true; })
   //     .field_int("implicit_l", PROV_RADIO_IMPLICIT, FF_REBOOT_REQUIRED,
-  //                (int64_t)0, (int64_t)0, (int64_t)255,
+  //                (fint_t)0, (fint_t)0, (fint_t)255,
   //                [](const Value& v) { implicit_l = (uint8_t)v.as_int(); return true; })
   //     .end();
-
-  // ----- general namespace -----
-  Manager::instance()
-    .register_namespace("General", PROV_NS_GENERAL)
-      .field_bool("kiss_enabled", PROV_GENERAL_KISS_LOG, FF_LIVE_APPLY, true,
-                 [](const Value& v) { log_kiss_enabled = v.as_bool(); return true; })
-      .end();
 }
 
 // ---------------------------------------------------------------------------
@@ -157,17 +280,6 @@ void kiss_indicate_provision_response(const RNS::Bytes& payload) {
   const uint8_t* data = payload.data();
   size_t n = payload.size();
   for (size_t i = 0; i < n; ++i) escaped_serial_write(data[i]);
-  serial_write(FEND);
-}
-
-// ---------------------------------------------------------------------------
-// Log line over KISS — invoked by on_log() in RNode_Firmware.ino when
-// log_kiss_enabled is true.
-// ---------------------------------------------------------------------------
-void kiss_emit_log(const char* line, size_t len) {
-  serial_write(FEND);
-  serial_write(CMD_LOG);
-  for (size_t i = 0; i < len; ++i) escaped_serial_write((uint8_t)line[i]);
   serial_write(FEND);
 }
 

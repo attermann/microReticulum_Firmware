@@ -118,10 +118,18 @@ New firmware release procedure:
 
   6. Upload all files (except README.md and esptool) to github release
 
+## Web Console
+
+
+To minify web console:
+```
+npx html-minifier-terser --collapse-whitespace --remove-comments --minify-js true --minify-css true index.html -o index.min.html
+```
+
 ## Roadmap
 
-- [ ] Extend KISS interface to support config/control of the integrated microReticulum stack
-- [ ] Add interface for easy customization of firmware
+- [x] Extend KISS interface to support config/control of the integrated microReticulum stack
+- [x] Add interface for easy customization of firmware
 - [ ] Add power management and sleep states to extend battery runtime
 - [x] Add build targets for NRF52 boards
 

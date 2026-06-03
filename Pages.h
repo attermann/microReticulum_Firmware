@@ -251,6 +251,7 @@ RNS::Bytes serve_page(
       }
   	  else if (category == "interfaces") {
         content = "{\n";
+#if defined(LORA_TRANSPORT)
         content << "  \"" << lora_interface.name().c_str() << "\": {\n";
         content << "    \"frequency\": " << std::to_string(lora_freq) << ",\n";
         content << "    \"bandwidth\": " << std::to_string(lora_bw) << ",\n";
@@ -261,6 +262,7 @@ RNS::Bytes serve_page(
         content << "    \"current_snr\": " << std::to_string(last_snr_raw) << ",\n";
         add_interface_details(content, lora_interface);
       	content << "  },\n";
+#endif
 #if defined(UDP_TRANSPORT)
         if (wifi_mode != WR_WIFI_OFF && udp_interface) {
           content << "  \"" << udp_interface.name().c_str() << "\": {\n";

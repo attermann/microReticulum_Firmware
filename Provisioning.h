@@ -10,8 +10,8 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
 
-#ifndef RNODE_PROVISIONING_H
-#define RNODE_PROVISIONING_H
+
+#pragma once
 
 #ifdef HAS_PROVISIONING
 
@@ -29,11 +29,51 @@
   #define PROVISION_RX_BUF_MAX 2048
 #endif
 
-// True while the on_log() callback should wrap log lines in a CMD_LOG
-// KISS frame instead of writing them as plain text to Serial. Backed by
-// the Provisioning general.kiss_enabled field; defaults to true so a
-// KISS-aware host sees structured logs from the first boot.
-extern bool log_kiss_enabled;
+// ---------------------------------------------------------------------------
+// Provisioning namespace + field IDs.
+//
+// Namespace IDs 1-2 are RNS built-ins (Reticulum, Transport); 100-199
+// are the official app range. PROV_NS_RADIO and its field IDs are kept
+// here as a reference for the (currently disabled) radio namespace —
+// EEPROM (driven by rnodeconf) remains the source of truth for radio
+// configuration. See register_provisioning_namespaces() below.
+//
+// NOTE: **NEVER** change these values once they are in production. Only additions can be made.
+// ---------------------------------------------------------------------------
+#define PROV_NS_GENERAL       100
+#define PROV_NS_RADIO         101
+#define PROV_NS_NETWORK       102
+#define PROV_NS_METRICS       103
+#define PROV_NS_METRICS_IFACE 104
+#define PROV_NS_IFACE_LORA    105
+#define PROV_NS_IFACE_UDP     106
+
+#define PROV_GENERAL_KISS_LOG   1
+#define PROV_GENERAL_LORA_MODE  2
+#define PROV_GENERAL_UDP_MODE   3
+#define PROV_GENERAL_NOMADNET   4
+
+#define PROV_METRICS_LORA_FREQ  1
+#define PROV_METRICS_LORA_BW    2
+#define PROV_METRICS_LORA_SF    3
+#define PROV_METRICS_LORA_CR    4
+#define PROV_METRICS_LORA_TXP   5
+#define PROV_METRICS_LORA_CRSSI 6  
+#define PROV_METRICS_LORA_NF    7
+#define PROV_METRICS_LORA_LRSSI 8
+#define PROV_METRICS_LORA_LSNR  9
+
+#define PROV_METRICS_UDP_ADDR   1
+#define PROV_METRICS_UDP_PORT   2
+#define PROV_METRICS_WIFI_SSID  3
+
+#define PROV_RADIO_OP_MODE      1
+#define PROV_RADIO_FREQ         2
+#define PROV_RADIO_BW           3
+#define PROV_RADIO_SF           4
+#define PROV_RADIO_CR           5
+#define PROV_RADIO_TXP          6
+#define PROV_RADIO_IMPLICIT     7
 
 // Set true once Provisioning::Manager::begin() has run.
 extern bool provisioning_started;
@@ -55,10 +95,4 @@ void on_provision_request(const RNS::Bytes& req);
 // Emit a CMD_PROVISION_RSP KISS frame carrying the given payload bytes.
 void kiss_indicate_provision_response(const RNS::Bytes& payload);
 
-// Emit a CMD_LOG KISS frame carrying one log line (timestamp + level +
-// message), already composed by the caller.
-void kiss_emit_log(const char* line, size_t len);
-
 #endif // HAS_PROVISIONING
-
-#endif // RNODE_PROVISIONING_H

@@ -1258,6 +1258,13 @@ void kiss_indicate_mcu() {
 	serial_write(FEND);
 }
 
+void kiss_indicate_log(const char* line, size_t len) {
+  serial_write(FEND);
+  serial_write(CMD_LOG);
+  for (size_t i = 0; i < len; ++i) escaped_serial_write((uint8_t)line[i]);
+  serial_write(FEND);
+}
+
 inline bool isSplitPacket(uint8_t header) {
 	return (header & FLAG_SPLIT);
 }

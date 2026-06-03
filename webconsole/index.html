@@ -48,6 +48,15 @@ button.primary { background: var(--accent); color: var(--accent-ink); border-col
 .tab-body.no-pad { padding: 0; }
 .tab-body h2 { margin: 0 0 12px; font-size: 16px; }
 .tab-body h3 { margin: 16px 0 8px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+/* Namespace panel headings: h2 for the root, descending tags for nested sub-sections.
+   depth-1 = section (under root, uppercase + accent bar)
+   depth-2 = sub-section (smaller, mixed case, fainter bar)
+   depth-3 = sub-sub-section (further indented, dashed bar) */
+.tab-body h2.ns-h { margin: 0 0 8px; font-size: 17px; }
+.tab-body h3.ns-sub.depth-1 { margin: 22px 0 6px; padding: 4px 0 4px 10px; border-left: 3px solid var(--accent); font-size: 12px; color: var(--ink); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+.tab-body h4.ns-sub.depth-2 { margin: 18px 0 6px; padding: 3px 0 3px 10px; border-left: 2px solid rgba(37,99,235,0.5); font-size: 12px; color: var(--ink); font-weight: 600; text-transform: none; letter-spacing: 0; }
+.tab-body h5.ns-sub.depth-3 { margin: 14px 0 5px; padding: 2px 0 2px 10px; border-left: 1px dashed var(--muted); font-size: 11px; color: var(--muted); font-weight: 600; text-transform: none; letter-spacing: 0; }
+.ns-sub-fields { padding-left: 10px; border-left: 1px dotted rgba(107,114,128,0.18); }
 .kv { border-collapse: collapse; }
 .kv td { padding: 4px 12px 4px 0; }
 .kv td:first-child { color: var(--muted); }
@@ -60,9 +69,19 @@ button.primary { background: var(--accent); color: var(--accent-ink); border-col
 .field .err { grid-column: 2; color: var(--err); font-size: 12px; min-height: 0; }
 .badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 500; line-height: 1.4; }
 .badge.ro { background: rgba(107,114,128,0.15); color: var(--muted); }
+.badge.wo { background: rgba(180,131,9,0.18); color: var(--warn); }
 .badge.secret { background: rgba(180,131,9,0.15); color: var(--warn); }
 .badge.reboot { background: rgba(37,99,235,0.15); color: var(--accent); }
 .badge.draft { background: rgba(37,99,235,0.15); color: var(--accent); }
+/* Read-only info fields — render the value as static text, not an input. */
+.field.ro-info .ro-value { font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink); padding: 5px 10px; background: rgba(107,114,128,0.08); border-radius: 4px; max-width: 360px; word-break: break-all; white-space: pre-wrap; min-height: 16px; }
+.field.ro-info .ro-value.empty { color: var(--muted); font-style: italic; }
+/* Write-only command fields — input plus a Send button that fires set+commit. */
+.field.wo-action .wo-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.field.wo-action .wo-controls input, .field.wo-action .wo-controls select, .field.wo-action .wo-controls textarea { flex: 1 1 auto; min-width: 180px; max-width: 360px; }
+.field.wo-action .wo-send { padding: 5px 14px; background: var(--accent); color: var(--accent-ink); border: 1px solid var(--accent); border-radius: 4px; cursor: pointer; font: inherit; }
+.field.wo-action .wo-send:hover:not(:disabled) { opacity: 0.9; }
+.field.wo-action .wo-send:disabled { opacity: 0.5; cursor: not-allowed; }
 .ns-toolbar { display: flex; gap: 8px; padding-bottom: 12px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
 .ns-toolbar button { font: inherit; padding: 5px 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--ink); cursor: pointer; }
 .ns-toolbar button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -87,8 +106,8 @@ button.primary { background: var(--accent); color: var(--accent-ink); border-col
 .log-line { white-space: pre-wrap; word-break: break-all; }
 .follow-pill { position: absolute; bottom: 14px; right: 18px; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--accent); color: var(--accent-ink); cursor: pointer; font: inherit; box-shadow: 0 1px 4px rgba(0,0,0,0.2); }
 .notice { padding: 8px 12px; background: rgba(180,131,9,0.12); color: var(--warn); border-radius: 4px; margin-bottom: 12px; }
-.toasts { position: fixed; bottom: 16px; right: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 1000; pointer-events: none; }
-.toast { padding: 10px 14px; background: var(--panel); border: 1px solid var(--border); border-left-width: 3px; border-radius: 4px; box-shadow: 0 2px 12px rgba(0,0,0,0.18); min-width: 220px; max-width: 360px; opacity: 0; transform: translateY(8px); transition: opacity 0.2s, transform 0.2s; pointer-events: auto; }
+.toasts { position: fixed; top: 56px; right: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 1000; pointer-events: none; }
+.toast { padding: 10px 14px; background: var(--panel); border: 1px solid var(--border); border-left-width: 3px; border-radius: 4px; box-shadow: 0 2px 12px rgba(0,0,0,0.18); min-width: 220px; max-width: 360px; opacity: 0; transform: translateY(-8px); transition: opacity 0.2s, transform 0.2s; pointer-events: auto; }
 .toast.show { opacity: 1; transform: translateY(0); }
 .toast.ok { border-left-color: var(--ok); }
 .toast.err { border-left-color: var(--err); }
@@ -142,7 +161,14 @@ const STAT_CMD_RANGE = [0x21, 0x29];
 
 const OP = { GetSchema:1, GetInfo:2, GetCapabilities:3, GetState:4, SetState:5, Commit:6, Discard:7, FactoryReset:8, Ack:100, Error:101 };
 const FT = { None:0, Bool:1, Int:2, Float:3, String:4, Bytes:5, Enum:6, BytesList:7 };
-const FF = { LIVE_APPLY:1, REBOOT_REQUIRED:2, READ_ONLY:4, SECRET:8 };
+// Provisioning field flags (Field.h FF_*). Mutually exclusive uses:
+//  - READ_ONLY:  info-only field (e.g. metrics). Server has a getter; client
+//                must not draft it. Renders as static value display.
+//  - WRITE_ONLY: command field. Setter fires on Commit; value isn't persisted
+//                or echoed in GET_STATE. Renders as input + Send button that
+//                fires SetState+Commit in a single action. Never enters
+//                the namespace draft store.
+const FF = { LIVE_APPLY:1, REBOOT_REQUIRED:2, READ_ONLY:4, SECRET:8, WRITE_ONLY:16 };
 const ERR_NAMES = { 0:'Ok', 1:'MalformedRequest', 2:'UnknownOp', 3:'UnknownNamespace', 4:'UnknownField', 5:'InvalidValue', 6:'ConstraintViolation', 7:'ReadOnly', 8:'StorageError', 9:'NotInitialized', 99:'Internal' };
 const FK = { Id:1, Name:2, Type:3, Flags:4, MinI:5, MaxI:6, MinF:7, MaxF:8, MaxLen:9, EnumValues:10, EnumLabels:11, Default:12, ElementSize:13, MaxCount:14 };
 const IK = { FirmwareVersion:1, SchemaVersion:2, NeedsReboot:3 };
@@ -310,6 +336,81 @@ const NODE_CONFIG_SCHEMA = {
     ],
     saveOrder: ['mode','channel','ssid','psk','ip','nm'],
     saveTrailerNote: 'Settings are written to the WiFi config sector and take effect on the next reboot.',
+    // ──────────────────────────────────────────────────────────────────
+    //  ⚠ FRAGILE: WiFi values are recovered by dumping raw EEPROM and
+    //  decoding at hardcoded offsets. The CMD_WIFI_* opcodes are
+    //  write-only in the firmware — there's no read counterpart — so the
+    //  only way to "Refresh" or display persisted values after a reboot
+    //  is to read EEPROM directly and trust the layout.
+    //
+    //  Dependencies (any of these breaking silently corrupts the display):
+    //    • ROM.h:55-60       — ADDR_CONF_SSID=0x00 / PSK=0x21 / IP=0x42 /
+    //                          NM=0x46 inside the 256-byte CONFIG sector
+    //    • ROM.h:47-48       — ADDR_CONF_WIFI=0xBA (mode) /
+    //                          ADDR_CONF_WCHN=0xBB (channel) in main EEPROM
+    //    • Boards.h          — CONFIG_OFFSET=0, EEPROM_OFFSET=EEPROM_SIZE
+    //                          -EEPROM_RESERVED. Different layouts on
+    //                          non-ESP32 platforms aren't handled here.
+    //    • CMD_CFG_READ      — the firmware gates this on
+    //                          `#if MCU_VARIANT == MCU_ESP32` (no NRF52 /
+    //                          AVR support). NRF52 falls back to a partial
+    //                          read with only mode/channel from main EEPROM.
+    //    • 0xFF sentinel     — uninitialised EEPROM bytes are 0xFF. The
+    //                          decoder treats a 0xFF run as "no value".
+    //
+    //  Better long-term fix: extend the firmware with read-side CMD_WIFI_*
+    //  opcodes (or a single CMD_WIFI_GET that returns the parsed struct).
+    //  Once available, drop this readFn and add `readable: true` to each
+    //  field so the generic legacy.readSection path handles them.
+    // ──────────────────────────────────────────────────────────────────
+    // Cached copies in state.nodeCfgEeprom / state.nodeCfgCfgSector are
+    // refreshed here so the EEPROM viewer also sees the latest bytes.
+    readFn: async (lc) => {
+      const out = {};
+      // Helper: decode a C-string in `buf` starting at offset, max `len` bytes.
+      // Stops at the first 0x00 or 0xFF (uninitialised EEPROM defaults to 0xFF).
+      const decodeCstr = (buf, start, max) => {
+        if (!buf) return '';
+        const end = Math.min(start + max, buf.length);
+        let n = start;
+        while (n < end && buf[n] !== 0x00 && buf[n] !== 0xFF) n++;
+        try { return new TextDecoder('utf-8', { fatal: false }).decode(buf.slice(start, n)); }
+        catch (_) { return ''; }
+      };
+      // ip4: 4 octets. 0xFF.0xFF.0xFF.0xFF means uninitialised → treat as DHCP.
+      const decodeIp = (buf, start) => {
+        if (!buf || buf.length < start + 4) return '0.0.0.0';
+        if (buf[start]===0xFF && buf[start+1]===0xFF && buf[start+2]===0xFF && buf[start+3]===0xFF) return '0.0.0.0';
+        return `${buf[start]}.${buf[start+1]}.${buf[start+2]}.${buf[start+3]}`;
+      };
+      try {
+        const cfg = await lc.readCfgSector();
+        state.nodeCfgCfgSector.set(cfg);
+        out.ssid = decodeCstr(cfg, 0x00, 32);
+        out.psk  = decodeCstr(cfg, 0x21, 32);
+        out.ip   = decodeIp(cfg, 0x42);
+        out.nm   = decodeIp(cfg, 0x46);
+      } catch (e) {
+        // CMD_CFG_READ not supported on this board (NRF52 path) — fall through
+        // with only the values we can read from main EEPROM.
+        console.warn('WiFi readFn: cfg sector read failed:', e.message || e);
+      }
+      try {
+        const ee = await lc.readEeprom();
+        state.nodeCfgEeprom.set(ee);
+        if (ee && ee.length > 0xBB) {
+          const m = ee[0xBA];
+          const c = ee[0xBB];
+          // Only surface values that look initialised. 0xFF on a fresh
+          // EEPROM means "no value" — leave it to the field default.
+          if (m === 0x00 || m === 0x01 || m === 0x02) out.mode = m;
+          if (c >= 1 && c <= 13) out.channel = c;
+        }
+      } catch (e) {
+        console.warn('WiFi readFn: EEPROM read failed:', e.message || e);
+      }
+      return out;
+    },
   },
   display: {
     label: 'Display',
@@ -486,7 +587,40 @@ class KissDecoder {
 
 // ===== Transports =====
 class SerialTransport {
-  constructor(){ this.port=null; this.reader=null; this.writer=null; this.onBytes=()=>{}; this.onStatus=()=>{}; this._abort=false; }
+  constructor(){
+    this.port=null;
+    this.reader=null;
+    this.writer=null;
+    this.onBytes=()=>{};
+    this.onStatus=()=>{};
+    this._abort=false;
+    // ────────────────────────────────────────────────────────────────────
+    // TEMPORARY WORKAROUND for a Chrome Web Serial quirk:
+    // After a physical USB disconnect/reconnect cycle (e.g. device reset
+    // on a CDC-USB board), Chrome leaves the SerialPort JS object in a
+    // half-bound state where port.open() throws "Failed to open serial
+    // port." until the user re-prompts via requestPort(). Permission to
+    // access the device persists, but the JS object's internal binding
+    // is wedged.
+    //
+    // To recover without forcing the user to re-pick, we listen for the
+    // navigator.serial 'disconnect' / 'connect' events: the 'connect' on
+    // our port signals that Chrome has finished rebinding to the
+    // re-enumerated device, at which point open() succeeds cleanly.
+    // reconnect() blocks on this signal before attempting open().
+    //
+    // Remove once Chrome bug is fixed (track: open issues against
+    // chromium/web-serial covering "SerialPort.open() fails after USB
+    // disconnect/reconnect"). Until then the bail-after-5-failures path
+    // in startReconnect() remains as a safety net for cases where no
+    // 'connect' event ever fires (e.g. permission revoked, device gone
+    // for good).
+    // ────────────────────────────────────────────────────────────────────
+    this._physicallyDisconnected = false;
+    this._physicalReconnectWaiters = [];
+    this._navConnectHandler = null;
+    this._navDisconnectHandler = null;
+  }
   static available(){ return !!navigator.serial; }
   _desc(){
     if (!this.port) return 'serial port';
@@ -495,10 +629,87 @@ class SerialTransport {
       ? `USB ${info.usbVendorId.toString(16).padStart(4,'0')}:${(info.usbProductId||0).toString(16).padStart(4,'0')}`
       : 'serial port';
   }
+  // Match a port from a connect/disconnect event against our handle. Tries
+  // instance equality first (the spec-blessed path), then falls back to
+  // VID/PID equality because in practice Chrome sometimes hands out a *new*
+  // SerialPort JS object for the same physical device after re-enumeration —
+  // making `ev.target === this.port` unreliable for our purpose.
+  _portsMatch(otherPort){
+    if (!this.port || !otherPort) return false;
+    if (otherPort === this.port) return true;
+    try {
+      const a = this.port.getInfo();
+      const b = otherPort.getInfo();
+      if (a.usbVendorId == null || b.usbVendorId == null) return false;
+      if (a.usbVendorId !== b.usbVendorId) return false;
+      if (a.usbProductId !== b.usbProductId) return false;
+      // usbSerialNumber is the most specific discriminator when available.
+      // If only one side has it, accept VID+PID alone — better to attempt
+      // open and let it fail than to miss a legitimate reconnect.
+      if (a.usbSerialNumber && b.usbSerialNumber) {
+        return a.usbSerialNumber === b.usbSerialNumber;
+      }
+      return true;
+    } catch (_) { return false; }
+  }
+  // See workaround note in the constructor. Installed on first connect, removed
+  // on disconnect. Filters events by port identity (with VID/PID fallback) so
+  // multiple SerialTransport instances (or other listeners) don't cross-talk.
+  _installNavSerialListeners(){
+    if (!navigator.serial || this._navConnectHandler) return;
+    this._navDisconnectHandler = (ev) => {
+      const match = this._portsMatch(ev.target);
+      console.debug('[serial] disconnect event, match=', match, 'target=', ev.target);
+      if (match) this._physicallyDisconnected = true;
+    };
+    this._navConnectHandler = (ev) => {
+      const match = this._portsMatch(ev.target);
+      console.debug('[serial] connect event, match=', match, 'target=', ev.target);
+      if (!match) return;
+      // Chrome may have handed us a fresh SerialPort instance for the
+      // re-enumerated device. Adopt it so subsequent open() / read /
+      // write all happen against the live handle, not the stale one.
+      if (ev.target !== this.port) {
+        console.debug('[serial] adopting new port instance from connect event');
+        this.port = ev.target;
+      }
+      this._physicallyDisconnected = false;
+      const ws = this._physicalReconnectWaiters.splice(0);
+      for (const r of ws) { try { r(); } catch(_) {} }
+    };
+    navigator.serial.addEventListener('disconnect', this._navDisconnectHandler);
+    navigator.serial.addEventListener('connect', this._navConnectHandler);
+  }
+  _removeNavSerialListeners(){
+    if (!navigator.serial) return;
+    if (this._navDisconnectHandler) {
+      navigator.serial.removeEventListener('disconnect', this._navDisconnectHandler);
+      this._navDisconnectHandler = null;
+    }
+    if (this._navConnectHandler) {
+      navigator.serial.removeEventListener('connect', this._navConnectHandler);
+      this._navConnectHandler = null;
+    }
+    // Resolve any pending waiters so they don't leak.
+    const ws = this._physicalReconnectWaiters.splice(0);
+    for (const r of ws) { try { r(); } catch(_) {} }
+  }
+  _waitForPhysicalReconnect(timeoutMs){
+    return new Promise((resolve, reject) => {
+      const wrap = () => { clearTimeout(timer); resolve(); };
+      const timer = setTimeout(() => {
+        const idx = this._physicalReconnectWaiters.indexOf(wrap);
+        if (idx >= 0) this._physicalReconnectWaiters.splice(idx, 1);
+        reject(new Error('timed out waiting for device to reappear'));
+      }, timeoutMs);
+      this._physicalReconnectWaiters.push(wrap);
+    });
+  }
   async connect(){
     this.onStatus({state:'connecting'});
     try {
       this.port = await navigator.serial.requestPort();
+      this._installNavSerialListeners();
       await this._open();
     } catch (e) {
       this.onStatus({state:'error', info: e.message || String(e)});
@@ -506,10 +717,17 @@ class SerialTransport {
     }
   }
   // Reconnect using the existing port handle — no user gesture needed because
-  // permission was granted during the initial connect.
+  // permission was granted during the initial connect. If the device went
+  // through a physical disconnect/reconnect, wait for the navigator.serial
+  // 'connect' event before opening (see workaround note in the constructor).
   async reconnect(){
     if (!this.port) throw new Error('no port to reconnect');
     this.onStatus({state:'connecting'});
+    console.debug('[serial] reconnect: _physicallyDisconnected=', this._physicallyDisconnected);
+    if (this._physicallyDisconnected) {
+      try { await this._waitForPhysicalReconnect(3000); }
+      catch (e) { console.debug('[serial] wait for physical reconnect timed out'); }
+    }
     await this._open();
   }
   async _open(){
@@ -545,6 +763,7 @@ class SerialTransport {
     this._abort = true;
     await this._releaseStreams();
     this.port = null;
+    this._removeNavSerialListeners();
     this.onStatus({state:'idle'});
   }
   // Soft-close that preserves the port handle so reconnect() can reopen it.
@@ -747,27 +966,35 @@ class ProvisioningClient {
     if (Array.isArray(body)) {
       for (const nsEntry of body) {
         if (!Array.isArray(nsEntry) || nsEntry.length < 3) continue;
+        // Schema v2: namespace entry is [id, name, parent_id, fields]. v1 was
+        // [id, name, fields]. Length distinguishes them; parent_id == 0 means
+        // root (no parent) in v2.
+        const v2 = nsEntry.length >= 4;
+        const parentId = v2 ? Number(nsEntry[2] || 0) : 0;
+        const fieldsRaw = v2 ? nsEntry[3] : nsEntry[2];
         const fields = [];
-        for (const fEntry of nsEntry[2]) {
-          if (!(fEntry instanceof Map)) continue;
-          fields.push({
-            id: Number(fEntry.get(FK.Id)),
-            name: fEntry.get(FK.Name),
-            type: Number(fEntry.get(FK.Type)),
-            flags: Number(fEntry.get(FK.Flags) || 0),
-            minI: fEntry.get(FK.MinI), maxI: fEntry.get(FK.MaxI),
-            minF: fEntry.get(FK.MinF), maxF: fEntry.get(FK.MaxF),
-            maxLen: fEntry.get(FK.MaxLen),
-            enumValues: fEntry.get(FK.EnumValues), enumLabels: fEntry.get(FK.EnumLabels),
-            // BytesList constraints (Type::BytesList only):
-            // elementSize = required exact byte length per entry (0 = variable)
-            // maxCount    = max number of entries (0 = unlimited)
-            elementSize: fEntry.get(FK.ElementSize),
-            maxCount: fEntry.get(FK.MaxCount),
-            default: fEntry.get(FK.Default),
-          });
+        if (Array.isArray(fieldsRaw)) {
+          for (const fEntry of fieldsRaw) {
+            if (!(fEntry instanceof Map)) continue;
+            fields.push({
+              id: Number(fEntry.get(FK.Id)),
+              name: fEntry.get(FK.Name),
+              type: Number(fEntry.get(FK.Type)),
+              flags: Number(fEntry.get(FK.Flags) || 0),
+              minI: fEntry.get(FK.MinI), maxI: fEntry.get(FK.MaxI),
+              minF: fEntry.get(FK.MinF), maxF: fEntry.get(FK.MaxF),
+              maxLen: fEntry.get(FK.MaxLen),
+              enumValues: fEntry.get(FK.EnumValues), enumLabels: fEntry.get(FK.EnumLabels),
+              // BytesList constraints (Type::BytesList only):
+              // elementSize = required exact byte length per entry (0 = variable)
+              // maxCount    = max number of entries (0 = unlimited)
+              elementSize: fEntry.get(FK.ElementSize),
+              maxCount: fEntry.get(FK.MaxCount),
+              default: fEntry.get(FK.Default),
+            });
+          }
         }
-        namespaces.push({ id: Number(nsEntry[0]), name: String(nsEntry[1]), fields });
+        namespaces.push({ id: Number(nsEntry[0]), name: String(nsEntry[1]), parentId, fields });
       }
     }
     return { namespaces };
@@ -1285,7 +1512,10 @@ async function afterConnect(){
     const schema = await client.getSchema();
     state.schema.set(schema);
     if (schema.namespaces.length > 0 && state.activeNsTab.get() == null) {
-      state.activeNsTab.set(schema.namespaces[0].id);
+      // Default to the first ROOT namespace (parentId == 0) — children render
+      // as sub-sections inside their root and aren't selectable on their own.
+      const firstRoot = schema.namespaces.find(n => !Number(n.parentId || 0)) || schema.namespaces[0];
+      state.activeNsTab.set(firstRoot.id);
     }
   } catch (e) { console.error('getSchema:', e); showToast('Failed to fetch schema: ' + e.message, 'err'); }
   // Probe whether the device responds to legacy (rnodeconf-style) KISS queries.
@@ -1333,6 +1563,14 @@ async function startReconnect(){
   state.nodeCfgNeedsReboot.set(false);
   const deadline = Date.now() + 30000;
   let delay = 150;
+  // Chrome returns "Failed to execute 'open' on 'SerialPort': Failed to open
+  // serial port." when the OS-level port handle is unrecoverable — usually
+  // after CDC renumeration leaves the saved port reference stale. No amount
+  // of retrying will fix it; only navigator.serial.requestPort() will, and
+  // that needs a user gesture. Bail out after a few consecutive matches so
+  // we surface a "click Connect" prompt instead of spinning for 30s.
+  let staleOpenFailures = 0;
+  let stalePortBailout = false;
   while (myToken === reconnectToken && Date.now() < deadline && !userInitiatedDisconnect) {
     try {
       if (lastTransportName === 'ws') {
@@ -1348,6 +1586,7 @@ async function startReconnect(){
         // re-sync the decoder. WS gets a fresh client above, so this is skipped.
         if (client && client.resetSession) client.resetSession();
         if (legacy && legacy.resetSession) legacy.resetSession();
+        staleOpenFailures = 0;
       }
       if (myToken !== reconnectToken) return;  // cancelled mid-flight
 
@@ -1357,10 +1596,12 @@ async function startReconnect(){
       // hit a 5s getInfo timeout. The probe keeps "Reconnecting…" displayed
       // for the real duration of the device-side reboot.
       let info = null;
+      let lastProbeErr = null;
       while (myToken === reconnectToken && Date.now() < deadline && !userInitiatedDisconnect) {
         try { info = await client.getInfo(800); break; }
-        catch (_) { await new Promise(r => setTimeout(r, 200)); }
+        catch (e) { lastProbeErr = e; await new Promise(r => setTimeout(r, 200)); }
       }
+      if (lastProbeErr && !info) console.warn('reconnect probe last error:', lastProbeErr);
       if (myToken !== reconnectToken) return;
       if (!info) throw new Error('device did not respond after reconnect');
 
@@ -1373,7 +1614,8 @@ async function startReconnect(){
         const schema = await client.getSchema();
         state.schema.set(schema);
         if (schema.namespaces.length > 0 && state.activeNsTab.get() == null) {
-          state.activeNsTab.set(schema.namespaces[0].id);
+          const firstRoot = schema.namespaces.find(n => !Number(n.parentId || 0)) || schema.namespaces[0];
+          state.activeNsTab.set(firstRoot.id);
         }
       } catch (e) {
         console.error('getSchema after reconnect:', e);
@@ -1384,13 +1626,20 @@ async function startReconnect(){
       return;
     } catch (e) {
       // Device not back yet — wait and retry with mild backoff.
+      const msg = e && e.message ? e.message : String(e);
+      console.warn('reconnect attempt failed:', msg);
+      if (/Failed to open/i.test(msg) && lastTransportName !== 'ws') {
+        if (++staleOpenFailures >= 5) { stalePortBailout = true; break; }
+      }
       await new Promise(r => setTimeout(r, delay));
       delay = Math.min(delay + 100, 1000);
     }
   }
   if (myToken !== reconnectToken) return;
   state.reconnecting.set(false);
-  if (Date.now() >= deadline) {
+  if (stalePortBailout) {
+    showToast('Serial port handle went stale (device may have renumerated). Click Connect to re-prompt.', 'warn');
+  } else if (Date.now() >= deadline) {
     showToast('Auto-reconnect gave up after 30 seconds', 'warn');
   }
   // Treat as fully disconnected.
@@ -1399,27 +1648,62 @@ async function startReconnect(){
   state.conn.set({ state: 'idle' });
 }
 async function fetchNamespaceIfNeeded(nsId){
-  if (state.nsLoaded.get()[nsId] || state.nsLoading.get()[nsId]) return;
+  // The argument is a ROOT namespace id. Fetches that namespace AND all of its
+  // descendants in two batched getState calls (one for committed, one for
+  // merged-with-draft). Each child is populated into state.nsState alongside
+  // the root so the panel can render them as sub-sections.
   if (!client) return;
-  state.nsLoading.update(s => { s[nsId] = true; });
+  const schema = state.schema.get();
+  const ids = getNsTreeIds(schema, nsId);
+  if (ids.length === 0) ids.push(Number(nsId));   // schema missing → at least try the root
+  // Skip if every id in the tree is already loaded or already loading.
+  const loaded = state.nsLoaded.get();
+  const loading = state.nsLoading.get();
+  const todo = ids.filter(id => !loaded[id] && !loading[id]);
+  if (todo.length === 0) return;
+  state.nsLoading.update(s => { for (const id of todo) s[id] = true; });
   try {
-    const committed = (await client.getState([nsId], false))[nsId] || {};
-    const merged = (await client.getState([nsId], true))[nsId] || {};
-    const draft = {};
-    for (const fid in merged) {
-      if (!valuesEqual(merged[fid], committed[fid])) draft[Number(fid)] = merged[fid];
-    }
-    state.nsState.update(s => { s[nsId] = { committed, draft }; });
-    state.nsLoaded.update(s => { s[nsId] = true; });
-    // If the firmware came back with any pending fields for this ns, it means
-    // a draft is already staged on the device (e.g. from a prior session).
-    if (Object.keys(draft).length > 0) state.firmwareHasDraft.set(true);
+    const committedAll = await client.getState(todo, false);
+    const mergedAll    = await client.getState(todo, true);
+    let firmwareDraftAny = false;
+    state.nsState.update(s => {
+      for (const id of todo) {
+        const committed = committedAll[id] || {};
+        const merged    = mergedAll[id]    || {};
+        // FF_READ_ONLY fields (metrics/instrumentation) report live runtime
+        // values via their getter. Two consecutive GetState calls — one for
+        // committed, one for merged — can sample slightly different values
+        // (e.g. current_rssi, channel utilisation), producing a phantom
+        // "draft" diff that's really just live-value drift. Build a set of
+        // read-only fids up front and exclude them from the diff so the
+        // pending-changes count never reflects this drift.
+        const ns = getNsById(schema, id);
+        const roFids = new Set();
+        if (ns && Array.isArray(ns.fields)) {
+          for (const f of ns.fields) if ((f.flags|0) & FF.READ_ONLY) roFids.add(Number(f.id));
+        }
+        const draft = {};
+        const firmwareDraftFids = new Set();
+        for (const fid in merged) {
+          const nfid = Number(fid);
+          if (roFids.has(nfid)) continue;
+          if (!valuesEqual(merged[fid], committed[fid])) {
+            draft[nfid] = merged[fid];
+            firmwareDraftFids.add(nfid);
+          }
+        }
+        s[id] = { committed, draft, firmwareDraftFids };
+        if (firmwareDraftFids.size > 0) firmwareDraftAny = true;
+      }
+    });
+    state.nsLoaded.update(s => { for (const id of todo) s[id] = true; });
+    if (firmwareDraftAny) state.firmwareHasDraft.set(true);
     recomputeHasDraft();
   } catch (e) {
     console.error('getState failed:', e);
     showToast('Failed to load ' + nsId + ': ' + e.message, 'err');
   } finally {
-    state.nsLoading.update(s => { delete s[nsId]; });
+    state.nsLoading.update(s => { for (const id of todo) delete s[id]; });
   }
 }
 function valuesEqual(a, b){
@@ -1459,7 +1743,16 @@ function setDraftValue(nsId, field, value, ctx){
   c.state.update(s => {
     if (!s[nsId]) s[nsId] = { committed: {}, draft: {} };
     const committed = s[nsId].committed[field.id];
-    if (valuesEqual(value, committed)) delete s[nsId].draft[field.id];
+    const fwSet = s[nsId].firmwareDraftFids;
+    const fwHasIt = fwSet && fwSet.has && fwSet.has(field.id);
+    // If the user types back to the committed value AND the firmware doesn't
+    // hold a pending draft for this field, drop the local entry — there's
+    // truly nothing to save. But if the firmware *does* have a draft for
+    // this fid (from a previous Save), keep the local entry so Save remains
+    // enabled; clicking Save will re-send the value and the firmware will
+    // dedup it against working() and erase its own draft, bringing the two
+    // sides back in sync.
+    if (valuesEqual(value, committed) && !fwHasIt) delete s[nsId].draft[field.id];
     else s[nsId].draft[field.id] = value;
   });
   recomputeHasDraft(ctx);
@@ -1507,6 +1800,40 @@ function nsDraftCount(nsId, ctx){
   return s ? Object.keys(s.draft || {}).length : 0;
 }
 
+// ===== Namespace tree (schema v2: namespace.parentId, parentId==0 == root) =====
+function getNsById(schema, nsId){
+  if (!schema || !Array.isArray(schema.namespaces)) return null;
+  return schema.namespaces.find(n => Number(n.id) === Number(nsId)) || null;
+}
+// Direct children of a namespace id (or roots if parentId==0).
+function getChildrenOf(schema, parentId){
+  if (!schema || !Array.isArray(schema.namespaces)) return [];
+  return schema.namespaces.filter(n => Number(n.parentId || 0) === Number(parentId));
+}
+// Depth-first traversal of a namespace and its descendants. Returns ids in
+// the order: root, child1, child1.grandchild1, ..., child2, child2.gc1, ...
+// Used for fetching the whole tree in one go and for rendering sub-sections
+// in a stable order.
+function getNsTreeIds(schema, rootId){
+  const out = [];
+  if (!schema) return out;
+  const walk = (id) => {
+    const ns = getNsById(schema, id);
+    if (!ns) return;
+    out.push(Number(ns.id));
+    for (const child of getChildrenOf(schema, ns.id)) walk(child.id);
+  };
+  walk(rootId);
+  return out;
+}
+// Total drafted-field count across a namespace and all its descendants. Used
+// for the sidenav "•" indicator on root namespaces.
+function nsTreeDraftCount(schema, rootId, ctx){
+  let n = 0;
+  for (const id of getNsTreeIds(schema, rootId)) n += nsDraftCount(id, ctx);
+  return n;
+}
+
 // ===== Toasts =====
 function showToast(text, kind){
   const host = document.getElementById('toasts');
@@ -1521,28 +1848,45 @@ function showToast(text, kind){
 
 // ===== Operations =====
 async function saveNamespace(nsId){
+  // Save the namespace AND all its descendants in a single SetState request.
+  // Drafts from any sub-section in the tree contribute to the payload.
   if (!client) return;
-  const nsObj = state.nsState.get()[nsId];
   const schema = state.schema.get();
-  if (!nsObj || !schema) return;
-  const ns = schema.namespaces.find(n => n.id === nsId);
-  const fields = {};
-  for (const fidStr in nsObj.draft) {
-    const fid = Number(fidStr);
-    const f = ns.fields.find(f => f.id === fid);
-    if (!f) continue;
-    fields[fid] = { type: f.type, value: nsObj.draft[fid] };
+  if (!schema) return;
+  const treeIds = getNsTreeIds(schema, nsId);
+  const stateMap = {};
+  let totalDraftFields = 0;
+  for (const id of treeIds) {
+    const nsObj = state.nsState.get()[id];
+    if (!nsObj) continue;
+    const ns = getNsById(schema, id);
+    if (!ns) continue;
+    const fields = {};
+    for (const fidStr in nsObj.draft) {
+      const fid = Number(fidStr);
+      const f = ns.fields.find(ff => ff.id === fid);
+      if (!f) continue;
+      fields[fid] = { type: f.type, value: nsObj.draft[fid] };
+    }
+    if (Object.keys(fields).length > 0) { stateMap[id] = fields; totalDraftFields += Object.keys(fields).length; }
   }
+  if (Object.keys(stateMap).length === 0) return;
   try {
-    const r = await client.setState({ [nsId]: fields });
-    const errs = {};
-    for (const fe of r.fieldErrors) if (fe.ns === nsId) errs[fe.field] = fe.codeName;
-    state.nsServerErrors.update(s => { s[nsId] = errs; });
-    state.nsLoaded.update(s => { delete s[nsId]; });
+    const r = await client.setState(stateMap);
+    // Spread server-side field errors back to their owning namespace.
+    const perNs = {};
+    for (const fe of r.fieldErrors) {
+      if (!perNs[fe.ns]) perNs[fe.ns] = {};
+      perNs[fe.ns][fe.field] = fe.codeName;
+    }
+    state.nsServerErrors.update(s => { for (const id of treeIds) s[id] = perNs[id] || {}; });
+    state.nsLoaded.update(s => { for (const id of treeIds) delete s[id]; });
     if (r.applied > 0) state.firmwareHasDraft.set(true);
     await fetchNamespaceIfNeeded(nsId);
+    const ns = getNsById(schema, nsId);
+    const label = ns ? ns.name : String(nsId);
     if (r.fieldErrors.length === 0) {
-      showToast(`Saved ${r.applied} field${r.applied !== 1 ? 's' : ''} to "${ns.name}"`, 'ok');
+      showToast(`Saved ${r.applied} field${r.applied !== 1 ? 's' : ''} to "${label}"`, 'ok');
     } else {
       showToast(`Saved with ${r.fieldErrors.length} error${r.fieldErrors.length !== 1 ? 's' : ''}`, 'warn');
     }
@@ -1551,11 +1895,15 @@ async function saveNamespace(nsId){
   }
 }
 async function revertNamespace(nsId){
+  // Revert: discard firmware-side drafts AND clear local drafts for this
+  // namespace and all its descendants, then re-fetch the tree.
   if (!client) return;
+  const schema = state.schema.get();
+  const treeIds = schema ? getNsTreeIds(schema, nsId) : [Number(nsId)];
   try {
-    await client.discard([nsId]);
-    state.nsServerErrors.update(s => { delete s[nsId]; });
-    state.nsLoaded.update(s => { delete s[nsId]; });
+    await client.discard(treeIds);
+    state.nsServerErrors.update(s => { for (const id of treeIds) delete s[id]; });
+    state.nsLoaded.update(s => { for (const id of treeIds) delete s[id]; });
     await fetchNamespaceIfNeeded(nsId);
     showToast('Reverted draft changes', 'ok');
   } catch (e) {
@@ -1563,7 +1911,9 @@ async function revertNamespace(nsId){
   }
 }
 async function refreshNamespace(nsId){
-  state.nsLoaded.update(s => { delete s[nsId]; });
+  const schema = state.schema.get();
+  const treeIds = schema ? getNsTreeIds(schema, nsId) : [Number(nsId)];
+  state.nsLoaded.update(s => { for (const id of treeIds) delete s[id]; });
   await fetchNamespaceIfNeeded(nsId);
 }
 async function commitAll(){
@@ -1648,14 +1998,45 @@ async function factoryReset(){
 const slots = {
   topbar: el('div'),
   tabbar: el('div'),
+  rebootbanner: el('div'),
   body: el('div', { class: 'body' }),
   bottombar: el('div'),
 };
 const app = document.getElementById('app');
 app.appendChild(slots.topbar);
 app.appendChild(slots.tabbar);
+app.appendChild(slots.rebootbanner);
 app.appendChild(slots.body);
 app.appendChild(slots.bottombar);
+
+// Global reboot banner — lives outside the tab body so it stays visible on
+// every tab, not just Status. Shown when EITHER the Provisioning subsystem
+// has staged reboot-required changes (info.needsReboot) OR a Node Config
+// save touched a reboot-required section (state.nodeCfgNeedsReboot).
+// Cleared on reboot.
+function buildRebootBanner(){
+  const banner = el('div', { class: 'notice', style: {
+    display: 'none', alignItems: 'center', gap: '12px',
+    margin: '8px 12px 0', borderRadius: '4px',
+  } });
+  const msg = el('span', { style: { flex: '1' } }, 'Reboot recommended to apply committed changes.');
+  const btn = el('button', { class: 'primary', onclick: reboot }, 'Reboot now');
+  banner.appendChild(msg);
+  banner.appendChild(btn);
+  function update(){
+    const info = state.info.get();
+    const connected = state.conn.get().state === 'connected';
+    const show = ((info && info.needsReboot) || state.nodeCfgNeedsReboot.get());
+    banner.style.display = show ? 'flex' : 'none';
+    btn.disabled = !connected;
+  }
+  state.info.subscribe(update);
+  state.nodeCfgNeedsReboot.subscribe(update);
+  state.conn.subscribe(update);
+  update();
+  return banner;
+}
+slots.rebootbanner.appendChild(buildRebootBanner());
 
 // Cleanup callbacks for the body's currently-mounted tab. Run before building a new
 // tab so the new tab's builder can push its own cleanups into the (now empty) list.
@@ -1818,15 +2199,8 @@ function buildStatusTab(){
     const conn = state.conn.get();
     const connected = conn.state === 'connected';
     const info = state.info.get();
-    // Reboot banner: shown when EITHER the Provisioning subsystem has staged
-    // reboot-required changes (info.needsReboot) OR a Node Config save touched
-    // a reboot-required section (state.nodeCfgNeedsReboot). Cleared on reboot.
-    if ((info && info.needsReboot) || state.nodeCfgNeedsReboot.get()) {
-      root.appendChild(el('div', { class: 'notice', style: { display: 'flex', alignItems: 'center', gap: '12px' } }, [
-        el('span', { style: { flex: '1' } }, 'Reboot recommended to apply committed changes.'),
-        el('button', { class: 'primary', onclick: reboot, disabled: !connected }, 'Reboot now'),
-      ]));
-    }
+    // (Reboot banner is rendered globally outside the tab body so it stays
+    // visible on every tab. See buildRebootBanner() near the slot setup.)
     if (!connected) {
       root.appendChild(el('em', null, 'Select a transport and click Connect.'));
       return;
@@ -1938,8 +2312,219 @@ function parseBytesListHex(text){
   return out;
 }
 
+// Format a value for display in a read-only / info field. Returns { text, empty }.
+// `empty` flags styling for "no value yet".
+function renderReadOnlyValue(f, value){
+  if (value == null) return { text: '—', empty: true };
+  if (f.type === FT.Bool) return { text: value ? '✓ true' : '✗ false', empty: false };
+  if (f.type === FT.Enum) {
+    if (Array.isArray(f.enumValues)) {
+      const idx = f.enumValues.findIndex(v => Number(v) === Number(value));
+      if (idx >= 0 && Array.isArray(f.enumLabels) && f.enumLabels[idx]) {
+        return { text: `${f.enumLabels[idx]} (${value})`, empty: false };
+      }
+    }
+    return { text: String(value), empty: false };
+  }
+  if (f.type === FT.Bytes) {
+    if (value instanceof Uint8Array) {
+      if (value.length === 0) return { text: '(empty)', empty: true };
+      return { text: Array.from(value).map(b => b.toString(16).padStart(2,'0')).join(''), empty: false };
+    }
+    return { text: '—', empty: true };
+  }
+  if (f.type === FT.BytesList) {
+    if (Array.isArray(value)) {
+      if (value.length === 0) return { text: '(empty list)', empty: true };
+      return { text: value.map(e => e instanceof Uint8Array
+        ? Array.from(e).map(b => b.toString(16).padStart(2,'0')).join('') : '').join('\n'), empty: false };
+    }
+    return { text: '—', empty: true };
+  }
+  if (f.unit) return { text: `${value} ${f.unit}`, empty: false };
+  return { text: String(value), empty: false };
+}
+
+// Read-only info field: render a static value display (not a disabled input).
+// Value comes from the server's getter via GET_STATE; we read from committed.
+// Never participates in nsState.draft, never gates Save.
+function buildFieldRowReadOnly(nsId, f, c){
+  const row = el('div', { class: 'field ro-info' });
+  const labelEl = el('label');
+  const labelText = el('span', null, f.label || f.name);
+  const badges = el('span', { style: { display: 'inline-flex', gap: '4px' } });
+  labelEl.appendChild(labelText);
+  labelEl.appendChild(badges);
+  const valueEl = el('div', { class: 'ro-value' });
+  row.appendChild(labelEl);
+  row.appendChild(valueEl);
+  const secret = !!(f.flags & FF.SECRET);
+  const reboot = !!(f.flags & FF.REBOOT_REQUIRED);
+  function update(){
+    const nsObj = c.state.get()[nsId] || { committed: {}, draft: {} };
+    // FF_SECRET fields aren't returned in GET_STATE, so committed will be empty.
+    const value = (f.id in nsObj.committed) ? nsObj.committed[f.id] : null;
+    const rendered = secret && value == null
+      ? { text: '(secret — not exposed)', empty: true }
+      : renderReadOnlyValue(f, value);
+    valueEl.textContent = rendered.text;
+    valueEl.classList.toggle('empty', rendered.empty);
+    badges.innerHTML = '';
+    badges.appendChild(el('span', { class: 'badge ro' }, 'read-only'));
+    if (secret) badges.appendChild(el('span', { class: 'badge secret' }, 'secret'));
+    if (reboot) badges.appendChild(el('span', { class: 'badge reboot' }, '↻ reboot'));
+  }
+  update();
+  return { row, update, fieldId: f.id, hasDraftError: () => false };
+}
+
+// Write-only command field: input + Send button. Send fires SetState+Commit
+// for this single field. Value isn't stored in nsState.draft and the field
+// doesn't gate Save / Revert / Commit-all.
+function buildFieldRowWriteOnly(nsId, f, c){
+  const row = el('div', { class: 'field wo-action' });
+  const labelEl = el('label');
+  const labelText = el('span', null, f.label || f.name);
+  const badges = el('span', { style: { display: 'inline-flex', gap: '4px' } });
+  labelEl.appendChild(labelText);
+  labelEl.appendChild(badges);
+  const controls = el('div', { class: 'wo-controls' });
+  const errEl = el('div', { class: 'err' });
+  row.appendChild(labelEl);
+  row.appendChild(controls);
+  row.appendChild(errEl);
+
+  const secret = !!(f.flags & FF.SECRET);
+  const reboot = !!(f.flags & FF.REBOOT_REQUIRED);
+
+  // Build an input matching the field type. WO fields have no draft store —
+  // the live input value is read directly on Send.
+  let input;
+  if (f.type === FT.Bool) {
+    input = el('input', { type: 'checkbox' });
+  } else if (f.type === FT.Int) {
+    input = el('input', {
+      type: 'number', step: '1',
+      min: f.minI != null ? Number(f.minI) : undefined,
+      max: f.maxI != null ? Number(f.maxI) : undefined,
+    });
+  } else if (f.type === FT.Float) {
+    input = el('input', {
+      type: 'number', step: 'any',
+      min: f.minF != null ? Number(f.minF) : undefined,
+      max: f.maxF != null ? Number(f.maxF) : undefined,
+    });
+  } else if (f.type === FT.String) {
+    const big = f.maxLen && Number(f.maxLen) > 80;
+    input = big
+      ? el('textarea', { rows: '3', maxlength: Number(f.maxLen) })
+      : el('input', { type: secret ? 'password' : 'text', maxlength: f.maxLen ? Number(f.maxLen) : undefined });
+  } else if (f.type === FT.Enum) {
+    input = el('select');
+    if (Array.isArray(f.enumValues)) {
+      const labels = Array.isArray(f.enumLabels) ? f.enumLabels : null;
+      for (let i = 0; i < f.enumValues.length; ++i) {
+        const ev = Number(f.enumValues[i]);
+        input.appendChild(el('option', { value: String(ev) }, labels && labels[i] ? labels[i] : String(ev)));
+      }
+    }
+  } else if (f.type === FT.Bytes) {
+    input = el('input', { type: 'text', placeholder: f.maxLen ? `hex (max ${f.maxLen} bytes)` : 'hex' });
+  } else if (f.type === FT.BytesList) {
+    const sz = f.elementSize != null ? Number(f.elementSize) : 0;
+    const max = f.maxCount != null ? Number(f.maxCount) : 0;
+    const hints = [];
+    if (sz > 0) hints.push(`${sz} bytes per entry`);
+    if (max > 0) hints.push(`up to ${max} entries`);
+    hints.push('one per line');
+    input = el('textarea', { rows: '3', placeholder: 'hex (' + hints.join(', ') + ')',
+      style: { fontFamily: 'ui-monospace, Menlo, monospace' } });
+  } else {
+    input = el('span', null, '(unknown type)');
+  }
+  controls.appendChild(input);
+
+  const sendBtn = el('button', { class: 'wo-send' }, 'Send');
+  controls.appendChild(sendBtn);
+
+  // Parse the input element into a typed value matching the field's `type`.
+  function readInputValue(){
+    if (f.type === FT.Bool) return input.checked;
+    if (f.type === FT.Int || f.type === FT.Enum) {
+      return input.value === '' ? null : parseInt(input.value, 10);
+    }
+    if (f.type === FT.Float) {
+      return input.value === '' ? null : parseFloat(input.value);
+    }
+    if (f.type === FT.String) return input.value;
+    if (f.type === FT.Bytes) {
+      const t = String(input.value || '').replace(/[^0-9a-fA-F]/g, '');
+      if (t.length % 2 !== 0) return { __error: 'odd hex' };
+      const u8 = new Uint8Array(t.length / 2);
+      for (let i = 0; i < u8.length; ++i) u8[i] = parseInt(t.substr(i*2, 2), 16);
+      return u8;
+    }
+    if (f.type === FT.BytesList) {
+      const list = parseBytesListHex(input.value);
+      if (list == null) return { __error: 'odd hex on one of the lines' };
+      return list;
+    }
+    return null;
+  }
+
+  sendBtn.onclick = async () => {
+    if (!client) { showToast('Not connected', 'err'); return; }
+    const v = readInputValue();
+    if (v && typeof v === 'object' && '__error' in v) {
+      errEl.textContent = v.__error; row.classList.add('has-err'); return;
+    }
+    const verr = validateValue(f, v);
+    if (verr) { errEl.textContent = verr; row.classList.add('has-err'); return; }
+    errEl.textContent = ''; row.classList.remove('has-err');
+    sendBtn.disabled = true;
+    const prevLbl = sendBtn.textContent || 'Send';
+    sendBtn.textContent = 'Sending…';
+    try {
+      // SetState puts the value in the firmware's per-field draft (write-only
+      // accepts drafts but doesn't persist). Commit fires the setter once.
+      const res = await client.setState({ [nsId]: { [f.id]: { type: f.type, value: v } } });
+      if (res.fieldErrors && res.fieldErrors.length > 0) {
+        const fe = res.fieldErrors.find(e => e.ns === nsId && e.field === f.id) || res.fieldErrors[0];
+        errEl.textContent = 'server: ' + fe.codeName;
+        row.classList.add('has-err');
+        showToast(`Send rejected: ${fe.codeName}`, 'err');
+        return;
+      }
+      await client.commit([nsId]);
+      showToast(`Sent ${f.label || f.name}`, 'ok');
+    } catch (e) {
+      errEl.textContent = e.message || String(e);
+      row.classList.add('has-err');
+      showToast(`Send failed: ${e.message || e}`, 'err');
+    } finally {
+      sendBtn.disabled = false;
+      sendBtn.textContent = prevLbl;
+    }
+  };
+
+  function update(){
+    badges.innerHTML = '';
+    badges.appendChild(el('span', { class: 'badge wo' }, 'command'));
+    if (secret) badges.appendChild(el('span', { class: 'badge secret' }, 'secret'));
+    if (reboot) badges.appendChild(el('span', { class: 'badge reboot' }, '↻ reboot'));
+  }
+  update();
+  return { row, update, fieldId: f.id, hasDraftError: () => false };
+}
+
 function buildFieldRow(nsId, f, ctx){
   const c = _ctxOr(ctx);
+  // FF_WRITE_ONLY and FF_READ_ONLY are routed to specialised renderers — they
+  // don't participate in the namespace draft store and they don't gate Save.
+  const wo = !!(f.flags & FF.WRITE_ONLY);
+  const ro = !!(f.flags & FF.READ_ONLY) && !wo;
+  if (ro) return buildFieldRowReadOnly(nsId, f, c);
+  if (wo) return buildFieldRowWriteOnly(nsId, f, c);
   const row = el('div', { class: 'field' });
   const labelEl = el('label');
   const labelText = el('span', null, f.label || f.name);
@@ -1952,18 +2537,19 @@ function buildFieldRow(nsId, f, ctx){
   row.appendChild(inputHost);
   row.appendChild(errEl);
 
-  const ro = !!(f.flags & FF.READ_ONLY);
+  // FF_READ_ONLY already routed to buildFieldRowReadOnly above (and FF_WRITE_ONLY
+  // to buildFieldRowWriteOnly), so we never need to disable inputs here.
   const secret = !!(f.flags & FF.SECRET);
   const reboot = !!(f.flags & FF.REBOOT_REQUIRED);
 
   // Build input ONCE; we never recreate it on subsequent state changes.
   let input;
   if (f.type === FT.Bool) {
-    input = el('input', { type: 'checkbox', disabled: ro });
+    input = el('input', { type: 'checkbox', disabled: false });
     input.addEventListener('input', () => setDraftValue(nsId, f, input.checked, c));
   } else if (f.type === FT.Int) {
     input = el('input', {
-      type: 'number', step: '1', disabled: ro,
+      type: 'number', step: '1', disabled: false,
       min: f.minI != null ? Number(f.minI) : undefined,
       max: f.maxI != null ? Number(f.maxI) : undefined,
     });
@@ -1973,7 +2559,7 @@ function buildFieldRow(nsId, f, ctx){
     });
   } else if (f.type === FT.Float) {
     input = el('input', {
-      type: 'number', step: 'any', disabled: ro,
+      type: 'number', step: 'any', disabled: false,
       min: f.minF != null ? Number(f.minF) : undefined,
       max: f.maxF != null ? Number(f.maxF) : undefined,
     });
@@ -1984,13 +2570,13 @@ function buildFieldRow(nsId, f, ctx){
   } else if (f.type === FT.String) {
     const big = f.maxLen && Number(f.maxLen) > 80;
     if (big) {
-      input = el('textarea', { rows: '3', maxlength: Number(f.maxLen), disabled: ro });
+      input = el('textarea', { rows: '3', maxlength: Number(f.maxLen), disabled: false });
     } else {
-      input = el('input', { type: secret ? 'password' : 'text', maxlength: f.maxLen ? Number(f.maxLen) : undefined, disabled: ro });
+      input = el('input', { type: secret ? 'password' : 'text', maxlength: f.maxLen ? Number(f.maxLen) : undefined, disabled: false });
     }
     input.addEventListener('input', () => setDraftValue(nsId, f, input.value, c));
   } else if (f.type === FT.Enum) {
-    input = el('select', { disabled: ro });
+    input = el('select', { disabled: false });
     if (Array.isArray(f.enumValues)) {
       const labels = Array.isArray(f.enumLabels) ? f.enumLabels : null;
       for (let i = 0; i < f.enumValues.length; ++i) {
@@ -2000,7 +2586,7 @@ function buildFieldRow(nsId, f, ctx){
     }
     input.addEventListener('change', () => setDraftValue(nsId, f, parseInt(input.value, 10), c));
   } else if (f.type === FT.Bytes) {
-    input = el('input', { type: 'text', placeholder: f.maxLen ? `hex (max ${f.maxLen} bytes)` : 'hex', disabled: ro });
+    input = el('input', { type: 'text', placeholder: f.maxLen ? `hex (max ${f.maxLen} bytes)` : 'hex', disabled: false });
     input.addEventListener('input', () => {
       const t = input.value.replace(/[^0-9a-fA-F]/g, '');
       if (t.length % 2 !== 0) return;
@@ -2017,7 +2603,7 @@ function buildFieldRow(nsId, f, ctx){
     if (sz > 0) hints.push(`${sz} bytes / ${sz*2} hex chars per entry`);
     if (max > 0) hints.push(`up to ${max} entries`);
     hints.push('one per line');
-    input = el('textarea', { rows: '5', disabled: ro, placeholder: 'hex (' + hints.join(', ') + ')',
+    input = el('textarea', { rows: '5', disabled: false, placeholder: 'hex (' + hints.join(', ') + ')',
       style: { fontFamily: 'ui-monospace, Menlo, monospace', minWidth: '360px' } });
     input.addEventListener('input', () => {
       const list = parseBytesListHex(input.value);
@@ -2087,11 +2673,19 @@ function buildFieldRow(nsId, f, ctx){
 }
 
 function buildNamespacePanel(nsId){
+  // Renders a root namespace AND any descendant namespaces as nested
+  // sub-sections inside the same panel. One toolbar at the top operates on
+  // the whole tree (Save / Revert / Refresh). Field rows from every namespace
+  // in the tree feed into the same hasDraftError / Save-enable computation.
   const wrap = el('div');
   const schema = state.schema.get();
-  const ns = schema && schema.namespaces.find(n => n.id === nsId);
-  if (!ns) { wrap.appendChild(el('em', null, 'Unknown namespace')); return { node: wrap, cleanups: [] }; }
+  const rootNs = schema && getNsById(schema, nsId);
+  if (!rootNs) { wrap.appendChild(el('em', null, 'Unknown namespace')); return { node: wrap, cleanups: [] }; }
+  const treeIds = getNsTreeIds(schema, nsId);
 
+  // Header + toolbar
+  const header = el('h2', { class: 'ns-h' }, rootNs.name);
+  wrap.appendChild(header);
   const toolbar = el('div', { class: 'ns-toolbar' });
   const saveBtn = el('button', null, 'Save namespace');
   const revertBtn = el('button', null, 'Revert');
@@ -2104,15 +2698,60 @@ function buildNamespacePanel(nsId){
   toolbar.appendChild(refreshBtn);
   wrap.appendChild(toolbar);
 
+  // Build one section per namespace in the tree. The root namespace's fields
+  // come first, then each descendant in depth-first order. Each descendant
+  // gets a sub-section heading (h3) so the user sees the hierarchy.
   const fieldHandles = [];
-  for (const f of ns.fields) {
-    const h = buildFieldRow(nsId, f);
-    wrap.appendChild(h.row);
-    fieldHandles.push(h);
+  // Depth of a namespace relative to the panel's root. Depth 0 = the root
+  // itself (rendered as the h2 at the top), depth 1 = direct child rendered as
+  // "section" (h3), depth 2 = grandchild rendered as "sub-section" (h4), and
+  // depth 3+ keeps stepping down to h5 with progressive indentation.
+  function depthOf(id){
+    if (Number(id) === Number(nsId)) return 0;
+    let cur = getNsById(schema, id);
+    let d = 0;
+    while (cur && Number(cur.id) !== Number(nsId)) {
+      d++;
+      if (!cur.parentId) return -1;     // not actually a descendant of nsId
+      cur = getNsById(schema, cur.parentId);
+      if (d > 32) break;                 // cycle / pathological depth guard
+    }
+    return cur ? d : -1;
+  }
+  // Pixels of left-indent per depth level. Matched between heading and the
+  // fields container so a sub-section's fields line up under its heading.
+  const INDENT_PX = 16;
+  for (const id of treeIds) {
+    const ns = getNsById(schema, id);
+    if (!ns) continue;
+    const depth = depthOf(id);
+    if (id !== nsId) {
+      // Heading tag scales with depth so the visual hierarchy reads naturally:
+      // h3 for top-level sections under the root, h4 for sub-sections,
+      // h5 for deeper nesting (which is rare but supported).
+      const tag = depth === 1 ? 'h3' : (depth === 2 ? 'h4' : 'h5');
+      const cls = `ns-sub depth-${Math.min(depth, 3)}`;
+      const indent = (depth - 1) * INDENT_PX;
+      wrap.appendChild(el(tag, { class: cls, style: { marginLeft: indent + 'px' } }, ns.name));
+    }
+    const indent = depth > 0 ? ((depth - 1) * INDENT_PX) + 'px' : '0';
+    if (!ns.fields || ns.fields.length === 0) {
+      wrap.appendChild(el('div', { class: 'ns-empty',
+        style: { color: 'var(--muted)', fontStyle: 'italic', marginLeft: indent } },
+        '(no fields)'));
+      continue;
+    }
+    const section = el('div', { class: 'ns-sub-fields', style: { marginLeft: indent } });
+    for (const f of ns.fields) {
+      const h = buildFieldRow(id, f);
+      section.appendChild(h.row);
+      fieldHandles.push(h);
+    }
+    wrap.appendChild(section);
   }
 
   function updateButtons(){
-    const hasDraft = nsDraftCount(nsId) > 0;
+    const hasDraft = nsTreeDraftCount(schema, nsId) > 0;
     const anyErr = fieldHandles.some(h => h.hasDraftError());
     saveBtn.disabled = !hasDraft || anyErr;
     saveBtn.classList.toggle('primary', hasDraft && !anyErr);
@@ -2145,10 +2784,15 @@ function buildConfigTab(){
     nsCleanups = [];
     detail.innerHTML = '';
     if (nsId == null) { detail.appendChild(el('em', null, 'Select a namespace from the left.')); return; }
-    const loaded = state.nsLoaded.get()[nsId];
-    if (!loaded) {
+    // Treat the panel as "loaded" only when EVERY namespace in the tree has
+    // been fetched — otherwise show "Loading…" so partial sub-sections don't
+    // render with empty default values.
+    const schema = state.schema.get();
+    const treeIds = schema ? getNsTreeIds(schema, nsId) : [Number(nsId)];
+    const loaded = state.nsLoaded.get();
+    const allLoaded = treeIds.length > 0 && treeIds.every(id => !!loaded[id]);
+    if (!allLoaded) {
       detail.appendChild(el('em', null, 'Loading…'));
-      // Kick off fetch; when nsLoaded fires for this id, the subscription below remounts.
       fetchNamespaceIfNeeded(nsId);
       return;
     }
@@ -2157,17 +2801,20 @@ function buildConfigTab(){
     detail.appendChild(node);
   }
 
-  const navButtons = new Map(); // nsId -> button
+  const navButtons = new Map(); // rootNsId -> { btn, dot }
   function rebuildSidenav(){
     sidenav.innerHTML = '';
     navButtons.clear();
     const schema = state.schema.get();
     if (!schema) { sidenav.appendChild(el('em', { style: { padding: '8px 16px', color: 'var(--muted)' } }, 'No schema')); return; }
+    // Only root namespaces (parentId == 0) get top-level sidenav entries.
+    // Children render as sub-sections inside their root's panel.
+    const roots = schema.namespaces.filter(n => !Number(n.parentId || 0));
     const activeNs = state.activeNsTab.get();
-    for (const ns of schema.namespaces) {
+    for (const ns of roots) {
       const b = el('button', { class: 'sidenav-btn' + (ns.id === activeNs ? ' active' : ''), onclick: () => state.activeNsTab.set(ns.id) });
       const lbl = el('span', null, ns.name);
-      const dot = el('span', { class: 'dot', style: { display: nsDraftCount(ns.id) > 0 ? '' : 'none' } });
+      const dot = el('span', { class: 'dot', style: { display: nsTreeDraftCount(schema, ns.id) > 0 ? '' : 'none' } });
       b.appendChild(lbl);
       b.appendChild(dot);
       sidenav.appendChild(b);
@@ -2181,16 +2828,27 @@ function buildConfigTab(){
     }
   }
   function updateNavDots(){
+    const schema = state.schema.get();
     for (const [nsId, { dot }] of navButtons) {
-      dot.style.display = nsDraftCount(nsId) > 0 ? '' : 'none';
+      dot.style.display = nsTreeDraftCount(schema, nsId) > 0 ? '' : 'none';
     }
   }
 
+  // Pick a root namespace as the default selection (skip non-root children).
   rebuildSidenav();
-  // If schema arrived but no ns selected, pick the first.
   const sch = state.schema.get();
-  if (sch && state.activeNsTab.get() == null && sch.namespaces.length > 0) {
-    state.activeNsTab.set(sch.namespaces[0].id);
+  if (sch && state.activeNsTab.get() == null) {
+    const firstRoot = sch.namespaces.find(n => !Number(n.parentId || 0)) || sch.namespaces[0];
+    if (firstRoot) state.activeNsTab.set(firstRoot.id);
+  } else if (sch && state.activeNsTab.get() != null) {
+    // If the previously-selected ns is a child (e.g. saved from a v1 schema
+    // session), redirect to its root so the panel renders correctly.
+    const cur = getNsById(sch, state.activeNsTab.get());
+    if (cur && Number(cur.parentId || 0) !== 0) {
+      let root = cur;
+      while (root && root.parentId) root = getNsById(sch, root.parentId);
+      if (root) state.activeNsTab.set(root.id);
+    }
   }
   mountNs(state.activeNsTab.get());
 
@@ -2198,7 +2856,13 @@ function buildConfigTab(){
   bodyCleanups.push(state.activeNsTab.subscribe((nsId) => { updateNavActive(); mountNs(nsId); }));
   bodyCleanups.push(state.nsLoaded.subscribe(() => {
     const cur = state.activeNsTab.get();
-    if (cur != null && state.nsLoaded.get()[cur]) mountNs(cur);
+    if (cur != null) {
+      // Re-check whether the whole tree is now loaded; only remount once it is.
+      const schema = state.schema.get();
+      const ids = schema ? getNsTreeIds(schema, cur) : [Number(cur)];
+      const loaded = state.nsLoaded.get();
+      if (ids.length > 0 && ids.every(id => !!loaded[id])) mountNs(cur);
+    }
   }));
   bodyCleanups.push(state.nsState.subscribe(updateNavDots));
   bodyCleanups.push(() => { for (const fn of nsCleanups) try { fn(); } catch(_) {} });
@@ -2220,7 +2884,14 @@ async function ncfgFetchSection(sectionId){
   if (state.nodeCfgLoaded.get()[sectionId] || state.nodeCfgLoading.get()[sectionId]) return;
   state.nodeCfgLoading.update(s => { s[sectionId] = true; });
   try {
-    const committed = await legacy.readSection(sectionId);
+    const sec = NODE_CONFIG_SCHEMA[sectionId];
+    // Section may declare a custom `readFn` for cases where the per-field
+    // legacy queries aren't enough (e.g. WiFi config, whose CMD_WIFI_*
+    // opcodes are write-only — the values live in EEPROM and have to be
+    // read back via CMD_ROM_READ / CMD_CFG_READ and decoded).
+    const committed = sec && typeof sec.readFn === 'function'
+      ? await sec.readFn(legacy)
+      : await legacy.readSection(sectionId);
     state.nodeCfgState.update(s => { s[sectionId] = { committed, draft: {} }; });
     state.nodeCfgLoaded.update(s => { s[sectionId] = true; });
   } catch (e) {
@@ -3045,6 +3716,151 @@ async function runSelfTests(){
     ok('BytesList validate too many entries',
       validateValue(f, [ok16, ok16b, new Uint8Array(16), new Uint8Array(16), new Uint8Array(16)]) != null);
   } catch (e) { ok('BytesList validate', false, e.message); }
+  // FF.WRITE_ONLY constant and renderer routing
+  try {
+    ok('FF.WRITE_ONLY = 16', FF.WRITE_ONLY === 16);
+    ok('FF.READ_ONLY  = 4',  FF.READ_ONLY  === 4);
+    // RO row renders as a static value display, never as a draft-bearing input.
+    const fRO = { id: 99, name: 'rssi_dbm', label: 'RSSI', type: FT.Int, flags: FF.READ_ONLY };
+    const hRO = buildFieldRow(1, fRO);
+    ok('RO field row class', hRO.row._classes.has('ro-info'));
+    ok('RO field hasDraftError false', hRO.hasDraftError() === false);
+    // WO row renders input + Send button. Never participates in draft state.
+    const fWO = { id: 100, name: 'reboot_in_seconds', label: 'Reboot in (seconds)', type: FT.Int, flags: FF.WRITE_ONLY, minI: 0, maxI: 60 };
+    const hWO = buildFieldRow(1, fWO);
+    ok('WO field row class', hWO.row._classes.has('wo-action'));
+    ok('WO field hasDraftError false', hWO.hasDraftError() === false);
+    // renderReadOnlyValue type formatting
+    ok('RO Bool render true',  renderReadOnlyValue({ type: FT.Bool }, true).text === '✓ true');
+    ok('RO Bool render false', renderReadOnlyValue({ type: FT.Bool }, false).text === '✗ false');
+    ok('RO Int+unit',          renderReadOnlyValue({ type: FT.Int, unit: 'dBm' }, -84).text === '-84 dBm');
+    ok('RO Enum label',        renderReadOnlyValue({ type: FT.Enum, enumValues: [0,1], enumLabels: ['off','on'] }, 1).text === 'on (1)');
+    ok('RO Bytes hex',         renderReadOnlyValue({ type: FT.Bytes }, new Uint8Array([0xab,0xcd])).text === 'abcd');
+    ok('RO Bytes empty',       renderReadOnlyValue({ type: FT.Bytes }, new Uint8Array(0)).empty === true);
+    ok('RO BytesList empty',   renderReadOnlyValue({ type: FT.BytesList }, []).empty === true);
+    ok('RO null →"—"',         renderReadOnlyValue({ type: FT.Int }, null).empty === true);
+  } catch (e) { ok('RO/WO renderers', false, e.message); }
+  // Namespace-tree helpers (schema v2 with parentId)
+  try {
+    const schema = { namespaces: [
+      { id: 1, name: 'reticulum', parentId: 0, fields: [] },
+      { id: 2, name: 'transport', parentId: 1, fields: [] },
+      { id: 3, name: 'interfaces', parentId: 2, fields: [] },
+      { id: 4, name: 'lora',      parentId: 3, fields: [] },
+      { id: 5, name: 'serial',    parentId: 3, fields: [] },
+      { id: 101, name: 'general', parentId: 0, fields: [] },
+    ]};
+    ok('tree: getNsById hit',  getNsById(schema, 4).name === 'lora');
+    ok('tree: getNsById miss', getNsById(schema, 999) === null);
+    ok('tree: roots',          getChildrenOf(schema, 0).map(n => n.id).join(',') === '1,101');
+    ok('tree: children of 3',  getChildrenOf(schema, 3).map(n => n.id).join(',') === '4,5');
+    // Depth-first: 1 → 2 → 3 → 4 → 5
+    ok('tree: DFS of 1',       getNsTreeIds(schema, 1).join(',') === '1,2,3,4,5');
+    ok('tree: DFS of 101',     getNsTreeIds(schema, 101).join(',') === '101');
+    // Draft rollup
+    state.nsState.set({
+      1: { committed:{}, draft:{ 1: 'a' } },
+      2: { committed:{}, draft:{} },
+      4: { committed:{}, draft:{ 1: 'x', 2: 'y' } },
+    });
+    ok('tree: draft count root 1', nsTreeDraftCount(schema, 1) === 3);
+    ok('tree: draft count root 101', nsTreeDraftCount(schema, 101) === 0);
+    state.nsState.set({});
+  } catch (e) { ok('tree helpers', false, e.message); }
+  // Schema parser: v2 layout [id, name, parent_id, fields]
+  try {
+    // Build a synthetic GetSchema response and parse it via a stub client.
+    const sched = (entries) => {
+      const u = entries; // already a Map-based decoded body
+      const namespaces = [];
+      for (const nsEntry of u) {
+        if (!Array.isArray(nsEntry) || nsEntry.length < 3) continue;
+        const v2 = nsEntry.length >= 4;
+        const parentId = v2 ? Number(nsEntry[2] || 0) : 0;
+        const fieldsRaw = v2 ? nsEntry[3] : nsEntry[2];
+        namespaces.push({ id: Number(nsEntry[0]), name: String(nsEntry[1]), parentId, fields: Array.isArray(fieldsRaw) ? fieldsRaw : [] });
+      }
+      return namespaces;
+    };
+    // v2 entry: [1, 'reticulum', 0, []]
+    const v2parsed = sched([[1, 'reticulum', 0, []]]);
+    ok('schema v2 parses parentId=0', v2parsed.length === 1 && v2parsed[0].parentId === 0);
+    // v2 entry with non-zero parentId: [2, 'transport', 1, []]
+    const v2child = sched([[2, 'transport', 1, []]]);
+    ok('schema v2 parses parentId=1', v2child[0].parentId === 1);
+    // v1 entry: [42, 'legacy', []]
+    const v1parsed = sched([[42, 'legacy', []]]);
+    ok('schema v1 back-compat', v1parsed[0].parentId === 0 && Array.isArray(v1parsed[0].fields));
+  } catch (e) { ok('schema parser', false, e.message); }
+  // Multi-level nesting: panel for "Metrics" should show "Interfaces" as a
+  // depth-1 section (h3) and "LoRa" as a depth-2 sub-section (h4), with
+  // distinct CSS classes and indent values.
+  try {
+    const schema = { namespaces: [
+      { id: 4, name: 'Metrics',    parentId: 0, fields: [] },
+      { id: 5, name: 'Interfaces', parentId: 4, fields: [] },
+      { id: 6, name: 'LoRa',       parentId: 5, fields: [] },
+    ]};
+    state.schema.set(schema);
+    state.nsState.set({ 4:{committed:{},draft:{}}, 5:{committed:{},draft:{}}, 6:{committed:{},draft:{}} });
+    state.nsLoaded.set({ 4:true, 5:true, 6:true });
+    const { node } = buildNamespacePanel(4);
+    // Walk the rendered node to find each heading.
+    let h2=null, h3=null, h4=null;
+    (function walk(n){
+      if (!n) return;
+      if (n.tagName === 'h2' && n._classes && n._classes.has('ns-h')) h2 = n;
+      if (n.tagName === 'h3' && n._classes && n._classes.has('ns-sub')) h3 = n;
+      if (n.tagName === 'h4' && n._classes && n._classes.has('ns-sub')) h4 = n;
+      for (const c of (n._children||[])) walk(c);
+    })(node);
+    const text = (n) => n ? (n._children||[]).filter(c => c && c.nodeType === 3).map(c => c.textContent).join('') : '';
+    ok('depth-0 root h2 "Metrics"',    !!h2 && text(h2) === 'Metrics');
+    ok('depth-1 "Interfaces" → h3',    !!h3 && text(h3) === 'Interfaces');
+    ok('depth-1 has depth-1 class',    !!h3 && h3._classes.has('depth-1'));
+    ok('depth-2 "LoRa" → h4',          !!h4 && text(h4) === 'LoRa');
+    ok('depth-2 has depth-2 class',    !!h4 && h4._classes.has('depth-2'));
+    ok('depth-1 indent 0px',            !!h3 && h3.style && h3.style.marginLeft === '0px');
+    ok('depth-2 indent 16px',           !!h4 && h4.style && h4.style.marginLeft === '16px');
+    // Cleanup
+    state.schema.set(null); state.nsState.set({}); state.nsLoaded.set({});
+  } catch (e) { ok('multi-level nesting', false, e.message); }
+  // WiFi readFn: decode SSID/PSK/IP/NM from a synthetic CONFIG sector, and
+  // mode/channel from a synthetic main-EEPROM image. This is the read path
+  // that lets the Refresh button (and post-reboot reload) display actual
+  // persisted values instead of falling back to schema defaults.
+  try {
+    const wifi = NODE_CONFIG_SCHEMA.wifi;
+    ok('WiFi schema has readFn', typeof wifi.readFn === 'function');
+    // Synthetic CONFIG sector: SSID="MyNet", PSK="hunter2", IP=192.168.1.42, NM=255.255.255.0
+    const cfg = new Uint8Array(256);
+    const ssid = new TextEncoder().encode('MyNet');
+    const psk  = new TextEncoder().encode('hunter2');
+    cfg.set(ssid, 0x00);                       // SSID at 0x00 (null-terminated by the surrounding zeros)
+    cfg.set(psk,  0x21);                       // PSK at 0x21
+    cfg[0x42] = 192; cfg[0x43] = 168; cfg[0x44] = 1; cfg[0x45] = 42;
+    cfg[0x46] = 255; cfg[0x47] = 255; cfg[0x48] = 255; cfg[0x49] = 0;
+    // Synthetic main EEPROM: mode=STA(1) at 0xBA, channel=6 at 0xBB.
+    const ee = new Uint8Array(200);
+    for (let i = 0; i < 200; ++i) ee[i] = 0xFF;   // simulate uninitialised
+    ee[0xBA] = 0x01; ee[0xBB] = 0x06;
+    const stubLegacy = { readCfgSector: async () => cfg, readEeprom: async () => ee };
+    const out = await wifi.readFn(stubLegacy);
+    ok('WiFi readFn ssid',    out.ssid === 'MyNet');
+    ok('WiFi readFn psk',     out.psk  === 'hunter2');
+    ok('WiFi readFn ip',      out.ip   === '192.168.1.42');
+    ok('WiFi readFn nm',      out.nm   === '255.255.255.0');
+    ok('WiFi readFn mode',    out.mode === 0x01);
+    ok('WiFi readFn channel', out.channel === 6);
+    // Uninitialised EEPROM ⇒ no SSID/PSK exposed and no mode/channel surfaced.
+    const fresh = new Uint8Array(256).fill(0xFF);
+    const ee2 = new Uint8Array(200).fill(0xFF);
+    const out2 = await wifi.readFn({ readCfgSector: async () => fresh, readEeprom: async () => ee2 });
+    ok('WiFi readFn fresh ssid empty',    out2.ssid === '');
+    ok('WiFi readFn fresh ip = DHCP',     out2.ip   === '0.0.0.0');
+    ok('WiFi readFn fresh mode absent',   !('mode' in out2));
+    ok('WiFi readFn fresh channel absent',!('channel' in out2));
+  } catch (e) { ok('WiFi readFn', false, e.message); }
   // ----- Node Config codec round-trips -----
   try {
     // be32 frequency encode/decode (867500000 Hz = 0x33B4FFE0)
