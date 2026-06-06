@@ -169,7 +169,7 @@ const FT = { None:0, Bool:1, Int:2, Float:3, String:4, Bytes:5, Enum:6, BytesLis
 //                fires SetState+Commit in a single action. Never enters
 //                the namespace draft store.
 const FF = { LIVE_APPLY:1, REBOOT_REQUIRED:2, READ_ONLY:4, SECRET:8, WRITE_ONLY:16 };
-const ERR_NAMES = { 0:'Ok', 1:'MalformedRequest', 2:'UnknownOp', 3:'UnknownNamespace', 4:'UnknownField', 5:'InvalidValue', 6:'ConstraintViolation', 7:'ReadOnly', 8:'StorageError', 9:'NotInitialized', 99:'Internal' };
+const ERR_NAMES = { 0:'Ok', 1:'BadRequest', 2:'UnknownOp', 3:'UnknownNs', 4:'UnknownField', 5:'InvalidValue', 6:'Constraint', 7:'ReadOnly', 8:'StorageError', 9:'NotInitialized', 99:'Internal' };
 const FK = { Id:1, Name:2, Type:3, Flags:4, MinI:5, MaxI:6, MinF:7, MaxF:8, MaxLen:9, EnumValues:10, EnumLabels:11, Default:12, ElementSize:13, MaxCount:14 };
 const IK = { FirmwareVersion:1, SchemaVersion:2, NeedsReboot:3 };
 const GK = { NamespaceFilter:1, Pending:2 };
@@ -2348,15 +2348,103 @@ function renderReadOnlyValue(f, value){
 // Read-only info field: render a static value display (not a disabled input).
 // Value comes from the server's getter via GET_STATE; we read from committed.
 // Never participates in nsState.draft, never gates Save.
-function buildFieldRowReadOnly(nsId, f, c){
-  const row = el('div', { class: 'field ro-info' });
+// Shared by all three field-row builders: skeleton row with label + badges
+// container. Caller decides what trailing controls / value-display to add.
+function _buildFieldHeader(f, rowClass){
+  const row = el('div', { class: rowClass });
   const labelEl = el('label');
-  const labelText = el('span', null, f.label || f.name);
+  labelEl.appendChild(el('span', null, f.label || f.name));
   const badges = el('span', { style: { display: 'inline-flex', gap: '4px' } });
-  labelEl.appendChild(labelText);
   labelEl.appendChild(badges);
-  const valueEl = el('div', { class: 'ro-value' });
   row.appendChild(labelEl);
+  return { row, labelEl, badges };
+}
+
+// Construct the input element for a field's declared type. Returns the input
+// plus a readValue() that extracts the current typed value. Hex / BytesList
+// readValue may return `{__error: 'reason'}` when the user is mid-edit and the
+// content isn't a valid byte sequence — callers decide whether to surface the
+// error (write-only on Send) or silently wait (regular field while typing).
+//
+// `opts.secret` makes string inputs render as <input type="password">.
+// `opts.bigBytesList` switches the BytesList textarea to the larger 5-row
+// layout used by the regular draft store (vs. the 3-row layout used by the
+// one-shot write-only form).
+function _buildFieldInput(f, opts){
+  opts = opts || {};
+  const secret = !!opts.secret;
+  const bigBytesList = !!opts.bigBytesList;
+  let input;
+  let readValue;
+  if (f.type === FT.Bool) {
+    input = el('input', { type: 'checkbox' });
+    readValue = () => input.checked;
+  } else if (f.type === FT.Int) {
+    input = el('input', { type: 'number', step: '1',
+      min: f.minI != null ? Number(f.minI) : undefined,
+      max: f.maxI != null ? Number(f.maxI) : undefined });
+    readValue = () => input.value === '' ? null : parseInt(input.value, 10);
+  } else if (f.type === FT.Float) {
+    input = el('input', { type: 'number', step: 'any',
+      min: f.minF != null ? Number(f.minF) : undefined,
+      max: f.maxF != null ? Number(f.maxF) : undefined });
+    readValue = () => input.value === '' ? null : parseFloat(input.value);
+  } else if (f.type === FT.String) {
+    const big = f.maxLen && Number(f.maxLen) > 80;
+    input = big
+      ? el('textarea', { rows: '3', maxlength: Number(f.maxLen) })
+      : el('input', { type: secret ? 'password' : 'text', maxlength: f.maxLen ? Number(f.maxLen) : undefined });
+    readValue = () => input.value;
+  } else if (f.type === FT.Enum) {
+    input = el('select');
+    if (Array.isArray(f.enumValues)) {
+      const labels = Array.isArray(f.enumLabels) ? f.enumLabels : null;
+      for (let i = 0; i < f.enumValues.length; ++i) {
+        const ev = Number(f.enumValues[i]);
+        input.appendChild(el('option', { value: String(ev) }, labels && labels[i] ? labels[i] : String(ev)));
+      }
+    }
+    readValue = () => input.value === '' ? null : parseInt(input.value, 10);
+  } else if (f.type === FT.Bytes) {
+    input = el('input', { type: 'text', placeholder: f.maxLen ? `hex (max ${f.maxLen} bytes)` : 'hex' });
+    readValue = () => {
+      const t = String(input.value || '').replace(/[^0-9a-fA-F]/g, '');
+      if (t.length % 2 !== 0) return { __error: 'odd hex' };
+      const u8 = new Uint8Array(t.length / 2);
+      for (let i = 0; i < u8.length; ++i) u8[i] = parseInt(t.substr(i*2, 2), 16);
+      return u8;
+    };
+  } else if (f.type === FT.BytesList) {
+    // One hex entry per line. elementSize fixes per-entry length; maxCount
+    // limits total entries. Both are zero/null when unconstrained.
+    const sz = f.elementSize != null ? Number(f.elementSize) : 0;
+    const max = f.maxCount != null ? Number(f.maxCount) : 0;
+    const hints = [];
+    if (sz > 0) hints.push(bigBytesList ? `${sz} bytes / ${sz*2} hex chars per entry` : `${sz} bytes per entry`);
+    if (max > 0) hints.push(`up to ${max} entries`);
+    hints.push('one per line');
+    const style = bigBytesList
+      ? { fontFamily: 'ui-monospace, Menlo, monospace', minWidth: '360px' }
+      : { fontFamily: 'ui-monospace, Menlo, monospace' };
+    input = el('textarea', { rows: bigBytesList ? '5' : '3', placeholder: 'hex (' + hints.join(', ') + ')', style });
+    readValue = () => {
+      const list = parseBytesListHex(input.value);
+      // null = an in-progress odd-length line. Callers in the regular draft
+      // path treat this as "wait" (silent no-op); the WO path surfaces it on
+      // Send so the user knows why nothing happened.
+      if (list == null) return { __error: 'odd hex on one of the lines' };
+      return list;
+    };
+  } else {
+    input = el('span', null, '(unknown type)');
+    readValue = () => null;
+  }
+  return { input, readValue };
+}
+
+function buildFieldRowReadOnly(nsId, f, c){
+  const { row, badges } = _buildFieldHeader(f, 'field ro-info');
+  const valueEl = el('div', { class: 'ro-value' });
   row.appendChild(valueEl);
   const secret = !!(f.flags & FF.SECRET);
   const reboot = !!(f.flags & FF.REBOOT_REQUIRED);
@@ -2382,99 +2470,27 @@ function buildFieldRowReadOnly(nsId, f, c){
 // for this single field. Value isn't stored in nsState.draft and the field
 // doesn't gate Save / Revert / Commit-all.
 function buildFieldRowWriteOnly(nsId, f, c){
-  const row = el('div', { class: 'field wo-action' });
-  const labelEl = el('label');
-  const labelText = el('span', null, f.label || f.name);
-  const badges = el('span', { style: { display: 'inline-flex', gap: '4px' } });
-  labelEl.appendChild(labelText);
-  labelEl.appendChild(badges);
+  const { row, badges } = _buildFieldHeader(f, 'field wo-action');
   const controls = el('div', { class: 'wo-controls' });
   const errEl = el('div', { class: 'err' });
-  row.appendChild(labelEl);
   row.appendChild(controls);
   row.appendChild(errEl);
 
   const secret = !!(f.flags & FF.SECRET);
   const reboot = !!(f.flags & FF.REBOOT_REQUIRED);
 
-  // Build an input matching the field type. WO fields have no draft store —
-  // the live input value is read directly on Send.
-  let input;
-  if (f.type === FT.Bool) {
-    input = el('input', { type: 'checkbox' });
-  } else if (f.type === FT.Int) {
-    input = el('input', {
-      type: 'number', step: '1',
-      min: f.minI != null ? Number(f.minI) : undefined,
-      max: f.maxI != null ? Number(f.maxI) : undefined,
-    });
-  } else if (f.type === FT.Float) {
-    input = el('input', {
-      type: 'number', step: 'any',
-      min: f.minF != null ? Number(f.minF) : undefined,
-      max: f.maxF != null ? Number(f.maxF) : undefined,
-    });
-  } else if (f.type === FT.String) {
-    const big = f.maxLen && Number(f.maxLen) > 80;
-    input = big
-      ? el('textarea', { rows: '3', maxlength: Number(f.maxLen) })
-      : el('input', { type: secret ? 'password' : 'text', maxlength: f.maxLen ? Number(f.maxLen) : undefined });
-  } else if (f.type === FT.Enum) {
-    input = el('select');
-    if (Array.isArray(f.enumValues)) {
-      const labels = Array.isArray(f.enumLabels) ? f.enumLabels : null;
-      for (let i = 0; i < f.enumValues.length; ++i) {
-        const ev = Number(f.enumValues[i]);
-        input.appendChild(el('option', { value: String(ev) }, labels && labels[i] ? labels[i] : String(ev)));
-      }
-    }
-  } else if (f.type === FT.Bytes) {
-    input = el('input', { type: 'text', placeholder: f.maxLen ? `hex (max ${f.maxLen} bytes)` : 'hex' });
-  } else if (f.type === FT.BytesList) {
-    const sz = f.elementSize != null ? Number(f.elementSize) : 0;
-    const max = f.maxCount != null ? Number(f.maxCount) : 0;
-    const hints = [];
-    if (sz > 0) hints.push(`${sz} bytes per entry`);
-    if (max > 0) hints.push(`up to ${max} entries`);
-    hints.push('one per line');
-    input = el('textarea', { rows: '3', placeholder: 'hex (' + hints.join(', ') + ')',
-      style: { fontFamily: 'ui-monospace, Menlo, monospace' } });
-  } else {
-    input = el('span', null, '(unknown type)');
-  }
+  // WO fields have no draft store — the live input value is read directly
+  // on Send. _buildFieldInput's readValue() returns {__error} for unparseable
+  // hex/bytes-list content, which we surface in errEl below.
+  const { input, readValue } = _buildFieldInput(f, { secret, bigBytesList: false });
   controls.appendChild(input);
 
   const sendBtn = el('button', { class: 'wo-send' }, 'Send');
   controls.appendChild(sendBtn);
 
-  // Parse the input element into a typed value matching the field's `type`.
-  function readInputValue(){
-    if (f.type === FT.Bool) return input.checked;
-    if (f.type === FT.Int || f.type === FT.Enum) {
-      return input.value === '' ? null : parseInt(input.value, 10);
-    }
-    if (f.type === FT.Float) {
-      return input.value === '' ? null : parseFloat(input.value);
-    }
-    if (f.type === FT.String) return input.value;
-    if (f.type === FT.Bytes) {
-      const t = String(input.value || '').replace(/[^0-9a-fA-F]/g, '');
-      if (t.length % 2 !== 0) return { __error: 'odd hex' };
-      const u8 = new Uint8Array(t.length / 2);
-      for (let i = 0; i < u8.length; ++i) u8[i] = parseInt(t.substr(i*2, 2), 16);
-      return u8;
-    }
-    if (f.type === FT.BytesList) {
-      const list = parseBytesListHex(input.value);
-      if (list == null) return { __error: 'odd hex on one of the lines' };
-      return list;
-    }
-    return null;
-  }
-
   sendBtn.onclick = async () => {
     if (!client) { showToast('Not connected', 'err'); return; }
-    const v = readInputValue();
+    const v = readValue();
     if (v && typeof v === 'object' && '__error' in v) {
       errEl.textContent = v.__error; row.classList.add('has-err'); return;
     }
@@ -2525,15 +2541,9 @@ function buildFieldRow(nsId, f, ctx){
   const ro = !!(f.flags & FF.READ_ONLY) && !wo;
   if (ro) return buildFieldRowReadOnly(nsId, f, c);
   if (wo) return buildFieldRowWriteOnly(nsId, f, c);
-  const row = el('div', { class: 'field' });
-  const labelEl = el('label');
-  const labelText = el('span', null, f.label || f.name);
-  const badges = el('span', { style: { display: 'inline-flex', gap: '4px' } });
-  labelEl.appendChild(labelText);
-  labelEl.appendChild(badges);
+  const { row, badges } = _buildFieldHeader(f, 'field');
   const inputHost = el('div');
   const errEl = el('div', { class: 'err' });
-  row.appendChild(labelEl);
   row.appendChild(inputHost);
   row.appendChild(errEl);
 
@@ -2542,79 +2552,21 @@ function buildFieldRow(nsId, f, ctx){
   const secret = !!(f.flags & FF.SECRET);
   const reboot = !!(f.flags & FF.REBOOT_REQUIRED);
 
-  // Build input ONCE; we never recreate it on subsequent state changes.
-  let input;
-  if (f.type === FT.Bool) {
-    input = el('input', { type: 'checkbox', disabled: false });
-    input.addEventListener('input', () => setDraftValue(nsId, f, input.checked, c));
-  } else if (f.type === FT.Int) {
-    input = el('input', {
-      type: 'number', step: '1', disabled: false,
-      min: f.minI != null ? Number(f.minI) : undefined,
-      max: f.maxI != null ? Number(f.maxI) : undefined,
-    });
-    input.addEventListener('input', () => {
-      const v = input.value === '' ? null : parseInt(input.value, 10);
-      setDraftValue(nsId, f, v, c);
-    });
-  } else if (f.type === FT.Float) {
-    input = el('input', {
-      type: 'number', step: 'any', disabled: false,
-      min: f.minF != null ? Number(f.minF) : undefined,
-      max: f.maxF != null ? Number(f.maxF) : undefined,
-    });
-    input.addEventListener('input', () => {
-      const v = input.value === '' ? null : parseFloat(input.value);
-      setDraftValue(nsId, f, v, c);
-    });
-  } else if (f.type === FT.String) {
-    const big = f.maxLen && Number(f.maxLen) > 80;
-    if (big) {
-      input = el('textarea', { rows: '3', maxlength: Number(f.maxLen), disabled: false });
-    } else {
-      input = el('input', { type: secret ? 'password' : 'text', maxlength: f.maxLen ? Number(f.maxLen) : undefined, disabled: false });
-    }
-    input.addEventListener('input', () => setDraftValue(nsId, f, input.value, c));
-  } else if (f.type === FT.Enum) {
-    input = el('select', { disabled: false });
-    if (Array.isArray(f.enumValues)) {
-      const labels = Array.isArray(f.enumLabels) ? f.enumLabels : null;
-      for (let i = 0; i < f.enumValues.length; ++i) {
-        const ev = Number(f.enumValues[i]);
-        input.appendChild(el('option', { value: String(ev) }, labels && labels[i] ? labels[i] : String(ev)));
-      }
-    }
-    input.addEventListener('change', () => setDraftValue(nsId, f, parseInt(input.value, 10), c));
-  } else if (f.type === FT.Bytes) {
-    input = el('input', { type: 'text', placeholder: f.maxLen ? `hex (max ${f.maxLen} bytes)` : 'hex', disabled: false });
-    input.addEventListener('input', () => {
-      const t = input.value.replace(/[^0-9a-fA-F]/g, '');
-      if (t.length % 2 !== 0) return;
-      const u8 = new Uint8Array(t.length / 2);
-      for (let i = 0; i < u8.length; ++i) u8[i] = parseInt(t.substr(i * 2, 2), 16);
-      setDraftValue(nsId, f, u8, c);
-    });
-  } else if (f.type === FT.BytesList) {
-    // One hex entry per line. elementSize fixes per-entry length; maxCount
-    // limits total entries. Both are zero/null when unconstrained.
-    const sz = f.elementSize != null ? Number(f.elementSize) : 0;
-    const max = f.maxCount != null ? Number(f.maxCount) : 0;
-    const hints = [];
-    if (sz > 0) hints.push(`${sz} bytes / ${sz*2} hex chars per entry`);
-    if (max > 0) hints.push(`up to ${max} entries`);
-    hints.push('one per line');
-    input = el('textarea', { rows: '5', disabled: false, placeholder: 'hex (' + hints.join(', ') + ')',
-      style: { fontFamily: 'ui-monospace, Menlo, monospace', minWidth: '360px' } });
-    input.addEventListener('input', () => {
-      const list = parseBytesListHex(input.value);
-      // null = an in-progress odd-length line. Wait for the user to finish
-      // before mutating the draft — prevents lossy round-trip while typing.
-      if (list == null) return;
-      setDraftValue(nsId, f, list, c);
-    });
-  } else {
-    input = el('span', null, '(unknown type)');
-  }
+  // Build input ONCE; we never recreate it on subsequent state changes. Use
+  // the regular-draft variant (bigBytesList=true) so BytesList textareas get
+  // the larger 5-row / 360px-min layout intended for sustained editing.
+  const { input, readValue } = _buildFieldInput(f, { secret, bigBytesList: true });
+
+  // Wire the right event to setDraftValue. Most types use 'input' (continuous);
+  // <select> only fires 'change'. Hex/BytesList readValue returns {__error}
+  // mid-edit; we silently skip those so a half-typed value doesn't clobber
+  // the draft (the regular flow waits for the user to finish typing).
+  const evtName = (f.type === FT.Enum) ? 'change' : 'input';
+  input.addEventListener(evtName, () => {
+    const v = readValue();
+    if (v && typeof v === 'object' && '__error' in v) return;
+    setDraftValue(nsId, f, v, c);
+  });
   // Optional unit suffix (e.g. "Hz", "dBm") rendered next to the input.
   if (f.unit) {
     inputHost.style.display = 'flex';
@@ -3105,18 +3057,12 @@ function buildNcfgRadioPanel(){
   wrap.appendChild(fieldRows);
 
   // Find each input element so we can enable/disable based on target mode.
+  // Uses querySelectorAll on the row — earlier code walked a `_children`
+  // property that only exists on the self-test mock-DOM, so on real DOM the
+  // loop silently no-op'd and the disable never took effect.
   function setRadioFieldsEnabled(enabled){
     for (const h of fieldHandles) {
-      const inputs = [];
-      // Walk the row to collect inputs/selects/textareas (we built them above).
-      const collect = (n) => {
-        if (!n || !n._children) return;
-        for (const c of n._children) {
-          if (c && (c.tagName === 'input' || c.tagName === 'select' || c.tagName === 'textarea')) inputs.push(c);
-          collect(c);
-        }
-      };
-      collect(h.row);
+      const inputs = h.row.querySelectorAll('input, select, textarea');
       for (const inp of inputs) inp.disabled = !enabled;
     }
     fieldRows.style.opacity = enabled ? '' : '0.55';
@@ -3592,6 +3538,7 @@ function buildBottomBar(){
 }
 slots.bottombar.appendChild(buildBottomBar());
 
+// ===== SELFTEST-BEGIN — stripped by webconsole/package.sh =====
 // ===== Self-tests =====
 async function runSelfTests(){
   const out = [];
@@ -3926,6 +3873,7 @@ async function runSelfTests(){
   document.getElementById('app').innerHTML = '<pre>' + out.join('\n') + '</pre>';
 }
 if (location.search.indexOf('selftest=1') !== -1) runSelfTests();
+// ===== SELFTEST-END =====
 })();
 </script>
 </body>
