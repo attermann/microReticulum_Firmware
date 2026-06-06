@@ -214,7 +214,7 @@ def firmware_package(env):
         zip_cmd += project_dir + "/rnoded.example.service "
         env.Execute(zip_cmd)
         get_target()
-    env.Execute("python " + project_dir + "/release_hashes.py > " + project_dir + "/Release/release.json")
+    env.Execute("python3 " + project_dir + "/release_hashes.py > " + project_dir + "/Release/release.json")
 
 #
 # Main script
