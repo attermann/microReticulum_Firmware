@@ -11,6 +11,7 @@ def get_target():
 
     # Detect the operating system
     platform_system = platformlib.system().lower()
+    print("System:", platform_system)
     if "linux" in platform_system:
         os_name = "linux"
     elif "darwin" in platform_system:
@@ -18,8 +19,25 @@ def get_target():
     else:
         os_name = "unknown"
 
+    # Get OS release details
+    try:
+        platform_os_info = platformlib.freedesktop_os_release()
+        print("OS Release:", platform_os_info)
+        if "debian" in platform_os_info.get('NAME') or "Debian" in platform_os_info.get('NAME'):
+            distro_name = "debian"
+        elif "ubuntu" in platform_os_info.get('NAME') or "Ubuntu" in platform_os_info.get('NAME'):
+            distro_name = "debian"
+        else:
+            distro_name = "unknown"
+        if platform_os_info.get('VERSION_CODENAME'):
+            distro_name += "-" + platform_os_info.get('VERSION_CODENAME')
+        os_name += "_" + distro_name
+    except Exception:
+        pass
+
     # Detect the architecture
     platform_machine = platformlib.machine().lower()
+    print("Machine:", platform_machine)
     if platform_machine == "x86_64":
         arch_name = "amd64"
     elif "aarch" in platform_machine or "arm64" in platform_machine:
