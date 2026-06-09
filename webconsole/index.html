@@ -160,7 +160,7 @@ const CMD_RESET=0x55, CMD_RESET_BYTE=0xF8;
 const STAT_CMD_RANGE = [0x21, 0x29];
 
 const OP = { GetSchema:1, GetInfo:2, GetCapabilities:3, GetState:4, SetState:5, Commit:6, Discard:7, FactoryReset:8, Ack:100, Error:101 };
-const FT = { None:0, Bool:1, Int:2, Float:3, String:4, Bytes:5, Enum:6, BytesList:7 };
+const FT = { None:0, Bool:1, Int:2, Float:3, String:4, Bytes:5, Enum:6, BytesList:7, Void:8 };
 // Provisioning field flags (Field.h FF_*). Mutually exclusive uses:
 //  - READ_ONLY:  info-only field (e.g. metrics). Server has a getter; client
 //                must not draft it. Renders as static value display.
@@ -1093,6 +1093,7 @@ function packTypedValue(p, type, v){
       for (const e of list) p.bin(e instanceof Uint8Array ? e : new Uint8Array(e || []));
       return;
     }
+    case FT.Void: p.nil(); return;   // Argument-less command marker.
     default: p.nil();
   }
 }
@@ -1380,6 +1381,15 @@ const state = {
   // Commit have anything to apply. Discard all also operates on the firmware
   // draft, so both buttons gate on this flag, not on local-only edits.
   firmwareHasDraft: observable(false),
+  // Per-namespace, per-field snapshot of values committed for FF_REBOOT_REQUIRED
+  // fields. The firmware accepts these on commit but defers calling the setter
+  // until reboot, so a subsequent getState returns the stale runtime value via
+  // the field's getter. Overlaying this map onto `committed` in
+  // fetchNamespaceIfNeeded keeps the UI showing what the user actually
+  // committed. Auto-trims per field once the device-reported value catches up,
+  // and clears on disconnect / discardAll / factoryReset / post-reboot.
+  // Shape: { [nsId]: { [fid]: value } }
+  pendingRebootOverlay: observable({}),
   autoReconnect: observable(true),
   reconnecting: observable(false),
   // Node Config tab — parallel observables to nsState/etc but for legacy-opcode
@@ -1441,6 +1451,7 @@ function clearSessionState(){
   state.nodeStatus.set({});
   state.hasDraft.set(false);
   state.firmwareHasDraft.set(false);
+  state.pendingRebootOverlay.set({});
   // Node Config side
   state.nodeCfgState.set({});
   state.nodeCfgLoaded.set({});
@@ -1452,6 +1463,17 @@ function clearSessionState(){
   state.nodeCfgNeedsReboot.set(false);
   state.legacySupported.set(null);
 }
+
+// Clear the pending-reboot overlay once the device reports needsReboot=false.
+// That transition only happens after the device has booted (apply_loaded_to_runtime
+// fires the deferred setters) and we've fetched fresh info — at that point the
+// getter returns the new value, so the overlay is no longer needed.
+let _lastNeedsReboot = false;
+state.info.subscribe((info) => {
+  const nowNeeds = !!(info && info.needsReboot);
+  if (_lastNeedsReboot && !nowNeeds) state.pendingRebootOverlay.set({});
+  _lastNeedsReboot = nowNeeds;
+});
 
 function wireClient(c){
   c.onLog = (text) => {
@@ -1666,10 +1688,29 @@ async function fetchNamespaceIfNeeded(nsId){
     const committedAll = await client.getState(todo, false);
     const mergedAll    = await client.getState(todo, true);
     let firmwareDraftAny = false;
+    const overlayCleanups = [];   // deferred mutations to pendingRebootOverlay
     state.nsState.update(s => {
       for (const id of todo) {
         const committed = committedAll[id] || {};
         const merged    = mergedAll[id]    || {};
+        // Pending-reboot overlay: the firmware's getter still returns the
+        // pre-commit runtime value for FF_REBOOT_REQUIRED fields (the setter
+        // doesn't fire until apply_loaded_to_runtime on next boot). Substitute
+        // the value we committed so the UI shows what the user actually
+        // changed. Entries auto-clean once the device-reported value matches
+        // the overlay (post-reboot the getter returns the new value).
+        const overlay = state.pendingRebootOverlay.get()[id] || {};
+        const overlayRemaining = {};
+        for (const fidStr in overlay) {
+          const fid = Number(fidStr);
+          if (valuesEqual(committed[fid], overlay[fid])) continue;   // device caught up
+          overlayRemaining[fid] = overlay[fid];
+          committed[fid] = overlay[fid];
+          if (fid in merged) merged[fid] = overlay[fid];             // keep diff zero
+        }
+        if (Object.keys(overlayRemaining).length !== Object.keys(overlay).length) {
+          overlayCleanups.push({ id, remaining: overlayRemaining });
+        }
         // FF_READ_ONLY fields (metrics/instrumentation) report live runtime
         // values via their getter. Two consecutive GetState calls — one for
         // committed, one for merged — can sample slightly different values
@@ -1696,6 +1737,14 @@ async function fetchNamespaceIfNeeded(nsId){
         if (firmwareDraftFids.size > 0) firmwareDraftAny = true;
       }
     });
+    if (overlayCleanups.length > 0) {
+      state.pendingRebootOverlay.update(s => {
+        for (const c of overlayCleanups) {
+          if (Object.keys(c.remaining).length === 0) delete s[c.id];
+          else s[c.id] = c.remaining;
+        }
+      });
+    }
     state.nsLoaded.update(s => { for (const id of todo) s[id] = true; });
     if (firmwareDraftAny) state.firmwareHasDraft.set(true);
     recomputeHasDraft();
@@ -1847,6 +1896,35 @@ function showToast(text, kind){
 }
 
 // ===== Operations =====
+// Collect drafted FF_REBOOT_REQUIRED field values across the given namespace
+// ids so commitAll can stash them into the pending-reboot overlay before the
+// firmware accepts them (and starts returning stale runtime values via the
+// getter on subsequent reads). Excludes WRITE_ONLY (not echoed) and READ_ONLY
+// (no setter, never drafted) flags.
+// Returns: { [nsId]: { [fid]: value } }
+function snapshotPendingRebootValues(treeIds){
+  const schema = state.schema.get();
+  const stateMap = state.nsState.get();
+  const out = {};
+  if (!schema) return out;
+  for (const id of treeIds) {
+    const nsObj = stateMap[id]; if (!nsObj || !nsObj.draft) continue;
+    const ns = getNsById(schema, id); if (!ns || !Array.isArray(ns.fields)) continue;
+    const slice = {};
+    for (const fidStr in nsObj.draft) {
+      const fid = Number(fidStr);
+      const f = ns.fields.find(ff => ff.id === fid);
+      if (!f) continue;
+      const flags = f.flags|0;
+      if (!(flags & FF.REBOOT_REQUIRED)) continue;
+      if (flags & (FF.WRITE_ONLY | FF.READ_ONLY)) continue;
+      slice[fid] = nsObj.draft[fid];
+    }
+    if (Object.keys(slice).length > 0) out[id] = slice;
+  }
+  return out;
+}
+
 async function saveNamespace(nsId){
   // Save the namespace AND all its descendants in a single SetState request.
   // Drafts from any sub-section in the tree contribute to the payload.
@@ -1919,7 +1997,21 @@ async function refreshNamespace(nsId){
 async function commitAll(){
   if (!client) return;
   try {
+    // Snapshot drafted FF_REBOOT_REQUIRED values before commit clears the local
+    // state. After commit, the firmware accepts these but won't apply them to
+    // the runtime until reboot — without this overlay, the subsequent getState
+    // would read back the stale runtime value and the UI would appear to revert.
+    const nsStateNow = state.nsState.get();
+    const allDraftNsIds = Object.keys(nsStateNow)
+      .filter(id => Object.keys((nsStateNow[id] || {}).draft || {}).length > 0)
+      .map(Number);
+    const snap = snapshotPendingRebootValues(allDraftNsIds);
     const r = await client.commit(null);
+    if (Object.keys(snap).length > 0) {
+      state.pendingRebootOverlay.update(s => {
+        for (const nsId in snap) s[nsId] = Object.assign(s[nsId] || {}, snap[nsId]);
+      });
+    }
     state.nsServerErrors.set({});
     state.nsLoaded.set({});
     state.nsState.set({});
@@ -1944,6 +2036,7 @@ async function discardAll(){
     state.nsState.set({});
     recomputeHasDraft();
     state.firmwareHasDraft.set(false);
+    state.pendingRebootOverlay.set({});
     const cur = state.activeNsTab.get();
     if (cur != null) await fetchNamespaceIfNeeded(cur);
     showToast(`Discarded ${r.applied} pending change${r.applied !== 1 ? 's' : ''}`, 'ok');
@@ -1986,6 +2079,7 @@ async function factoryReset(){
     state.nsServerErrors.set({});
     recomputeHasDraft();
     state.firmwareHasDraft.set(false);
+    state.pendingRebootOverlay.set({});
     // Banner is derived from state.info.needsReboot; refresh to pick up the change.
     try { state.info.set(await client.getInfo()); } catch(_) {}
     showToast('Factory reset complete' + (r.needsReboot ? ' — reboot recommended' : ''), r.needsReboot ? 'warn' : 'ok');
@@ -2435,6 +2529,10 @@ function _buildFieldInput(f, opts){
       if (list == null) return { __error: 'odd hex on one of the lines' };
       return list;
     };
+  } else if (f.type === FT.Void) {
+    // Argument-less command — the Send button is the entire control surface.
+    input = null;
+    readValue = () => null;
   } else {
     input = el('span', null, '(unknown type)');
     readValue = () => null;
@@ -2483,7 +2581,7 @@ function buildFieldRowWriteOnly(nsId, f, c){
   // on Send. _buildFieldInput's readValue() returns {__error} for unparseable
   // hex/bytes-list content, which we surface in errEl below.
   const { input, readValue } = _buildFieldInput(f, { secret, bigBytesList: false });
-  controls.appendChild(input);
+  if (input) controls.appendChild(input);   // FT.Void has no input element.
 
   const sendBtn = el('button', { class: 'wo-send' }, 'Send');
   controls.appendChild(sendBtn);
@@ -2687,10 +2785,17 @@ function buildNamespacePanel(nsId){
       wrap.appendChild(el(tag, { class: cls, style: { marginLeft: indent + 'px' } }, ns.name));
     }
     const indent = depth > 0 ? ((depth - 1) * INDENT_PX) + 'px' : '0';
-    if (!ns.fields || ns.fields.length === 0) {
-      wrap.appendChild(el('div', { class: 'ns-empty',
-        style: { color: 'var(--muted)', fontStyle: 'italic', marginLeft: indent } },
-        '(no fields)'));
+    const hasOwnFields = ns.fields && ns.fields.length > 0;
+    if (!hasOwnFields) {
+      // Suppress the "(no fields)" placeholder when this namespace is a
+      // container for child namespaces — they render in subsequent iterations
+      // of this same treeIds loop.
+      const hasChildren = getChildrenOf(schema, id).length > 0;
+      if (!hasChildren) {
+        wrap.appendChild(el('div', { class: 'ns-empty',
+          style: { color: 'var(--muted)', fontStyle: 'italic', marginLeft: indent } },
+          '(no fields)'));
+      }
       continue;
     }
     const section = el('div', { class: 'ns-sub-fields', style: { marginLeft: indent } });
