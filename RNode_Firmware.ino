@@ -2111,8 +2111,8 @@ void update_modem_status() {
   dcd_led = dcd;
   if (dcd_led) { led_rx_on(); }
   else {
-    if (interference_detected) {
-      if (led_id_filter >= LED_ID_TRIG && noise_floor_sampled) { led_id_on(); }
+    if (interference_detected && noise_floor_sampled) {
+      if (led_id_filter >= LED_ID_TRIG) { led_id_on(); }
     } else {
       if (airtime_lock) { led_indicate_airtime_lock(); }
       else              { led_rx_off(); led_id_off(); }
