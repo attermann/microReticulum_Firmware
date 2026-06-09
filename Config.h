@@ -195,8 +195,14 @@
 		float longterm_airtime = 0.0;
 		#define current_airtime_bin(void) (millis()%AIRTIME_LONGTERM_MS)/AIRTIME_BINLEN_MS
 	#endif
-	float st_airtime_limit = 0.0;
-	float lt_airtime_limit = 0.0;
+	#ifndef ST_AIRTIME_LIMIT
+		#define ST_AIRTIME_LIMIT 0.0
+	#endif
+	#ifndef LT_AIRTIME_LIMIT
+		#define LT_AIRTIME_LIMIT 0.0
+	#endif
+	float st_airtime_limit = ST_AIRTIME_LIMIT;
+	float lt_airtime_limit = LT_AIRTIME_LIMIT;
 	bool airtime_lock = false;
 
 	bool stat_signal_detected   = false;
