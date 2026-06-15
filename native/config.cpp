@@ -150,6 +150,7 @@ bool load(const std::string& path) {
         }
         else if (k == "kiss_tcp_port")   g_config.kiss_tcp_port   = static_cast<uint16_t>(parse_int(v, g_config.kiss_tcp_port));
         else if (k == "kiss_tcp_public") g_config.kiss_tcp_public = parse_bool(v, g_config.kiss_tcp_public);
+        else if (k == "reboot_on_tx_failure") g_config.reboot_on_tx_failure = parse_bool(v, g_config.reboot_on_tx_failure);
         else {
             std::fprintf(stderr, "[config] %s:%d: unknown key '%s'\n",
                          path.c_str(), lineno, k.c_str());

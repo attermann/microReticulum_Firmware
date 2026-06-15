@@ -1432,9 +1432,17 @@ void transmit(uint16_t size) {
             kiss_indicate_error(ERROR_TXFAILED);
             led_indicate_error(5);
             #if MCU_VARIANT == MCU_NATIVE
-              std::fprintf(stderr, "[diag] hard_reset from transmit() split-packet endPacket failure\n");
+              if (native_config::g_config.reboot_on_tx_failure) {
+                std::fprintf(stderr, "[transmit] endPacket failure (split) — rebooting per reboot_on_tx_failure=true\n");
+                hard_reset();
+              } else {
+                std::fprintf(stderr, "[transmit] endPacket failure (split) — dropping packet, returning modem to RX\n");
+                LoRa->receive();
+                return;
+              }
+            #else
+              hard_reset();
             #endif
-            hard_reset();
           }
 
           add_airtime(written);
@@ -1449,9 +1457,17 @@ void transmit(uint16_t size) {
         kiss_indicate_error(ERROR_TXFAILED);
         led_indicate_error(5);
         #if MCU_VARIANT == MCU_NATIVE
-          std::fprintf(stderr, "[diag] hard_reset from transmit() endPacket failure (whole packet)\n");
+          if (native_config::g_config.reboot_on_tx_failure) {
+            std::fprintf(stderr, "[transmit] endPacket failure — rebooting per reboot_on_tx_failure=true\n");
+            hard_reset();
+          } else {
+            std::fprintf(stderr, "[transmit] endPacket failure — dropping packet, returning modem to RX\n");
+            LoRa->receive();
+            return;
+          }
+        #else
+          hard_reset();
         #endif
-        hard_reset();
       }
 
       add_airtime(written);

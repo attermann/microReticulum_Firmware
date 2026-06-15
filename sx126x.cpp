@@ -771,47 +771,42 @@ void sx126x::standby() {
 void sx126x::sleep() { uint8_t byte = 0x00; executeOpcode(OP_SLEEP_6X, &byte, 1); }
 
 void sx126x::enableTCXO() {
-  // Three cases:
-  //  (1) Embedded board with HAS_TCXO=true: per-board #if chain picks the
-  //      voltage byte. Always runs. Override from setTcxoVoltage() wins
-  //      when present (used by native; left at 0xFF on embedded boards).
-  //  (2) Native build with dio3_tcxo_voltage set in rnoded.conf: the
-  //      setter was called, _tcxoVoltageOverride != 0xFF, opcode runs.
-  //      HAS_TCXO is false (Boards.h default) but we still must execute
-  //      OP_DIO3_TCXO_CTRL so the chip drives the TCXO supply and waits
-  //      for it to stabilize before transmit. Without this, the PLL has
-  //      no reference clock on TCXO-only HATs (RAK13302 etc.) and TX_DONE
-  //      never fires — endPacket() times out and hard_reset() loops.
-  //  (3) Embedded with HAS_TCXO=false, or native without override: skip
-  //      entirely. Chip stays on its XOSC or runs unmodified.
-  uint8_t mode = 0xFF;
-  if (_tcxoVoltageOverride != 0xFF) {
-    mode = _tcxoVoltageOverride;
-  } else {
-    #if HAS_TCXO
-      #if BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_XIAO_S3
-        mode = MODE_TCXO_3_3V_6X;
-      #elif BOARD_MODEL == BOARD_TBEAM
-        mode = MODE_TCXO_1_8V_6X;
-      #elif BOARD_MODEL == BOARD_TDECK
-        mode = MODE_TCXO_1_8V_6X;
-      #elif BOARD_MODEL == BOARD_TBEAM_S_V1
-        mode = MODE_TCXO_1_8V_6X;
-      #elif BOARD_MODEL == BOARD_T3S3
-        mode = MODE_TCXO_1_8V_6X;
-      #elif BOARD_MODEL == BOARD_HELTEC_T114
-        mode = MODE_TCXO_1_8V_6X;
-      #elif BOARD_MODEL == BOARD_TECHO
-        mode = MODE_TCXO_1_8V_6X;
-      #elif BOARD_MODEL == BOARD_HELTEC32_V4
-        mode = MODE_TCXO_1_8V_6X;
-      #endif
+  #if HAS_TCXO
+    #if MCU_VARIANT == MCU_NATIVE
+      // On native, the TCXO code path is always compiled in but the actual
+      // OP_DIO3_TCXO_CTRL opcode is only emitted when the operator opted
+      // in via rnoded.conf's dio3_tcxo_voltage. Without the opt-in we
+      // leave the chip on its default oscillator config — driving DIO3
+      // and switching to TCXO mode would break HATs that use an XTAL.
+      if (_tcxoVoltageOverride == 0xFF) return;
+      uint8_t mode = _tcxoVoltageOverride;
+    #else
+      uint8_t mode;
+      if (_tcxoVoltageOverride != 0xFF) {
+        mode = _tcxoVoltageOverride;
+      } else {
+        #if BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_XIAO_S3
+          mode = MODE_TCXO_3_3V_6X;
+        #elif BOARD_MODEL == BOARD_TBEAM
+          mode = MODE_TCXO_1_8V_6X;
+        #elif BOARD_MODEL == BOARD_TDECK
+          mode = MODE_TCXO_1_8V_6X;
+        #elif BOARD_MODEL == BOARD_TBEAM_S_V1
+          mode = MODE_TCXO_1_8V_6X;
+        #elif BOARD_MODEL == BOARD_T3S3
+          mode = MODE_TCXO_1_8V_6X;
+        #elif BOARD_MODEL == BOARD_HELTEC_T114
+          mode = MODE_TCXO_1_8V_6X;
+        #elif BOARD_MODEL == BOARD_TECHO
+          mode = MODE_TCXO_1_8V_6X;
+        #elif BOARD_MODEL == BOARD_HELTEC32_V4
+          mode = MODE_TCXO_1_8V_6X;
+        #endif
+      }
     #endif
-  }
-  if (mode != 0xFF) {
     uint8_t buf[4] = {mode, 0x00, 0x00, 0xFF};
     executeOpcode(OP_DIO3_TCXO_CTRL_6X, buf, 4);
-  }
+  #endif
 }
 
 void sx126x::setTcxoVoltage(uint8_t mode_byte) {

@@ -75,6 +75,17 @@ struct Config {
     // `native` env before runtime selection landed.
     uint8_t  modem        = 0x03;
 
+    // When true, a TX failure (LoRa->endPacket() returning 0, i.e. the
+    // modem didn't report TX_DONE within the driver's timeout) triggers
+    // hard_reset() — on native that means re-execing the daemon. The
+    // default is false because a re-exec is expensive on native (releases
+    // libgpiod handles, closes the KISS-TCP socket, etc.) and one bad
+    // packet doesn't justify killing the process. When false, the firmware
+    // logs the error to KISS and returns the modem to RX so subsequent
+    // packets can still flow. Set to true if your deployment really needs
+    // the embedded behavior of "reboot on any TX timeout".
+    bool reboot_on_tx_failure = false;
+
     // KISS-over-TCP host transport. The native daemon listens on this
     // localhost port for a single client (rnodeconf, an RNS KISSInterface,
     // etc.). 7633 matches the ESP32 WiFi-remote convention in Remote.h.
