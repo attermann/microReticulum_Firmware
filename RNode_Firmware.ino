@@ -18,7 +18,7 @@
 #include <microReticulum.h>
 #include "Provisioning.h"
 #if defined(LORA_TRANSPORT)
-//#include "LoRaInterface.h"
+#include "LoRaInterface.h"
 #endif
 #if defined(UDP_TRANSPORT)
 #include "UDPInterface.h"
@@ -118,6 +118,7 @@ void buffer_serial();
 void serial_poll();
 
 #ifdef HAS_RNS
+/*
 // CBA LoRa interface
 class LoRaInterface : public RNS::InterfaceImpl {
 public:
@@ -192,6 +193,40 @@ protected:
     return true;
   }
 };
+*/
+
+// CBA RNS
+RNS::Reticulum reticulum(RNS::Type::NONE);
+RNS::Interface lora_interface(RNS::Type::NONE);
+#if defined(UDP_TRANSPORT)
+RNS::Interface udp_interface(RNS::Type::NONE);
+#endif
+#if defined(RNS_USE_FS)
+  // CBA microStore
+  #if MCU_VARIANT == MCU_ESP32
+    #if defined(USTORE_USE_SD)
+      #include <microStore/Adapters/SDFileSystem.h>
+      microStore::FileSystem filesystem{microStore::Adapters::SDFileSystem(SDCARD_SCLK, SDCARD_MISO, SDCARD_MOSI, SDCARD_CS)};
+    #else
+      //#include <microStore/Adapters/SPIFFSFileSystem.h>
+      //microStore::FileSystem filesystem{microStore::Adapters::SPIFFSFileSystem()};
+      //#include <microStore/Adapters/LittleFSFileSystem.h>
+      //microStore::FileSystem filesystem{microStore::Adapters::LittleFSFileSystem()};
+      #include <microStore/Adapters/PosixFileSystem.h>
+      microStore::FileSystem filesystem{microStore::Adapters::PosixFileSystem()};
+    #endif
+  #elif MCU_VARIANT == MCU_NRF52
+    #include <microStore/Adapters/InternalFSFileSystem.h>
+    #include <microStore/Adapters/FlashFSFileSystem.h>
+    microStore::FileSystem filesystem{microStore::Adapters::InternalFSFileSystem()};
+  #else
+    #include <microStore/Adapters/PosixFileSystem.h>
+    microStore::FileSystem filesystem{microStore::Adapters::PosixFileSystem()};
+  #endif
+  #else // RNS_USE_FS
+    microStore::FileSystem filesystem{microStore::Adapters::NoopFileSystem()};
+  #endif // RNS_USE_FS
+#endif  // HAS_RNS
 // CBA logger callback
 void on_log(const char* msg, RNS::LogLevel level) {
   if (kiss_framed_logs) {
@@ -230,7 +265,7 @@ void on_receive_packet(const RNS::Bytes& raw, const RNS::Interface& interface) {
 #ifdef HAS_SDCARD
   TRACE("Logging receive packet to SD");
   String line = RNS::getTimeString() + String(" recv: ") + String(raw.toHex().c_str()) + "\n";
-	File file = SD.open("/tracefile.txt", FILE_APPEND);
+	File file = SD.open("./tracefile.txt", FILE_APPEND);
 	if (file) {
     file.write((uint8_t*)line.c_str(), line.length());
     file.close();
@@ -238,13 +273,30 @@ void on_receive_packet(const RNS::Bytes& raw, const RNS::Interface& interface) {
 	RNS::Packet packet(raw);
 	if (packet.unpack()) {
     String line = RNS::getTimeString() + String(" recv: ") + String(packet.dumpString().c_str()) + "\n";
-    File file = SD.open("/tracedetails.txt", FILE_APPEND);
+    File file = SD.open("./tracedetails.txt", FILE_APPEND);
     if (file) {
       file.write((uint8_t*)line.c_str(), line.length());
       file.close();
     }
 	}
 #endif  // HAS_SDCARD
+#if MCU_VARIANT == MCU_NATIVE
+  String line = RNS::getTimeString() + String(" RECV: ") + String(raw.toHex().c_str()) + "\n";
+	microStore::File file = filesystem.open("./tracefile.txt", microStore::File::ModeAppend);
+	if (file) {
+    file.write((uint8_t*)line.c_str(), line.length());
+    file.close();
+  }
+	RNS::Packet packet(raw);
+	if (packet.unpack()) {
+    String line = RNS::getTimeString() + String(" RECV: ") + String(packet.dumpString().c_str()) + "\n";
+  	microStore::File file = filesystem.open("./tracedetails.txt", microStore::File::ModeAppend);
+    if (file) {
+      file.write((uint8_t*)line.c_str(), line.length());
+      file.close();
+    }
+	}
+#endif
 }
 
 // CBA transmit packet callback
@@ -267,40 +319,24 @@ void on_transmit_packet(const RNS::Bytes& raw, const RNS::Interface& interface) 
     }
 	}
 #endif  // HAS_SDCARD
-}
-
-// CBA RNS
-RNS::Reticulum reticulum(RNS::Type::NONE);
-RNS::Interface lora_interface(RNS::Type::NONE);
-#if defined(UDP_TRANSPORT)
-RNS::Interface udp_interface(RNS::Type::NONE);
+#if MCU_VARIANT == MCU_NATIVE
+  String line = RNS::getTimeString() + String(" send: ") + String(raw.toHex().c_str()) + "\n";
+	microStore::File file = filesystem.open("./tracefile.txt", microStore::File::ModeAppend);
+	if (file) {
+    file.write((uint8_t*)line.c_str(), line.length());
+    file.close();
+  }
+	RNS::Packet packet(raw);
+	if (packet.unpack()) {
+    String line = RNS::getTimeString() + String(" send: ") + String(packet.dumpString().c_str()) + "\n";
+  	microStore::File file = filesystem.open("./tracedetails.txt", microStore::File::ModeAppend);
+    if (file) {
+      file.write((uint8_t*)line.c_str(), line.length());
+      file.close();
+    }
+	}
 #endif
-#if defined(RNS_USE_FS)
-  // CBA microStore
-  #if MCU_VARIANT == MCU_ESP32
-    #if defined(USTORE_USE_SD)
-      #include <microStore/Adapters/SDFileSystem.h>
-      microStore::FileSystem filesystem{microStore::Adapters::SDFileSystem(SDCARD_SCLK, SDCARD_MISO, SDCARD_MOSI, SDCARD_CS)};
-    #else
-      //#include <microStore/Adapters/SPIFFSFileSystem.h>
-      //microStore::FileSystem filesystem{microStore::Adapters::SPIFFSFileSystem()};
-      //#include <microStore/Adapters/LittleFSFileSystem.h>
-      //microStore::FileSystem filesystem{microStore::Adapters::LittleFSFileSystem()};
-      #include <microStore/Adapters/PosixFileSystem.h>
-      microStore::FileSystem filesystem{microStore::Adapters::PosixFileSystem()};
-    #endif
-  #elif MCU_VARIANT == MCU_NRF52
-    #include <microStore/Adapters/InternalFSFileSystem.h>
-    #include <microStore/Adapters/FlashFSFileSystem.h>
-    microStore::FileSystem filesystem{microStore::Adapters::InternalFSFileSystem()};
-  #else
-    #include <microStore/Adapters/PosixFileSystem.h>
-    microStore::FileSystem filesystem{microStore::Adapters::PosixFileSystem()};
-  #endif
-  #else // RNS_USE_FS
-    microStore::FileSystem filesystem{microStore::Adapters::NoopFileSystem()};
-  #endif // RNS_USE_FS
-#endif  // HAS_RNS
+}
 
 // CBA For printf
 int _write(int file, char *ptr, int len) {
