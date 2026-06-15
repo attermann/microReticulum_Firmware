@@ -152,9 +152,12 @@ bool sx126x::preInit() {
   // Check version (retry for up to 2 seconds)
   // TODO: Actually read version registers, not syncwords
   #if MCU_VARIANT == MCU_NATIVE
+    int reset_state = (_reset != -1) ? digitalRead(_reset) : -1;
+    int busy_state0 = (_busy != -1) ? digitalRead(_busy) : -1;
     std::fprintf(stderr,
-        "[sx126x::preInit] entered. cs=%d reset=%d busy=%d dio=%d rxen=%d\n",
-        _ss, _reset, _busy, _dio0, _rxen);
+        "[sx126x::preInit] entered. cs=%d reset=%d busy=%d dio=%d rxen=%d | "
+        "NRESET=%d (should be 1 = chip out of reset) BUSY=%d\n",
+        _ss, _reset, _busy, _dio0, _rxen, reset_state, busy_state0);
   #endif
   long start = millis();
   uint8_t syncmsb = 0;
