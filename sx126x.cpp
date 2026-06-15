@@ -136,7 +136,7 @@ sx126x::sx126x() :
 bool sx126x::preInit() {
   pinMode(_ss, OUTPUT);
   digitalWrite(_ss, HIGH);
-  
+
   #if BOARD_MODEL == BOARD_T3S3 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_HELTEC32_V4 || BOARD_MODEL == BOARD_TDECK || BOARD_MODEL == BOARD_XIAO_S3
     SPI.begin(pin_sclk, pin_miso, pin_mosi, pin_cs);
   #elif BOARD_MODEL == BOARD_TECHO
@@ -151,15 +151,30 @@ bool sx126x::preInit() {
   long start = millis();
   uint8_t syncmsb;
   uint8_t synclsb;
+  #if MCU_VARIANT == MCU_NATIVE
+    int attempts = 0;
+  #endif
   while (((millis() - start) < 2000) && (millis() >= start)) {
       syncmsb = readRegister(REG_SYNC_WORD_MSB_6X);
       synclsb = readRegister(REG_SYNC_WORD_LSB_6X);
+      #if MCU_VARIANT == MCU_NATIVE
+        ++attempts;
+      #endif
       if ( uint16_t(syncmsb << 8 | synclsb) == 0x1424 || uint16_t(syncmsb << 8 | synclsb) == 0x4434) {
           break;
       }
       delay(100);
   }
   if ( uint16_t(syncmsb << 8 | synclsb) != 0x1424 && uint16_t(syncmsb << 8 | synclsb) != 0x4434) {
+      #if MCU_VARIANT == MCU_NATIVE
+        // Diagnostic: show what we actually read so the operator can tell
+        // whether SPI is silent (0x00 / 0xFF) or talking but mismatched.
+        int busy_state = (_busy != -1) ? digitalRead(_busy) : -1;
+        printf("[sx126x::preInit] sync read failed after %d attempts: "
+               "got msb=0x%02X lsb=0x%02X (expected 0x14/0x24 or 0x44/0x34), "
+               "BUSY=%d (-1=no pin, 1=HIGH/chip-not-ready, 0=LOW/chip-ready)\n",
+               attempts, syncmsb, synclsb, busy_state);
+      #endif
       return false;
   }
 
