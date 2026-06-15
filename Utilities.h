@@ -440,11 +440,13 @@ void led_indicate_error(int cycles) {
 		bool forever = (cycles == 0) ? true : false;
 		cycles = forever ? 1 : cycles;
 		while(cycles > 0) {
-	        digitalWrite(pin_led_rx, HIGH);
-	        digitalWrite(pin_led_tx, LOW);
+	        // Go through the guarded helpers so a board with no physical
+	        // LEDs configured (pin_led_rx / pin_led_tx == -1, e.g. native
+	        // builds) doesn't pass 255 to digitalWrite() and trip
+	        // Portduino's pin-range assert.
+	        led_rx_on();  led_tx_off();
 	        delay(100);
-	        digitalWrite(pin_led_rx, LOW);
-	        digitalWrite(pin_led_tx, HIGH);
+	        led_rx_off(); led_tx_on();
 	        delay(100);
 	        if (!forever) cycles--;
 	    }
@@ -494,7 +496,10 @@ void led_indicate_warning(int cycles) {
 	#else
 		bool forever = (cycles == 0) ? true : false;
 		cycles = forever ? 1 : cycles;
-		digitalWrite(pin_led_tx, HIGH);
+		// Use the guarded helper instead of raw digitalWrite so unset
+		// LED pins (-1, native builds) don't trip Portduino's pin-range
+		// assert. The first led_tx_on() below has the same effect.
+		led_tx_on();
 		while(cycles > 0) {
       led_tx_off();
       delay(100);
