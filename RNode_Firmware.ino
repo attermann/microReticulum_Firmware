@@ -539,9 +539,18 @@ void setup() {
 
     // Check installed transceiver chip and
     // probe boot parameters.
+    #if MCU_VARIANT == MCU_NATIVE
+      // Power up any external supplies the chip needs before preInit()
+      // can read sync-word registers. Without this, a HAT with an EN
+      // line (e.g. RAK13302) sees no power and the probe returns "No
+      // radio module found". Leave the pins asserted after a successful
+      // preInit so the chip stays powered through startRadio(); only
+      // deassert on probe failure.
+      native_pinmap::assert_radio_enable_pins();
+    #endif
     if (LoRa->preInit()) {
       modem_installed = true;
-      
+
       #if HAS_INPUT
         // Skip quick-reset console activation
       #else
@@ -563,6 +572,9 @@ void setup() {
 
     } else {
       modem_installed = false;
+      #if MCU_VARIANT == MCU_NATIVE
+        native_pinmap::deassert_radio_enable_pins();
+      #endif
     }
   #else
     // Older variants only came with SX1276/78 chips,
