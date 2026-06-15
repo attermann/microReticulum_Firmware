@@ -771,6 +771,13 @@ void sx126x::standby() {
 void sx126x::sleep() { uint8_t byte = 0x00; executeOpcode(OP_SLEEP_6X, &byte, 1); }
 
 void sx126x::enableTCXO() {
+  #if MCU_VARIANT == MCU_NATIVE
+    // Diagnostic: confirm whether HAS_TCXO compiled in and what the
+    // override state looks like at the time begin() reaches us.
+    std::fprintf(stderr,
+        "[tcxo-diag] enableTCXO() entered. HAS_TCXO=%d _tcxoVoltageOverride=0x%02X\n",
+        (int)HAS_TCXO, _tcxoVoltageOverride);
+  #endif
   #if HAS_TCXO
     #if MCU_VARIANT == MCU_NATIVE
       // On native, the TCXO code path is always compiled in but the actual
@@ -778,8 +785,12 @@ void sx126x::enableTCXO() {
       // in via rnoded.conf's dio3_tcxo_voltage. Without the opt-in we
       // leave the chip on its default oscillator config — driving DIO3
       // and switching to TCXO mode would break HATs that use an XTAL.
-      if (_tcxoVoltageOverride == 0xFF) return;
+      if (_tcxoVoltageOverride == 0xFF) {
+        std::fprintf(stderr, "[tcxo-diag] enableTCXO() returning early — no override set\n");
+        return;
+      }
       uint8_t mode = _tcxoVoltageOverride;
+      std::fprintf(stderr, "[tcxo-diag] emitting OP_DIO3_TCXO_CTRL mode=0x%02X\n", mode);
     #else
       uint8_t mode;
       if (_tcxoVoltageOverride != 0xFF) {

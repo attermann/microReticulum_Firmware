@@ -508,6 +508,11 @@ void setup() {
       else if (v >= 1.65f) mode = 0x01; // 1.7 V
       else                 mode = 0x00; // 1.6 V
       LoRa->setTcxoVoltage(mode);
+      std::fprintf(stderr, "[tcxo-diag] setTcxoVoltage(0x%02X) called from setup() "
+                           "(dio3_tcxo_voltage=%.2fV from rnoded.conf)\n",
+                   mode, v);
+    } else {
+      std::fprintf(stderr, "[tcxo-diag] dio3_tcxo_voltage unset / 0.0 — TCXO opt-in NOT performed\n");
     }
     LoRa->setDio2AsRfSwitch(native_config::g_config.dio2_as_rf_switch);
   }
