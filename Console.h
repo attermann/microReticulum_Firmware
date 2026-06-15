@@ -17,6 +17,7 @@
 #include <SPIFFS.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include "WebSocketConsole.h"
 
 #include "SD.h"
 #include "SPI.h"
@@ -192,6 +193,15 @@ void console_start() {
 
   console_register_pages();
   server.begin();
+
+  #if defined(ENABLE_WEBSOCKETS) && __has_include(<WiFi.h>)
+    // KISS-over-WebSocket on port 81, alongside HTTP on 80. The browser
+    // page served by `server` connects back to this with `new WebSocket(
+    // "ws://" + location.hostname + ":81")`. Single client at a time —
+    // same model as Remote.h's KISS-over-TCP.
+    ws_console::init(81);
+  #endif
+
   led_indicate_console();
 }
 

@@ -63,6 +63,7 @@ sx128x *LoRa = &sx128x_modem;
 #include "ROM.h"
 #include "Framing.h"
 #include "MD5.h"
+#include "WebSocketConsole.h"
 
 #if !HAS_EEPROM && MCU_VARIANT == MCU_NRF52
 uint8_t eeprom_read(uint32_t mapped_addr);
@@ -865,6 +866,14 @@ void serial_write(uint8_t byte) {
 		}
 	#else
 		Serial.write(byte);
+	#endif
+
+	// WebSocket fan-out: every outbound KISS byte is also offered to the
+	// WS console. The WS bridge buffers between FEND markers and emits
+	// one binary WS frame per complete KISS frame. No-op when the WS
+	// console isn't compiled in or no client is attached.
+	#if defined(ENABLE_WEBSOCKETS) && __has_include(<WiFi.h>)
+		ws_console::on_serial_write(byte);
 	#endif
 }
 

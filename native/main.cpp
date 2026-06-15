@@ -18,6 +18,9 @@
 #include "config.h"
 #include "EEPROMShim.h"
 #include "TCPHostInterface.h"
+#if defined(ENABLE_WEBSOCKETS) && __has_include(<WiFi.h>)
+#include "../WebSocketConsole.h"
+#endif
 
 #include <Arduino.h>  // brings in `extern HardwareSPI SPI;` declaration
 
@@ -124,6 +127,15 @@ void portduinoSetup() {
     //     opts into binding on 0.0.0.0; defaults to loopback.
     native_kiss_tcp::init(native_config::g_config.kiss_tcp_port,
                           native_config::g_config.kiss_tcp_public);
+
+    #if defined(ENABLE_WEBSOCKETS) && __has_include(<WiFi.h>)
+    // KISS-over-WebSocket on port 8080. On native there's no separate
+    // HTTP console yet (Portduino doesn't ship WebServer.h), so this is
+    // currently the only WS endpoint here — browser connects directly
+    // with `new WebSocket("ws://localhost:8080")`. Future: serve the
+    // console HTML from a small native HTTP server alongside.
+    ws_console::init(8080);
+    #endif
 
     // 6) Bind a SimSPIChip as a safety net. With LORA_TRANSPORT removed,
     //    the modem driver no longer initiates SPI activity, but Portduino's

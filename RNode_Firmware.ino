@@ -33,6 +33,7 @@
 #include "Utilities.h"
 #include "DeviceUID.h"
 #include "Platform.h"
+#include "WebSocketConsole.h"
 
 #if MODEM == MODEM_RUNTIME
 #include "native/LoRaFactory.h"
@@ -55,6 +56,13 @@ SPIClass SDSPI(HSPI);
 
 FIFOBuffer serialFIFO;
 uint8_t serialBuffer[CONFIG_UART_BUFFER_SIZE+1];
+
+// Inbound byte sink used by WebSocketConsole (and any other non-polled
+// transport). Drops the byte if the FIFO is full — same behavior as the
+// existing buffer_serial() code paths for the polled sources.
+extern "C" void serial_fifo_push(uint8_t byte) {
+  if (!fifo_isfull(&serialFIFO)) fifo_push(&serialFIFO, byte);
+}
 
 FIFOBuffer16 packet_starts;
 uint16_t packet_starts_buf[CONFIG_QUEUE_MAX_LENGTH+1];
@@ -2547,6 +2555,10 @@ void loop() {
       if (!fifo_isempty(&serialFIFO)) serial_poll();
   #else
     if (!fifo_isempty_locked(&serialFIFO)) serial_poll();
+  #endif
+
+  #if defined(ENABLE_WEBSOCKETS) && __has_include(<WiFi.h>)
+    ws_console::service();
   #endif
 
   #if HAS_DISPLAY
