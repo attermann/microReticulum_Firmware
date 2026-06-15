@@ -320,7 +320,7 @@ void on_transmit_packet(const RNS::Bytes& raw, const RNS::Interface& interface) 
 	}
 #endif  // HAS_SDCARD
 #if MCU_VARIANT == MCU_NATIVE
-  String line = RNS::getTimeString() + String(" send: ") + String(raw.toHex().c_str()) + "\n";
+  String line = RNS::getTimeString() + String(" SEND: ") + String(raw.toHex().c_str()) + "\n";
 	microStore::File file = filesystem.open("./tracefile.txt", microStore::File::ModeAppend);
 	if (file) {
     file.write((uint8_t*)line.c_str(), line.length());
@@ -328,7 +328,7 @@ void on_transmit_packet(const RNS::Bytes& raw, const RNS::Interface& interface) 
   }
 	RNS::Packet packet(raw);
 	if (packet.unpack()) {
-    String line = RNS::getTimeString() + String(" send: ") + String(packet.dumpString().c_str()) + "\n";
+    String line = RNS::getTimeString() + String(" SEND: ") + String(packet.dumpString().c_str()) + "\n";
   	microStore::File file = filesystem.open("./tracedetails.txt", microStore::File::ModeAppend);
     if (file) {
       file.write((uint8_t*)line.c_str(), line.length());
