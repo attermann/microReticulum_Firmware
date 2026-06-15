@@ -1431,6 +1431,9 @@ void transmit(uint16_t size) {
             kiss_indicate_error(ERROR_MODEM_TIMEOUT);
             kiss_indicate_error(ERROR_TXFAILED);
             led_indicate_error(5);
+            #if MCU_VARIANT == MCU_NATIVE
+              std::fprintf(stderr, "[diag] hard_reset from transmit() split-packet endPacket failure\n");
+            #endif
             hard_reset();
           }
 
@@ -1445,6 +1448,9 @@ void transmit(uint16_t size) {
         kiss_indicate_error(ERROR_MODEM_TIMEOUT);
         kiss_indicate_error(ERROR_TXFAILED);
         led_indicate_error(5);
+        #if MCU_VARIANT == MCU_NATIVE
+          std::fprintf(stderr, "[diag] hard_reset from transmit() endPacket failure (whole packet)\n");
+        #endif
         hard_reset();
       }
 

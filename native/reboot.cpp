@@ -15,6 +15,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <execinfo.h>  // for backtrace diagnostic on reboot
 
 namespace native_pinmap {
     // Defined in PinMap.cpp. No-op on macOS, releases libgpiod handles
@@ -33,6 +34,14 @@ void request() {
     if (!reboot_flag) {
         std::fprintf(stderr,
             "[reboot] requested — will re-exec on next loop tick\n");
+        // Print a small backtrace so we can identify which hard_reset() call
+        // site triggered the reboot. addr2line on the printed addresses
+        // resolves them to file:line. Useful for diagnosing why the daemon
+        // is re-execing spontaneously.
+        void* frames[16];
+        int n = backtrace(frames, 16);
+        std::fprintf(stderr, "[reboot] backtrace (%d frames):\n", n);
+        backtrace_symbols_fd(frames, n, fileno(stderr));
     }
     reboot_flag = true;
 }
