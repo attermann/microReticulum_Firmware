@@ -5,6 +5,9 @@
 
 #if MODEM == SX1262 || MODEM == MODEM_RUNTIME
 #include "sx126x.h"
+#if MCU_VARIANT == MCU_NATIVE
+  #include <cstdio>  // for std::fprintf diagnostics
+#endif
 
 #if MCU_VARIANT == MCU_ESP32
   #if MCU_VARIANT == MCU_ESP32 and !defined(CONFIG_IDF_TARGET_ESP32S3)
@@ -148,9 +151,14 @@ bool sx126x::preInit() {
 
   // Check version (retry for up to 2 seconds)
   // TODO: Actually read version registers, not syncwords
+  #if MCU_VARIANT == MCU_NATIVE
+    std::fprintf(stderr,
+        "[sx126x::preInit] entered. cs=%d reset=%d busy=%d dio=%d rxen=%d\n",
+        _ss, _reset, _busy, _dio0, _rxen);
+  #endif
   long start = millis();
-  uint8_t syncmsb;
-  uint8_t synclsb;
+  uint8_t syncmsb = 0;
+  uint8_t synclsb = 0;
   #if MCU_VARIANT == MCU_NATIVE
     int attempts = 0;
   #endif
@@ -159,6 +167,12 @@ bool sx126x::preInit() {
       synclsb = readRegister(REG_SYNC_WORD_LSB_6X);
       #if MCU_VARIANT == MCU_NATIVE
         ++attempts;
+        if (attempts == 1 || attempts == 5 || attempts == 20) {
+          int busy_state = (_busy != -1) ? digitalRead(_busy) : -1;
+          std::fprintf(stderr,
+              "[sx126x::preInit] attempt %d: msb=0x%02X lsb=0x%02X BUSY=%d\n",
+              attempts, syncmsb, synclsb, busy_state);
+        }
       #endif
       if ( uint16_t(syncmsb << 8 | synclsb) == 0x1424 || uint16_t(syncmsb << 8 | synclsb) == 0x4434) {
           break;
@@ -167,16 +181,19 @@ bool sx126x::preInit() {
   }
   if ( uint16_t(syncmsb << 8 | synclsb) != 0x1424 && uint16_t(syncmsb << 8 | synclsb) != 0x4434) {
       #if MCU_VARIANT == MCU_NATIVE
-        // Diagnostic: show what we actually read so the operator can tell
-        // whether SPI is silent (0x00 / 0xFF) or talking but mismatched.
         int busy_state = (_busy != -1) ? digitalRead(_busy) : -1;
-        printf("[sx126x::preInit] sync read failed after %d attempts: "
-               "got msb=0x%02X lsb=0x%02X (expected 0x14/0x24 or 0x44/0x34), "
-               "BUSY=%d (-1=no pin, 1=HIGH/chip-not-ready, 0=LOW/chip-ready)\n",
-               attempts, syncmsb, synclsb, busy_state);
+        std::fprintf(stderr,
+            "[sx126x::preInit] FAILED after %d attempts: msb=0x%02X lsb=0x%02X BUSY=%d "
+            "(0xFFFF = MISO floating, 0x0000 = chip in reset or MOSI shorted, 0x1424 = success)\n",
+            attempts, syncmsb, synclsb, busy_state);
       #endif
       return false;
   }
+  #if MCU_VARIANT == MCU_NATIVE
+    std::fprintf(stderr,
+        "[sx126x::preInit] SUCCESS after %d attempts: msb=0x%02X lsb=0x%02X\n",
+        attempts, syncmsb, synclsb);
+  #endif
 
   _preinit_done = true;
   return true;
