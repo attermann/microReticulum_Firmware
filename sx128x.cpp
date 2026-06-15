@@ -176,19 +176,33 @@ void sx128x::writeRegister(uint16_t address, uint8_t value) { singleTransfer(OP_
 
 uint8_t ISR_VECT sx128x::singleTransfer(uint8_t opcode, uint16_t address, uint8_t value) {
     waitOnBusy();
-    uint8_t response;
-    digitalWrite(_ss, LOW);
 
+    // Single buffered transaction — see sx126x::singleTransfer() for the
+    // rationale. Linux spidev deasserts CS at the end of every ioctl, so
+    // byte-by-byte SPI.transfer() makes the chip see each byte as an
+    // independent command and return 0x00 / 0xFF on MISO. The buffer form
+    // keeps CS asserted across the whole opcode-plus-payload exchange.
+    uint8_t buf[5];
+    buf[0] = opcode;
+    buf[1] = (address & 0xFF00) >> 8;
+    buf[2] = address & 0x00FF;
+    uint8_t len;
+    if (opcode == OP_READ_REGISTER_8X) {
+      buf[3] = 0x00;   // status-byte skip
+      buf[4] = value;
+      len = 5;
+    } else {
+      buf[3] = value;
+      len = 4;
+    }
+
+    digitalWrite(_ss, LOW);
     SPI.beginTransaction(_spiSettings);
-    SPI.transfer(opcode);
-    SPI.transfer((address & 0xFF00) >> 8);
-    SPI.transfer(address & 0x00FF);
-    if (opcode == OP_READ_REGISTER_8X) { SPI.transfer(0x00); }
-    response = SPI.transfer(value);
+    SPI.transfer(buf, len);
     SPI.endTransaction();
     digitalWrite(_ss, HIGH);
 
-    return response;
+    return buf[len - 1];
 }
 
 void sx128x::rxAntEnable() {
@@ -215,46 +229,62 @@ void sx128x::waitOnBusy() {
 
 void sx128x::executeOpcode(uint8_t opcode, uint8_t *buffer, uint8_t size) {
     waitOnBusy();
+    // See singleTransfer() for the batching rationale. Max payload of any
+    // sx128x opcode is well under 64 bytes.
+    uint8_t buf[1 + 64];
+    buf[0] = opcode;
+    for (uint8_t i = 0; i < size; i++) { buf[1 + i] = buffer[i]; }
     digitalWrite(_ss, LOW);
     SPI.beginTransaction(_spiSettings);
-    SPI.transfer(opcode);
-    for (int i = 0; i < size; i++) { SPI.transfer(buffer[i]); }
+    SPI.transfer(buf, 1 + size);
     SPI.endTransaction();
     digitalWrite(_ss, HIGH);
 }
 
 void sx128x::executeOpcodeRead(uint8_t opcode, uint8_t *buffer, uint8_t size) {
     waitOnBusy();
+    // opcode + status-skip + size payload bytes, single ioctl.
+    uint8_t buf[2 + 64];
+    buf[0] = opcode;
+    buf[1] = 0x00;
+    for (uint8_t i = 0; i < size; i++) { buf[2 + i] = 0x00; }
     digitalWrite(_ss, LOW);
     SPI.beginTransaction(_spiSettings);
-    SPI.transfer(opcode);
-    SPI.transfer(0x00);
-    for (int i = 0; i < size; i++) { buffer[i] = SPI.transfer(0x00); }
+    SPI.transfer(buf, 2 + size);
     SPI.endTransaction();
     digitalWrite(_ss, HIGH);
+    for (uint8_t i = 0; i < size; i++) { buffer[i] = buf[2 + i]; }
 }
 
 void sx128x::writeBuffer(const uint8_t* buffer, size_t size) {
     waitOnBusy();
+    // opcode + fifo-tx-addr + payload. SX1280 FIFO is 256 bytes.
+    uint8_t buf[2 + 256];
+    buf[0] = OP_FIFO_WRITE_8X;
+    buf[1] = _fifo_tx_addr_ptr;
+    for (size_t i = 0; i < size; i++) { buf[2 + i] = buffer[i]; }
+    _fifo_tx_addr_ptr += size;
     digitalWrite(_ss, LOW);
     SPI.beginTransaction(_spiSettings);
-    SPI.transfer(OP_FIFO_WRITE_8X);
-    SPI.transfer(_fifo_tx_addr_ptr);
-    for (int i = 0; i < size; i++) { SPI.transfer(buffer[i]); _fifo_tx_addr_ptr++; }
+    SPI.transfer(buf, 2 + size);
     SPI.endTransaction();
     digitalWrite(_ss, HIGH);
 }
 
 void sx128x::readBuffer(uint8_t* buffer, size_t size) {
     waitOnBusy();
+    // opcode + fifo-rx-addr + status-skip + payload, single ioctl.
+    uint8_t buf[3 + 256];
+    buf[0] = OP_FIFO_READ_8X;
+    buf[1] = _fifo_rx_addr_ptr;
+    buf[2] = 0x00;
+    for (size_t i = 0; i < size; i++) { buf[3 + i] = 0x00; }
     digitalWrite(_ss, LOW);
     SPI.beginTransaction(_spiSettings);
-    SPI.transfer(OP_FIFO_READ_8X);
-    SPI.transfer(_fifo_rx_addr_ptr);
-    SPI.transfer(0x00);
-    for (int i = 0; i < size; i++) { buffer[i] = SPI.transfer(0x00); }
+    SPI.transfer(buf, 3 + size);
     SPI.endTransaction();
     digitalWrite(_ss, HIGH);
+    for (size_t i = 0; i < size; i++) { buffer[i] = buf[3 + i]; }
 }
 
 void sx128x::setModulationParams(uint8_t sf, uint8_t bw, uint8_t cr) {

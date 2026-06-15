@@ -149,34 +149,14 @@ bool sx126x::preInit() {
     SPI.begin();
   #endif
 
-  // Check version (retry for up to 2 seconds)
+  // Check version (retry for up to 2 seconds).
   // TODO: Actually read version registers, not syncwords
-  #if MCU_VARIANT == MCU_NATIVE
-    int reset_state = (_reset != -1) ? digitalRead(_reset) : -1;
-    int busy_state0 = (_busy != -1) ? digitalRead(_busy) : -1;
-    std::fprintf(stderr,
-        "[sx126x::preInit] entered. cs=%d reset=%d busy=%d dio=%d rxen=%d | "
-        "NRESET=%d (should be 1 = chip out of reset) BUSY=%d\n",
-        _ss, _reset, _busy, _dio0, _rxen, reset_state, busy_state0);
-  #endif
   long start = millis();
   uint8_t syncmsb = 0;
   uint8_t synclsb = 0;
-  #if MCU_VARIANT == MCU_NATIVE
-    int attempts = 0;
-  #endif
   while (((millis() - start) < 2000) && (millis() >= start)) {
       syncmsb = readRegister(REG_SYNC_WORD_MSB_6X);
       synclsb = readRegister(REG_SYNC_WORD_LSB_6X);
-      #if MCU_VARIANT == MCU_NATIVE
-        ++attempts;
-        if (attempts == 1 || attempts == 5 || attempts == 20) {
-          int busy_state = (_busy != -1) ? digitalRead(_busy) : -1;
-          std::fprintf(stderr,
-              "[sx126x::preInit] attempt %d: msb=0x%02X lsb=0x%02X BUSY=%d\n",
-              attempts, syncmsb, synclsb, busy_state);
-        }
-      #endif
       if ( uint16_t(syncmsb << 8 | synclsb) == 0x1424 || uint16_t(syncmsb << 8 | synclsb) == 0x4434) {
           break;
       }
@@ -184,18 +164,17 @@ bool sx126x::preInit() {
   }
   if ( uint16_t(syncmsb << 8 | synclsb) != 0x1424 && uint16_t(syncmsb << 8 | synclsb) != 0x4434) {
       #if MCU_VARIANT == MCU_NATIVE
-        int busy_state = (_busy != -1) ? digitalRead(_busy) : -1;
+        // Sync word read failed — chip didn't respond. Most likely causes:
+        // (0xFF, 0xFF) MISO floating / chip not present; (0x00, 0x00) chip
+        // held in reset or SPI pins miswired.
         std::fprintf(stderr,
-            "[sx126x::preInit] FAILED after %d attempts: msb=0x%02X lsb=0x%02X BUSY=%d "
-            "(0xFFFF = MISO floating, 0x0000 = chip in reset or MOSI shorted, 0x1424 = success)\n",
-            attempts, syncmsb, synclsb, busy_state);
+            "[sx126x] preInit FAILED: chip did not respond (got msb=0x%02X lsb=0x%02X, expected 0x14/0x24)\n",
+            syncmsb, synclsb);
       #endif
       return false;
   }
   #if MCU_VARIANT == MCU_NATIVE
-    std::fprintf(stderr,
-        "[sx126x::preInit] SUCCESS after %d attempts: msb=0x%02X lsb=0x%02X\n",
-        attempts, syncmsb, synclsb);
+    std::fprintf(stderr, "[sx126x] preInit OK (sync_word=0x%02X%02X)\n", syncmsb, synclsb);
   #endif
 
   _preinit_done = true;
@@ -771,13 +750,6 @@ void sx126x::standby() {
 void sx126x::sleep() { uint8_t byte = 0x00; executeOpcode(OP_SLEEP_6X, &byte, 1); }
 
 void sx126x::enableTCXO() {
-  #if MCU_VARIANT == MCU_NATIVE
-    // Diagnostic: confirm whether HAS_TCXO compiled in and what the
-    // override state looks like at the time begin() reaches us.
-    std::fprintf(stderr,
-        "[tcxo-diag] enableTCXO() entered. HAS_TCXO=%d _tcxoVoltageOverride=0x%02X\n",
-        (int)HAS_TCXO, _tcxoVoltageOverride);
-  #endif
   #if HAS_TCXO
     #if MCU_VARIANT == MCU_NATIVE
       // On native, the TCXO code path is always compiled in but the actual
@@ -786,11 +758,11 @@ void sx126x::enableTCXO() {
       // leave the chip on its default oscillator config — driving DIO3
       // and switching to TCXO mode would break HATs that use an XTAL.
       if (_tcxoVoltageOverride == 0xFF) {
-        std::fprintf(stderr, "[tcxo-diag] enableTCXO() returning early — no override set\n");
+        std::fprintf(stderr, "[sx126x] TCXO disabled (dio3_tcxo_voltage not set)\n");
         return;
       }
       uint8_t mode = _tcxoVoltageOverride;
-      std::fprintf(stderr, "[tcxo-diag] emitting OP_DIO3_TCXO_CTRL mode=0x%02X\n", mode);
+      std::fprintf(stderr, "[sx126x] TCXO enabled via DIO3 (mode byte 0x%02X)\n", mode);
     #else
       uint8_t mode;
       if (_tcxoVoltageOverride != 0xFF) {
