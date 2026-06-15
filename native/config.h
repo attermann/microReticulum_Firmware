@@ -9,6 +9,8 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace native_config {
 
@@ -37,6 +39,27 @@ struct Config {
     int pin_miso         = 8;
     int pin_led_rx       = 9;
     int pin_led_tx       = 10;
+
+    // Additional GPIOs to drive to an active level for the duration the
+    // radio is in use (asserted before LoRa->begin(), de-asserted after
+    // LoRa->end()). Use for external LDO enables, antenna-switch power,
+    // PA bias, etc. Each entry is (pin, active_high): default active is
+    // HIGH; in rnoded.conf, append ":low" to a pin to invert.
+    //   radio_enable_pins = 22,25:low,33
+    std::vector<std::pair<int,bool>> radio_enable_pins;
+
+    // SX1262-only. Override the per-board compile-time TCXO voltage byte
+    // written to the chip's DIO3-TCXO-control register. Float volts;
+    // 0.0f = unset (keep compile-time default). Accepts the meshtasticd
+    // YAML conventions: a float like 1.8, or the literal "true" (alias
+    // for 1.8 V) / "false" (no override).
+    float dio3_tcxo_voltage = 0.0f;
+
+    // SX1262-only. When true, configure the chip's DIO2 line as the RF
+    // switch driver (the SX1262 toggles the antenna switch itself from
+    // its TX/RX state, no host GPIO needed). Default false on native;
+    // embedded targets keep their per-board compile-time #define.
+    bool dio2_as_rf_switch = false;
 
     // LoRa radio settings. These get written into the EEPROM image at
     // startup so the existing eeprom_conf_load() path picks them up.

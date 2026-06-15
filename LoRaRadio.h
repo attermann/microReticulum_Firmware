@@ -57,6 +57,12 @@ public:
   // Power
   virtual uint8_t getTxPower() = 0;
   virtual void    setTxPower(int level, int outputPin) = 0;
+
+  // Optional runtime SX126x knobs (no-op on other modems). Used by the
+  // native target to override per-board compile-time defaults from
+  // rnoded.conf without a downcast at the call site.
+  virtual void    setTcxoVoltage(uint8_t /*mode_byte*/) {}
+  virtual void    setDio2AsRfSwitch(bool /*enable*/) {}
 };
 
 #endif

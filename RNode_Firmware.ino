@@ -36,6 +36,8 @@
 
 #if MODEM == MODEM_RUNTIME
 #include "native/LoRaFactory.h"
+#include "native/PinMap.h"
+#include "native/config.h"
 #endif
 
 // CBA SD
@@ -490,6 +492,25 @@ void setup() {
   // performs its driver-native setPins() with the right arity using the
   // pin_* globals already populated by native_pinmap::apply().
   LoRa = native_lora::create_radio(current_modem);
+  // Apply rnoded.conf SX126x overrides before preInit() / begin(). Both
+  // setters are virtual no-ops on non-SX126x drivers, but we still gate
+  // on current_modem so the byte conversion only runs when relevant.
+  if (LoRa != nullptr && current_modem == SX1262) {
+    float v = native_config::g_config.dio3_tcxo_voltage;
+    if (v > 0.0f) {
+      // Snap to nearest of the 8 discrete MODE_TCXO_* bytes the SX1262
+      // accepts (see sx126x.cpp MODE_TCXO_*_6X defines).
+      uint8_t mode;
+      if      (v >= 3.15f) mode = 0x07; // 3.3 V
+      else if (v >= 2.30f) mode = 0x06; // 2.4 / 2.7 / 3.0 V
+      else if (v >= 2.00f) mode = 0x03; // 2.2 V
+      else if (v >= 1.75f) mode = 0x02; // 1.8 V
+      else if (v >= 1.65f) mode = 0x01; // 1.7 V
+      else                 mode = 0x00; // 1.6 V
+      LoRa->setTcxoVoltage(mode);
+    }
+    LoRa->setDio2AsRfSwitch(native_config::g_config.dio2_as_rf_switch);
+  }
   #elif MODEM == SX1276 || MODEM == SX1278
   LoRa->setPins(pin_cs, pin_reset, pin_dio, pin_busy);
   #elif MODEM == SX1262
@@ -1123,10 +1144,19 @@ bool startRadio() {
   update_radio_lock();
   if (!radio_online && !console_active) {
     if (!radio_locked && hw_ready) {
+      #if MCU_VARIANT == MCU_NATIVE
+        // Drive any configured radio_enable_pins to their active level
+        // before the modem comes up so external rails (LDOs, TCXO supply,
+        // PA bias) are stable before the SX126x probes them.
+        native_pinmap::assert_radio_enable_pins();
+      #endif
       if (!LoRa->begin(lora_freq)) {
         // The radio could not be started.
         // Indicate this failure over both the
         // serial port and with the onboard LEDs
+        #if MCU_VARIANT == MCU_NATIVE
+          native_pinmap::deassert_radio_enable_pins();
+        #endif
         radio_error = true;
         kiss_indicate_error(ERROR_INITRADIO);
         led_indicate_error(0);
@@ -1181,6 +1211,11 @@ void stopRadio() {
   if (radio_online) LoRa->end();
   #endif
   radio_online = false;
+  #if MCU_VARIANT == MCU_NATIVE
+    // De-assert after LoRa->end() so SPI cleanup completes while supply
+    // rails are still up — avoids transients on power-down.
+    native_pinmap::deassert_radio_enable_pins();
+  #endif
 }
 
 void update_radio_lock() {

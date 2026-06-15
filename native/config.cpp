@@ -30,6 +30,10 @@ uint32_t parse_u32(const std::string& v, uint32_t fallback) {
     catch (...) { return fallback; }
 }
 
+float parse_float(const std::string& v, float fallback) {
+    try { return std::stof(v); } catch (...) { return fallback; }
+}
+
 // Case-insensitive truthy parser. Accepts 1 / true / yes / on (and their
 // uppercase / mixed-case variants) as true; 0 / false / no / off as false.
 // Unrecognized values return the fallback so a typo doesn't silently flip
@@ -40,6 +44,37 @@ bool parse_bool(const std::string& v, bool fallback) {
     if (lower == "1" || lower == "true"  || lower == "yes" || lower == "on")  return true;
     if (lower == "0" || lower == "false" || lower == "no"  || lower == "off") return false;
     return fallback;
+}
+
+// Comma-separated pin list with optional ":low" / ":high" suffix per entry.
+//   "22,25:low,33" -> [(22,true),(25,false),(33,true)]
+// Entries that parse to a negative pin are silently dropped (mirrors the
+// -1-is-disabled convention used elsewhere in this config).
+void parse_pin_list(const std::string& v, std::vector<std::pair<int,bool>>& out) {
+    out.clear();
+    size_t start = 0;
+    while (start <= v.size()) {
+        size_t end = v.find(',', start);
+        std::string tok = v.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        trim(tok);
+        if (!tok.empty()) {
+            bool active_high = true;
+            auto colon = tok.find(':');
+            std::string num_part = tok;
+            if (colon != std::string::npos) {
+                num_part = tok.substr(0, colon);
+                std::string suffix = tok.substr(colon + 1);
+                trim(num_part); trim(suffix);
+                for (auto& c : suffix) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                if (suffix == "low")  active_high = false;
+                // anything else (including "high" or a typo) keeps the default
+            }
+            int pin = parse_int(num_part, -1);
+            if (pin >= 0) out.emplace_back(pin, active_high);
+        }
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
 }
 
 } // namespace
@@ -86,6 +121,20 @@ bool load(const std::string& path) {
         else if (k == "pin_miso")       g_config.pin_miso = parse_int(v, -1);
         else if (k == "pin_led_rx")     g_config.pin_led_rx = parse_int(v, -1);
         else if (k == "pin_led_tx")     g_config.pin_led_tx = parse_int(v, -1);
+        else if (k == "radio_enable_pins") parse_pin_list(v, g_config.radio_enable_pins);
+        else if (k == "dio3_tcxo_voltage") {
+            // Mirrors meshtasticd: float volts wins; if absent/zero, fall
+            // back to a boolean interpretation where "true" => 1.8 V.
+            float fv = parse_float(v, 0.0f);
+            if (fv > 0.0f) {
+                g_config.dio3_tcxo_voltage = fv;
+            } else if (parse_bool(v, false)) {
+                g_config.dio3_tcxo_voltage = 1.8f;
+            } else {
+                g_config.dio3_tcxo_voltage = 0.0f;
+            }
+        }
+        else if (k == "dio2_as_rf_switch") g_config.dio2_as_rf_switch = parse_bool(v, g_config.dio2_as_rf_switch);
         else if (k == "lora_freq_hz")   g_config.lora_freq_hz = parse_u32(v, g_config.lora_freq_hz);
         else if (k == "lora_bw_hz")     g_config.lora_bw_hz = parse_u32(v, g_config.lora_bw_hz);
         else if (k == "lora_sf")        g_config.lora_sf = static_cast<uint8_t>(parse_int(v, g_config.lora_sf));

@@ -127,7 +127,10 @@ sx126x::sx126x() :
   _fifo_rx_addr_ptr(0),
   _packet{0},
   _preinit_done(false),
-  _onReceive(NULL)
+  _onReceive(NULL),
+  _tcxoVoltageOverride(0xFF),
+  _dio2_as_rf_switch_override(false),
+  _dio2_as_rf_switch_set(false)
 { setTimeout(0); }
 
 bool sx126x::preInit() {
@@ -353,11 +356,15 @@ int sx126x::begin(uint32_t frequency) {
   // Set sync word
   setSyncWord(SYNC_WORD_6X);
 
-  #if DIO2_AS_RF_SWITCH
-    // enable dio2 rf switch
+  // DIO2-as-RF-switch: runtime override wins over the per-board macro.
+  // Boards.h sets a global fallback (DIO2_AS_RF_SWITCH = false at the
+  // bottom), so the macro is always defined and safe to read as a bool.
+  bool enable_dio2_rf = _dio2_as_rf_switch_set ? _dio2_as_rf_switch_override
+                                               : (bool)(DIO2_AS_RF_SWITCH);
+  if (enable_dio2_rf) {
     uint8_t byte = 0x01;
     executeOpcode(OP_DIO2_RF_CTRL_6X, &byte, 1);
-  #endif
+  }
 
   rxAntEnable();
   setFrequency(frequency);
@@ -696,25 +703,46 @@ void sx126x::sleep() { uint8_t byte = 0x00; executeOpcode(OP_SLEEP_6X, &byte, 1)
 
 void sx126x::enableTCXO() {
   #if HAS_TCXO
-    #if BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_XIAO_S3
-      uint8_t buf[4] = {MODE_TCXO_3_3V_6X, 0x00, 0x00, 0xFF};
-    #elif BOARD_MODEL == BOARD_TBEAM
-      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
-    #elif BOARD_MODEL == BOARD_TDECK
-      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
-    #elif BOARD_MODEL == BOARD_TBEAM_S_V1
-      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
-    #elif BOARD_MODEL == BOARD_T3S3
-      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
-    #elif BOARD_MODEL == BOARD_HELTEC_T114
-      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
-    #elif BOARD_MODEL == BOARD_TECHO
-      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
-    #elif BOARD_MODEL == BOARD_HELTEC32_V4
-      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
-    #endif
+    uint8_t mode;
+    if (_tcxoVoltageOverride != 0xFF) {
+      mode = _tcxoVoltageOverride;
+    } else {
+      #if BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_XIAO_S3
+        mode = MODE_TCXO_3_3V_6X;
+      #elif BOARD_MODEL == BOARD_TBEAM
+        mode = MODE_TCXO_1_8V_6X;
+      #elif BOARD_MODEL == BOARD_TDECK
+        mode = MODE_TCXO_1_8V_6X;
+      #elif BOARD_MODEL == BOARD_TBEAM_S_V1
+        mode = MODE_TCXO_1_8V_6X;
+      #elif BOARD_MODEL == BOARD_T3S3
+        mode = MODE_TCXO_1_8V_6X;
+      #elif BOARD_MODEL == BOARD_HELTEC_T114
+        mode = MODE_TCXO_1_8V_6X;
+      #elif BOARD_MODEL == BOARD_TECHO
+        mode = MODE_TCXO_1_8V_6X;
+      #elif BOARD_MODEL == BOARD_HELTEC32_V4
+        mode = MODE_TCXO_1_8V_6X;
+      #else
+        // Fallback for native runtime: pick a safe-ish middle value. The
+        // user is expected to set dio3_tcxo_voltage in rnoded.conf for
+        // any board that actually needs TCXO; this branch only runs if
+        // HAS_TCXO is true AND no per-board match AND no override.
+        mode = MODE_TCXO_1_8V_6X;
+      #endif
+    }
+    uint8_t buf[4] = {mode, 0x00, 0x00, 0xFF};
     executeOpcode(OP_DIO3_TCXO_CTRL_6X, buf, 4);
   #endif
+}
+
+void sx126x::setTcxoVoltage(uint8_t mode_byte) {
+  _tcxoVoltageOverride = mode_byte;
+}
+
+void sx126x::setDio2AsRfSwitch(bool enable) {
+  _dio2_as_rf_switch_override = enable;
+  _dio2_as_rf_switch_set = true;
 }
 
 // TODO: Once enabled, SX1262 needs a complete reset to disable TCXO
