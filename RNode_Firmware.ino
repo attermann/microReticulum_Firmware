@@ -547,6 +547,15 @@ void setup() {
       // preInit so the chip stays powered through startRadio(); only
       // deassert on probe failure.
       native_pinmap::assert_radio_enable_pins();
+      // Pulse NRESET before the probe. On embedded targets pinMode()
+      // defaults reset-line GPIOs to OUTPUT-HIGH at boot, so the chip is
+      // already out of reset by the time preInit() runs; under libgpiod
+      // the line stays in high-Z INPUT until reset() drives it, so the
+      // chip can be stuck in reset when preInit() reads syncword regs.
+      // Same pattern as the BOARD_T3S3 / BOARD_XIAO_S3 blocks above.
+      delay(10);
+      LoRa->reset();
+      delay(10);
     #endif
     if (LoRa->preInit()) {
       modem_installed = true;
