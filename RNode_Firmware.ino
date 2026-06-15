@@ -18,7 +18,7 @@
 #include <microReticulum.h>
 #include "Provisioning.h"
 #if defined(LORA_TRANSPORT)
-//#include "LoRaInterface.h"
+#include "LoRaInterface.h"
 #endif
 #if defined(UDP_TRANSPORT)
 #include "UDPInterface.h"
@@ -36,6 +36,8 @@
 
 #if MODEM == MODEM_RUNTIME
 #include "native/LoRaFactory.h"
+#include "native/PinMap.h"
+#include "native/config.h"
 #endif
 
 // CBA SD
@@ -116,6 +118,7 @@ void buffer_serial();
 void serial_poll();
 
 #ifdef HAS_RNS
+/*
 // CBA LoRa interface
 class LoRaInterface : public RNS::InterfaceImpl {
 public:
@@ -190,6 +193,40 @@ protected:
     return true;
   }
 };
+*/
+
+// CBA RNS
+RNS::Reticulum reticulum(RNS::Type::NONE);
+RNS::Interface lora_interface(RNS::Type::NONE);
+#if defined(UDP_TRANSPORT)
+RNS::Interface udp_interface(RNS::Type::NONE);
+#endif
+#if defined(RNS_USE_FS)
+  // CBA microStore
+  #if MCU_VARIANT == MCU_ESP32
+    #if defined(USTORE_USE_SD)
+      #include <microStore/Adapters/SDFileSystem.h>
+      microStore::FileSystem filesystem{microStore::Adapters::SDFileSystem(SDCARD_SCLK, SDCARD_MISO, SDCARD_MOSI, SDCARD_CS)};
+    #else
+      //#include <microStore/Adapters/SPIFFSFileSystem.h>
+      //microStore::FileSystem filesystem{microStore::Adapters::SPIFFSFileSystem()};
+      //#include <microStore/Adapters/LittleFSFileSystem.h>
+      //microStore::FileSystem filesystem{microStore::Adapters::LittleFSFileSystem()};
+      #include <microStore/Adapters/PosixFileSystem.h>
+      microStore::FileSystem filesystem{microStore::Adapters::PosixFileSystem()};
+    #endif
+  #elif MCU_VARIANT == MCU_NRF52
+    #include <microStore/Adapters/InternalFSFileSystem.h>
+    #include <microStore/Adapters/FlashFSFileSystem.h>
+    microStore::FileSystem filesystem{microStore::Adapters::InternalFSFileSystem()};
+  #else
+    #include <microStore/Adapters/PosixFileSystem.h>
+    microStore::FileSystem filesystem{microStore::Adapters::PosixFileSystem()};
+  #endif
+  #else // RNS_USE_FS
+    microStore::FileSystem filesystem{microStore::Adapters::NoopFileSystem()};
+  #endif // RNS_USE_FS
+#endif  // HAS_RNS
 // CBA logger callback
 void on_log(const char* msg, RNS::LogLevel level) {
   if (kiss_framed_logs) {
@@ -228,7 +265,7 @@ void on_receive_packet(const RNS::Bytes& raw, const RNS::Interface& interface) {
 #ifdef HAS_SDCARD
   TRACE("Logging receive packet to SD");
   String line = RNS::getTimeString() + String(" recv: ") + String(raw.toHex().c_str()) + "\n";
-	File file = SD.open("/tracefile.txt", FILE_APPEND);
+	File file = SD.open("./tracefile.txt", FILE_APPEND);
 	if (file) {
     file.write((uint8_t*)line.c_str(), line.length());
     file.close();
@@ -236,13 +273,30 @@ void on_receive_packet(const RNS::Bytes& raw, const RNS::Interface& interface) {
 	RNS::Packet packet(raw);
 	if (packet.unpack()) {
     String line = RNS::getTimeString() + String(" recv: ") + String(packet.dumpString().c_str()) + "\n";
-    File file = SD.open("/tracedetails.txt", FILE_APPEND);
+    File file = SD.open("./tracedetails.txt", FILE_APPEND);
     if (file) {
       file.write((uint8_t*)line.c_str(), line.length());
       file.close();
     }
 	}
 #endif  // HAS_SDCARD
+#if PLATFORM == PLATFORM_NATIVE
+  String line = RNS::getTimeString() + String(" RECV: ") + String(raw.toHex().c_str()) + "\n";
+	microStore::File file = filesystem.open("./tracefile.txt", microStore::File::ModeAppend);
+	if (file) {
+    file.write((uint8_t*)line.c_str(), line.length());
+    file.close();
+  }
+	RNS::Packet packet(raw);
+	if (packet.unpack()) {
+    String line = RNS::getTimeString() + String(" RECV: ") + String(packet.dumpString().c_str()) + "\n";
+  	microStore::File file = filesystem.open("./tracedetails.txt", microStore::File::ModeAppend);
+    if (file) {
+      file.write((uint8_t*)line.c_str(), line.length());
+      file.close();
+    }
+	}
+#endif
 }
 
 // CBA transmit packet callback
@@ -265,40 +319,24 @@ void on_transmit_packet(const RNS::Bytes& raw, const RNS::Interface& interface) 
     }
 	}
 #endif  // HAS_SDCARD
-}
-
-// CBA RNS
-RNS::Reticulum reticulum(RNS::Type::NONE);
-RNS::Interface lora_interface(RNS::Type::NONE);
-#if defined(UDP_TRANSPORT)
-RNS::Interface udp_interface(RNS::Type::NONE);
+#if PLATFORM == PLATFORM_NATIVE
+  String line = RNS::getTimeString() + String(" SEND: ") + String(raw.toHex().c_str()) + "\n";
+	microStore::File file = filesystem.open("./tracefile.txt", microStore::File::ModeAppend);
+	if (file) {
+    file.write((uint8_t*)line.c_str(), line.length());
+    file.close();
+  }
+	RNS::Packet packet(raw);
+	if (packet.unpack()) {
+    String line = RNS::getTimeString() + String(" SEND: ") + String(packet.dumpString().c_str()) + "\n";
+  	microStore::File file = filesystem.open("./tracedetails.txt", microStore::File::ModeAppend);
+    if (file) {
+      file.write((uint8_t*)line.c_str(), line.length());
+      file.close();
+    }
+	}
 #endif
-#if defined(RNS_USE_FS)
-  // CBA microStore
-  #if MCU_VARIANT == MCU_ESP32
-    #if defined(USTORE_USE_SD)
-      #include <microStore/Adapters/SDFileSystem.h>
-      microStore::FileSystem filesystem{microStore::Adapters::SDFileSystem(SDCARD_SCLK, SDCARD_MISO, SDCARD_MOSI, SDCARD_CS)};
-    #else
-      //#include <microStore/Adapters/SPIFFSFileSystem.h>
-      //microStore::FileSystem filesystem{microStore::Adapters::SPIFFSFileSystem()};
-      //#include <microStore/Adapters/LittleFSFileSystem.h>
-      //microStore::FileSystem filesystem{microStore::Adapters::LittleFSFileSystem()};
-      #include <microStore/Adapters/PosixFileSystem.h>
-      microStore::FileSystem filesystem{microStore::Adapters::PosixFileSystem()};
-    #endif
-  #elif MCU_VARIANT == MCU_NRF52
-    #include <microStore/Adapters/InternalFSFileSystem.h>
-    #include <microStore/Adapters/FlashFSFileSystem.h>
-    microStore::FileSystem filesystem{microStore::Adapters::InternalFSFileSystem()};
-  #else
-    #include <microStore/Adapters/PosixFileSystem.h>
-    microStore::FileSystem filesystem{microStore::Adapters::PosixFileSystem()};
-  #endif
-  #else // RNS_USE_FS
-    microStore::FileSystem filesystem{microStore::Adapters::NoopFileSystem()};
-  #endif // RNS_USE_FS
-#endif  // HAS_RNS
+}
 
 // CBA For printf
 int _write(int file, char *ptr, int len) {
@@ -490,6 +528,25 @@ void setup() {
   // performs its driver-native setPins() with the right arity using the
   // pin_* globals already populated by native_pinmap::apply().
   LoRa = native_lora::create_radio(current_modem);
+  // Apply rnoded.conf SX126x overrides before preInit() / begin(). Both
+  // setters are virtual no-ops on non-SX126x drivers, but we still gate
+  // on current_modem so the byte conversion only runs when relevant.
+  if (LoRa != nullptr && current_modem == SX1262) {
+    float v = native_config::g_config.dio3_tcxo_voltage;
+    if (v > 0.0f) {
+      // Snap to nearest of the 8 discrete MODE_TCXO_* bytes the SX1262
+      // accepts (see sx126x.cpp MODE_TCXO_*_6X defines).
+      uint8_t mode;
+      if      (v >= 3.15f) mode = 0x07; // 3.3 V
+      else if (v >= 2.30f) mode = 0x06; // 2.4 / 2.7 / 3.0 V
+      else if (v >= 2.00f) mode = 0x03; // 2.2 V
+      else if (v >= 1.75f) mode = 0x02; // 1.8 V
+      else if (v >= 1.65f) mode = 0x01; // 1.7 V
+      else                 mode = 0x00; // 1.6 V
+      LoRa->setTcxoVoltage(mode);
+    }
+    LoRa->setDio2AsRfSwitch(native_config::g_config.dio2_as_rf_switch);
+  }
   #elif MODEM == SX1276 || MODEM == SX1278
   LoRa->setPins(pin_cs, pin_reset, pin_dio, pin_busy);
   #elif MODEM == SX1262
@@ -518,9 +575,27 @@ void setup() {
 
     // Check installed transceiver chip and
     // probe boot parameters.
+    #if MCU_VARIANT == MCU_NATIVE
+      // Power up any external supplies the chip needs before preInit()
+      // can read sync-word registers. Without this, a HAT with an EN
+      // line (e.g. RAK13302) sees no power and the probe returns "No
+      // radio module found". Leave the pins asserted after a successful
+      // preInit so the chip stays powered through startRadio(); only
+      // deassert on probe failure.
+      native_pinmap::assert_radio_enable_pins();
+      // Pulse NRESET before the probe. On embedded targets pinMode()
+      // defaults reset-line GPIOs to OUTPUT-HIGH at boot, so the chip is
+      // already out of reset by the time preInit() runs; under libgpiod
+      // the line stays in high-Z INPUT until reset() drives it, so the
+      // chip can be stuck in reset when preInit() reads syncword regs.
+      // Same pattern as the BOARD_T3S3 / BOARD_XIAO_S3 blocks above.
+      delay(10);
+      LoRa->reset();
+      delay(10);
+    #endif
     if (LoRa->preInit()) {
       modem_installed = true;
-      
+
       #if HAS_INPUT
         // Skip quick-reset console activation
       #else
@@ -542,6 +617,9 @@ void setup() {
 
     } else {
       modem_installed = false;
+      #if MCU_VARIANT == MCU_NATIVE
+        native_pinmap::deassert_radio_enable_pins();
+      #endif
     }
   #else
     // Older variants only came with SX1276/78 chips,
@@ -717,6 +795,7 @@ void setup() {
       filesystem.rmdir("/cache");
     }
 
+#if PLATFORM != PLATFORM_NATIVE
     // If filesystem is essentially full then clear all path store files
     if (filesystem.storageAvailable() < 1024) {
       WARNING("FileSystem is full, clearing space...");
@@ -732,6 +811,7 @@ void setup() {
       filesystem.remove("/path_store_6.dat");
       filesystem.remove("/path_store_7.dat");
     }
+#endif
 
     TRACE("Registering filesystem...");
     RNS::Utilities::OS::register_filesystem(filesystem);
@@ -1123,10 +1203,19 @@ bool startRadio() {
   update_radio_lock();
   if (!radio_online && !console_active) {
     if (!radio_locked && hw_ready) {
+      #if MCU_VARIANT == MCU_NATIVE
+        // Drive any configured radio_enable_pins to their active level
+        // before the modem comes up so external rails (LDOs, TCXO supply,
+        // PA bias) are stable before the SX126x probes them.
+        native_pinmap::assert_radio_enable_pins();
+      #endif
       if (!LoRa->begin(lora_freq)) {
         // The radio could not be started.
         // Indicate this failure over both the
         // serial port and with the onboard LEDs
+        #if MCU_VARIANT == MCU_NATIVE
+          native_pinmap::deassert_radio_enable_pins();
+        #endif
         radio_error = true;
         kiss_indicate_error(ERROR_INITRADIO);
         led_indicate_error(0);
@@ -1181,6 +1270,11 @@ void stopRadio() {
   if (radio_online) LoRa->end();
   #endif
   radio_online = false;
+  #if MCU_VARIANT == MCU_NATIVE
+    // De-assert after LoRa->end() so SPI cleanup completes while supply
+    // rails are still up — avoids transients on power-down.
+    native_pinmap::deassert_radio_enable_pins();
+  #endif
 }
 
 void update_radio_lock() {
@@ -1375,7 +1469,12 @@ void transmit(uint16_t size) {
             kiss_indicate_error(ERROR_MODEM_TIMEOUT);
             kiss_indicate_error(ERROR_TXFAILED);
             led_indicate_error(5);
-            hard_reset();
+            #if MCU_VARIANT == MCU_NATIVE
+              if (native_config::g_config.reboot_on_tx_failure) { hard_reset(); }
+              else { LoRa->receive(); return; }
+            #else
+              hard_reset();
+            #endif
           }
 
           add_airtime(written);
@@ -1389,7 +1488,12 @@ void transmit(uint16_t size) {
         kiss_indicate_error(ERROR_MODEM_TIMEOUT);
         kiss_indicate_error(ERROR_TXFAILED);
         led_indicate_error(5);
-        hard_reset();
+        #if MCU_VARIANT == MCU_NATIVE
+          if (native_config::g_config.reboot_on_tx_failure) { hard_reset(); }
+          else { LoRa->receive(); return; }
+        #else
+          hard_reset();
+        #endif
       }
 
       add_airtime(written);

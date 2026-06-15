@@ -5,6 +5,9 @@
 
 #if MODEM == SX1262 || MODEM == MODEM_RUNTIME
 #include "sx126x.h"
+#if MCU_VARIANT == MCU_NATIVE
+  #include <cstdio>  // for std::fprintf diagnostics
+#endif
 
 #if MCU_VARIANT == MCU_ESP32
   #if MCU_VARIANT == MCU_ESP32 and !defined(CONFIG_IDF_TARGET_ESP32S3)
@@ -127,13 +130,16 @@ sx126x::sx126x() :
   _fifo_rx_addr_ptr(0),
   _packet{0},
   _preinit_done(false),
-  _onReceive(NULL)
+  _onReceive(NULL),
+  _tcxoVoltageOverride(0xFF),
+  _dio2_as_rf_switch_override(false),
+  _dio2_as_rf_switch_set(false)
 { setTimeout(0); }
 
 bool sx126x::preInit() {
   pinMode(_ss, OUTPUT);
   digitalWrite(_ss, HIGH);
-  
+
   #if BOARD_MODEL == BOARD_T3S3 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_HELTEC32_V4 || BOARD_MODEL == BOARD_TDECK || BOARD_MODEL == BOARD_XIAO_S3
     SPI.begin(pin_sclk, pin_miso, pin_mosi, pin_cs);
   #elif BOARD_MODEL == BOARD_TECHO
@@ -143,11 +149,11 @@ bool sx126x::preInit() {
     SPI.begin();
   #endif
 
-  // Check version (retry for up to 2 seconds)
+  // Check version (retry for up to 2 seconds).
   // TODO: Actually read version registers, not syncwords
   long start = millis();
-  uint8_t syncmsb;
-  uint8_t synclsb;
+  uint8_t syncmsb = 0;
+  uint8_t synclsb = 0;
   while (((millis() - start) < 2000) && (millis() >= start)) {
       syncmsb = readRegister(REG_SYNC_WORD_MSB_6X);
       synclsb = readRegister(REG_SYNC_WORD_LSB_6X);
@@ -157,8 +163,19 @@ bool sx126x::preInit() {
       delay(100);
   }
   if ( uint16_t(syncmsb << 8 | synclsb) != 0x1424 && uint16_t(syncmsb << 8 | synclsb) != 0x4434) {
+      #if MCU_VARIANT == MCU_NATIVE
+        // Sync word read failed — chip didn't respond. Most likely causes:
+        // (0xFF, 0xFF) MISO floating / chip not present; (0x00, 0x00) chip
+        // held in reset or SPI pins miswired.
+        std::fprintf(stderr,
+            "[sx126x] preInit FAILED: chip did not respond (got msb=0x%02X lsb=0x%02X, expected 0x14/0x24)\n",
+            syncmsb, synclsb);
+      #endif
       return false;
   }
+  #if MCU_VARIANT == MCU_NATIVE
+    std::fprintf(stderr, "[sx126x] preInit OK (sync_word=0x%02X%02X)\n", syncmsb, synclsb);
+  #endif
 
   _preinit_done = true;
   return true;
@@ -174,20 +191,37 @@ void sx126x::writeRegister(uint16_t address, uint8_t value) {
 
 uint8_t ISR_VECT sx126x::singleTransfer(uint8_t opcode, uint16_t address, uint8_t value) {
   waitOnBusy();
-  
-  uint8_t response;
+
+  // Single buffered transaction. On Portduino (native Linux build) each
+  // SPI.transfer(byte) is its own SPI_IOC_MESSAGE ioctl, and the kernel
+  // spidev driver deasserts CS between ioctls — the chip sees each byte
+  // as an independent (1-byte) command, throws them away, and returns
+  // 0x00 / 0xFF on MISO. Routing the whole opcode+address+value sequence
+  // through the buffer form keeps everything in one ioctl with CS held
+  // low across all bytes. On Arduino-ESP32 / nRF52 the buffer form is
+  // internally a byte loop with CS still driven manually by digitalWrite
+  // below, so the behavior is unchanged on those platforms.
+  uint8_t buf[5];
+  buf[0] = opcode;
+  buf[1] = (address & 0xFF00) >> 8;
+  buf[2] = address & 0x00FF;
+  uint8_t len;
+  if (opcode == OP_READ_REGISTER_6X) {
+    buf[3] = 0x00;   // status-byte skip
+    buf[4] = value;
+    len = 5;
+  } else {
+    buf[3] = value;
+    len = 4;
+  }
+
   digitalWrite(_ss, LOW);
   SPI.beginTransaction(_spiSettings);
-  SPI.transfer(opcode);
-  SPI.transfer((address & 0xFF00) >> 8);
-  SPI.transfer(address & 0x00FF);
-  if (opcode == OP_READ_REGISTER_6X) { SPI.transfer(0x00); }
-  response = SPI.transfer(value);
+  SPI.transfer(buf, len);
   SPI.endTransaction();
-
   digitalWrite(_ss, HIGH);
 
-  return response;
+  return buf[len - 1];
 }
 
 void sx126x::rxAntEnable() {
@@ -215,46 +249,63 @@ void sx126x::waitOnBusy() {
 
 void sx126x::executeOpcode(uint8_t opcode, uint8_t *buffer, uint8_t size) {
   waitOnBusy();
+  // See singleTransfer() for the rationale on batching into one buffer.
+  // Max payload of any opcode on the SX1262 is well under 64 bytes.
+  uint8_t buf[1 + 64];
+  buf[0] = opcode;
+  for (uint8_t i = 0; i < size; i++) { buf[1 + i] = buffer[i]; }
   digitalWrite(_ss, LOW);
   SPI.beginTransaction(_spiSettings);
-  SPI.transfer(opcode);
-  for (int i = 0; i < size; i++) { SPI.transfer(buffer[i]); }
+  SPI.transfer(buf, 1 + size);
   SPI.endTransaction();
   digitalWrite(_ss, HIGH);
 }
 
 void sx126x::executeOpcodeRead(uint8_t opcode, uint8_t *buffer, uint8_t size) {
   waitOnBusy();
+  // opcode + status-skip + size payload bytes, single ioctl.
+  uint8_t buf[2 + 64];
+  buf[0] = opcode;
+  buf[1] = 0x00;
+  for (uint8_t i = 0; i < size; i++) { buf[2 + i] = 0x00; }
   digitalWrite(_ss, LOW);
   SPI.beginTransaction(_spiSettings);
-  SPI.transfer(opcode);
-  SPI.transfer(0x00);
-  for (int i = 0; i < size; i++) { buffer[i] = SPI.transfer(0x00); }
+  SPI.transfer(buf, 2 + size);
   SPI.endTransaction();
   digitalWrite(_ss, HIGH);
+  for (uint8_t i = 0; i < size; i++) { buffer[i] = buf[2 + i]; }
 }
 
 void sx126x::writeBuffer(const uint8_t* buffer, size_t size) {
   waitOnBusy();
+  // opcode + fifo-tx-addr + payload. SX1262 FIFO is 256 bytes; cap
+  // conservatively above that to absorb any future opcode framing.
+  uint8_t buf[2 + 256];
+  buf[0] = OP_FIFO_WRITE_6X;
+  buf[1] = _fifo_tx_addr_ptr;
+  for (size_t i = 0; i < size; i++) { buf[2 + i] = buffer[i]; }
+  _fifo_tx_addr_ptr += size;
   digitalWrite(_ss, LOW);
   SPI.beginTransaction(_spiSettings);
-  SPI.transfer(OP_FIFO_WRITE_6X);
-  SPI.transfer(_fifo_tx_addr_ptr);
-  for (int i = 0; i < size; i++) { SPI.transfer(buffer[i]); _fifo_tx_addr_ptr++; }
+  SPI.transfer(buf, 2 + size);
   SPI.endTransaction();
   digitalWrite(_ss, HIGH);
 }
 
 void sx126x::readBuffer(uint8_t* buffer, size_t size) {
   waitOnBusy();
+  // opcode + fifo-rx-addr + status-skip + payload, single ioctl.
+  uint8_t buf[3 + 256];
+  buf[0] = OP_FIFO_READ_6X;
+  buf[1] = _fifo_rx_addr_ptr;
+  buf[2] = 0x00;
+  for (size_t i = 0; i < size; i++) { buf[3 + i] = 0x00; }
   digitalWrite(_ss, LOW);
   SPI.beginTransaction(_spiSettings);
-  SPI.transfer(OP_FIFO_READ_6X);
-  SPI.transfer(_fifo_rx_addr_ptr);
-  SPI.transfer(0x00);
-  for (int i = 0; i < size; i++) { buffer[i] = SPI.transfer(0x00); }
+  SPI.transfer(buf, 3 + size);
   SPI.endTransaction();
   digitalWrite(_ss, HIGH);
+  for (size_t i = 0; i < size; i++) { buffer[i] = buf[3 + i]; }
 }
 
 void sx126x::setModulationParams(uint8_t sf, uint8_t bw, uint8_t cr, int ldro) {
@@ -353,11 +404,15 @@ int sx126x::begin(uint32_t frequency) {
   // Set sync word
   setSyncWord(SYNC_WORD_6X);
 
-  #if DIO2_AS_RF_SWITCH
-    // enable dio2 rf switch
+  // DIO2-as-RF-switch: runtime override wins over the per-board macro.
+  // Boards.h sets a global fallback (DIO2_AS_RF_SWITCH = false at the
+  // bottom), so the macro is always defined and safe to read as a bool.
+  bool enable_dio2_rf = _dio2_as_rf_switch_set ? _dio2_as_rf_switch_override
+                                               : (bool)(DIO2_AS_RF_SWITCH);
+  if (enable_dio2_rf) {
     uint8_t byte = 0x01;
     executeOpcode(OP_DIO2_RF_CTRL_6X, &byte, 1);
-  #endif
+  }
 
   rxAntEnable();
   setFrequency(frequency);
@@ -696,25 +751,54 @@ void sx126x::sleep() { uint8_t byte = 0x00; executeOpcode(OP_SLEEP_6X, &byte, 1)
 
 void sx126x::enableTCXO() {
   #if HAS_TCXO
-    #if BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_XIAO_S3
-      uint8_t buf[4] = {MODE_TCXO_3_3V_6X, 0x00, 0x00, 0xFF};
-    #elif BOARD_MODEL == BOARD_TBEAM
-      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
-    #elif BOARD_MODEL == BOARD_TDECK
-      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
-    #elif BOARD_MODEL == BOARD_TBEAM_S_V1
-      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
-    #elif BOARD_MODEL == BOARD_T3S3
-      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
-    #elif BOARD_MODEL == BOARD_HELTEC_T114
-      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
-    #elif BOARD_MODEL == BOARD_TECHO
-      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
-    #elif BOARD_MODEL == BOARD_HELTEC32_V4
-      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
+    #if MCU_VARIANT == MCU_NATIVE
+      // On native, the TCXO code path is always compiled in but the actual
+      // OP_DIO3_TCXO_CTRL opcode is only emitted when the operator opted
+      // in via rnoded.conf's dio3_tcxo_voltage. Without the opt-in we
+      // leave the chip on its default oscillator config — driving DIO3
+      // and switching to TCXO mode would break HATs that use an XTAL.
+      if (_tcxoVoltageOverride == 0xFF) {
+        std::fprintf(stderr, "[sx126x] TCXO disabled (dio3_tcxo_voltage not set)\n");
+        return;
+      }
+      uint8_t mode = _tcxoVoltageOverride;
+      std::fprintf(stderr, "[sx126x] TCXO enabled via DIO3 (mode byte 0x%02X)\n", mode);
+    #else
+      uint8_t mode;
+      if (_tcxoVoltageOverride != 0xFF) {
+        mode = _tcxoVoltageOverride;
+      } else {
+        #if BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_XIAO_S3
+          mode = MODE_TCXO_3_3V_6X;
+        #elif BOARD_MODEL == BOARD_TBEAM
+          mode = MODE_TCXO_1_8V_6X;
+        #elif BOARD_MODEL == BOARD_TDECK
+          mode = MODE_TCXO_1_8V_6X;
+        #elif BOARD_MODEL == BOARD_TBEAM_S_V1
+          mode = MODE_TCXO_1_8V_6X;
+        #elif BOARD_MODEL == BOARD_T3S3
+          mode = MODE_TCXO_1_8V_6X;
+        #elif BOARD_MODEL == BOARD_HELTEC_T114
+          mode = MODE_TCXO_1_8V_6X;
+        #elif BOARD_MODEL == BOARD_TECHO
+          mode = MODE_TCXO_1_8V_6X;
+        #elif BOARD_MODEL == BOARD_HELTEC32_V4
+          mode = MODE_TCXO_1_8V_6X;
+        #endif
+      }
     #endif
+    uint8_t buf[4] = {mode, 0x00, 0x00, 0xFF};
     executeOpcode(OP_DIO3_TCXO_CTRL_6X, buf, 4);
   #endif
+}
+
+void sx126x::setTcxoVoltage(uint8_t mode_byte) {
+  _tcxoVoltageOverride = mode_byte;
+}
+
+void sx126x::setDio2AsRfSwitch(bool enable) {
+  _dio2_as_rf_switch_override = enable;
+  _dio2_as_rf_switch_set = true;
 }
 
 // TODO: Once enabled, SX1262 needs a complete reset to disable TCXO

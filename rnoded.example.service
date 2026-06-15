@@ -10,6 +10,7 @@ User=rnoded
 Group=rnoded
 Type=simple
 ExecStart=/usr/bin/rnoded
+#WorkingDirectory=./
 Restart=always
 RestartSec=3
 
