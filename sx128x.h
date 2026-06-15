@@ -26,7 +26,7 @@ public:
 
   int begin(uint32_t frequency) override;
   void end() override;
-  void reset();
+  void reset() override;
 
   int beginPacket(int implicitHeader = false) override;
   int endPacket() override;

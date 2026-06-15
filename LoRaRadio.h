@@ -58,6 +58,12 @@ public:
   virtual uint8_t getTxPower() = 0;
   virtual void    setTxPower(int level, int outputPin) = 0;
 
+  // Hardware NRESET pulse. sx126x / sx128x drive the line; sx127x has no
+  // host-controlled reset on its common breakouts (RFM95-style boards
+  // tie NRESET to the host's MCU reset or to 3V3 via an RC), so the
+  // default is a no-op.
+  virtual void    reset() {}
+
   // Optional runtime SX126x knobs (no-op on other modems). Used by the
   // native target to override per-board compile-time defaults from
   // rnoded.conf without a downcast at the call site.

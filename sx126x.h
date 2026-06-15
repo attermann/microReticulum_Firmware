@@ -57,7 +57,7 @@ public:
   void receive(int size = 0) override;
   void standby();
   void sleep();
-  void reset(void);
+  void reset(void) override;
 
   bool preInit() override;
   uint8_t getTxPower() override;
