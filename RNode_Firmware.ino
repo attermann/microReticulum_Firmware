@@ -280,7 +280,7 @@ void on_receive_packet(const RNS::Bytes& raw, const RNS::Interface& interface) {
     }
 	}
 #endif  // HAS_SDCARD
-#if MCU_VARIANT == MCU_NATIVE
+#if PLATFORM == PLATFORM_NATIVE
   String line = RNS::getTimeString() + String(" RECV: ") + String(raw.toHex().c_str()) + "\n";
 	microStore::File file = filesystem.open("./tracefile.txt", microStore::File::ModeAppend);
 	if (file) {
@@ -319,7 +319,7 @@ void on_transmit_packet(const RNS::Bytes& raw, const RNS::Interface& interface) 
     }
 	}
 #endif  // HAS_SDCARD
-#if MCU_VARIANT == MCU_NATIVE
+#if PLATFORM == PLATFORM_NATIVE
   String line = RNS::getTimeString() + String(" SEND: ") + String(raw.toHex().c_str()) + "\n";
 	microStore::File file = filesystem.open("./tracefile.txt", microStore::File::ModeAppend);
 	if (file) {
@@ -795,6 +795,7 @@ void setup() {
       filesystem.rmdir("/cache");
     }
 
+#if PLATFORM != PLATFORM_NATIVE
     // If filesystem is essentially full then clear all path store files
     if (filesystem.storageAvailable() < 1024) {
       WARNING("FileSystem is full, clearing space...");
@@ -810,6 +811,7 @@ void setup() {
       filesystem.remove("/path_store_6.dat");
       filesystem.remove("/path_store_7.dat");
     }
+#endif
 
     TRACE("Registering filesystem...");
     RNS::Utilities::OS::register_filesystem(filesystem);
