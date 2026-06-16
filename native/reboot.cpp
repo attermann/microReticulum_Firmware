@@ -30,8 +30,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <dirent.h>
 #include <limits.h>     // PATH_MAX
 #include <string>
+#include <sys/resource.h>
 #include <unistd.h>
 #include <vector>
 
@@ -149,6 +151,40 @@ std::vector<std::string> resolve_argv() {
 
 #endif
 
+// Close every open fd above stderr. Portduino's LinuxHardwareSPI keeps the
+// spidev fd alive in a static shared_ptr map even after SPI.end(), and its
+// PosixFile base opens without O_CLOEXEC — so without this sweep the child
+// inherits the parent's /dev/spidev0.0 fd and the SX126x reads back 0x00
+// across all SPI ioctls (radio appears dead). libgpiod chip fds are already
+// closed by ~LinuxGPIOPin via release_linux_gpios(), so this is the missing
+// piece; it also covers any other framework-internal fds we don't know about.
+void close_inherited_fds() {
+    #if defined(__linux__)
+    const char* fd_dir = "/proc/self/fd";
+    #else
+    const char* fd_dir = "/dev/fd";   // also exists on macOS via fdesc fs
+    #endif
+    DIR* d = ::opendir(fd_dir);
+    if (d) {
+        const int dfd = ::dirfd(d);
+        struct dirent* e;
+        while ((e = ::readdir(d)) != nullptr) {
+            if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
+            const int fd = std::atoi(e->d_name);
+            if (fd <= 2 || fd == dfd) continue;
+            ::close(fd);
+        }
+        ::closedir(d);
+        return;
+    }
+    // Fallback: walk up to the soft rlimit. Less efficient but always works.
+    struct rlimit rl;
+    long maxfd = (::getrlimit(RLIMIT_NOFILE, &rl) == 0)
+                     ? static_cast<long>(rl.rlim_cur) : 1024L;
+    if (maxfd > 65536) maxfd = 65536;  // defensive cap
+    for (long fd = 3; fd < maxfd; ++fd) ::close(static_cast<int>(fd));
+}
+
 } // namespace
 
 void request() {
@@ -187,8 +223,17 @@ bool pending() {
     native_pinmap::release_linux_gpios();
 
     // Let Portduino tear down the SimSPIChip (cross_platform) or the
-    // /dev/spidev binding (Linux).
+    // /dev/spidev binding (Linux). On Linux this is not actually enough —
+    // LinuxHardwareSPI holds the spidev fd in a static SPI_map shared_ptr
+    // that end() doesn't clear, and PosixFile opens without O_CLOEXEC — the
+    // close_inherited_fds() sweep below is what actually closes the fd.
     SPI.end();
+
+    // Close every fd above stderr so the child doesn't inherit Portduino's
+    // spidev fd (and anything else we couldn't reach explicitly). Without
+    // this, the SX126x reads back 0x00/0x00 in the re-exec'd process because
+    // the child's spidev open races the inherited fd.
+    close_inherited_fds();
 
     // Resolve our own absolute path from the kernel — see file-top comment.
     std::string exe = resolve_exe_path();
