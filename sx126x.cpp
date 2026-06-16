@@ -192,15 +192,15 @@ void sx126x::writeRegister(uint16_t address, uint8_t value) {
 uint8_t ISR_VECT sx126x::singleTransfer(uint8_t opcode, uint16_t address, uint8_t value) {
   waitOnBusy();
 
-  // Single buffered transaction. On Portduino (native Linux build) each
-  // SPI.transfer(byte) is its own SPI_IOC_MESSAGE ioctl, and the kernel
-  // spidev driver deasserts CS between ioctls — the chip sees each byte
-  // as an independent (1-byte) command, throws them away, and returns
-  // 0x00 / 0xFF on MISO. Routing the whole opcode+address+value sequence
-  // through the buffer form keeps everything in one ioctl with CS held
-  // low across all bytes. On Arduino-ESP32 / nRF52 the buffer form is
-  // internally a byte loop with CS still driven manually by digitalWrite
-  // below, so the behavior is unchanged on those platforms.
+#if MCU_VARIANT == MCU_NATIVE
+  // Native (Portduino / Linux spidev) only: each SPI.transfer(byte) is its
+  // own SPI_IOC_MESSAGE ioctl, and the kernel spidev driver deasserts CS
+  // between ioctls — the chip sees each byte as an independent (1-byte)
+  // command. Route the whole sequence through the buffer form so CS stays
+  // asserted across all bytes in a single ioctl. Embedded targets keep
+  // the per-byte path because Arduino-ESP32's SPI.transfer(buf, len) is
+  // a hardware-FIFO call with different MISO sampling / CS timing — it
+  // corrupted SX1262 RX on ESP32-S3 (Heltec V4).
   uint8_t buf[5];
   buf[0] = opcode;
   buf[1] = (address & 0xFF00) >> 8;
@@ -222,6 +222,19 @@ uint8_t ISR_VECT sx126x::singleTransfer(uint8_t opcode, uint16_t address, uint8_
   digitalWrite(_ss, HIGH);
 
   return buf[len - 1];
+#else
+  uint8_t response;
+  digitalWrite(_ss, LOW);
+  SPI.beginTransaction(_spiSettings);
+  SPI.transfer(opcode);
+  SPI.transfer((address & 0xFF00) >> 8);
+  SPI.transfer(address & 0x00FF);
+  if (opcode == OP_READ_REGISTER_6X) { SPI.transfer(0x00); }
+  response = SPI.transfer(value);
+  SPI.endTransaction();
+  digitalWrite(_ss, HIGH);
+  return response;
+#endif
 }
 
 void sx126x::rxAntEnable() {
@@ -249,7 +262,8 @@ void sx126x::waitOnBusy() {
 
 void sx126x::executeOpcode(uint8_t opcode, uint8_t *buffer, uint8_t size) {
   waitOnBusy();
-  // See singleTransfer() for the rationale on batching into one buffer.
+#if MCU_VARIANT == MCU_NATIVE
+  // Native-only batched form — see singleTransfer() for rationale.
   // Max payload of any opcode on the SX1262 is well under 64 bytes.
   uint8_t buf[1 + 64];
   buf[0] = opcode;
@@ -259,11 +273,19 @@ void sx126x::executeOpcode(uint8_t opcode, uint8_t *buffer, uint8_t size) {
   SPI.transfer(buf, 1 + size);
   SPI.endTransaction();
   digitalWrite(_ss, HIGH);
+#else
+  digitalWrite(_ss, LOW);
+  SPI.beginTransaction(_spiSettings);
+  SPI.transfer(opcode);
+  for (int i = 0; i < size; i++) { SPI.transfer(buffer[i]); }
+  SPI.endTransaction();
+  digitalWrite(_ss, HIGH);
+#endif
 }
 
 void sx126x::executeOpcodeRead(uint8_t opcode, uint8_t *buffer, uint8_t size) {
   waitOnBusy();
-  // opcode + status-skip + size payload bytes, single ioctl.
+#if MCU_VARIANT == MCU_NATIVE
   uint8_t buf[2 + 64];
   buf[0] = opcode;
   buf[1] = 0x00;
@@ -274,12 +296,20 @@ void sx126x::executeOpcodeRead(uint8_t opcode, uint8_t *buffer, uint8_t size) {
   SPI.endTransaction();
   digitalWrite(_ss, HIGH);
   for (uint8_t i = 0; i < size; i++) { buffer[i] = buf[2 + i]; }
+#else
+  digitalWrite(_ss, LOW);
+  SPI.beginTransaction(_spiSettings);
+  SPI.transfer(opcode);
+  SPI.transfer(0x00);
+  for (int i = 0; i < size; i++) { buffer[i] = SPI.transfer(0x00); }
+  SPI.endTransaction();
+  digitalWrite(_ss, HIGH);
+#endif
 }
 
 void sx126x::writeBuffer(const uint8_t* buffer, size_t size) {
   waitOnBusy();
-  // opcode + fifo-tx-addr + payload. SX1262 FIFO is 256 bytes; cap
-  // conservatively above that to absorb any future opcode framing.
+#if MCU_VARIANT == MCU_NATIVE
   uint8_t buf[2 + 256];
   buf[0] = OP_FIFO_WRITE_6X;
   buf[1] = _fifo_tx_addr_ptr;
@@ -290,11 +320,20 @@ void sx126x::writeBuffer(const uint8_t* buffer, size_t size) {
   SPI.transfer(buf, 2 + size);
   SPI.endTransaction();
   digitalWrite(_ss, HIGH);
+#else
+  digitalWrite(_ss, LOW);
+  SPI.beginTransaction(_spiSettings);
+  SPI.transfer(OP_FIFO_WRITE_6X);
+  SPI.transfer(_fifo_tx_addr_ptr);
+  for (int i = 0; i < size; i++) { SPI.transfer(buffer[i]); _fifo_tx_addr_ptr++; }
+  SPI.endTransaction();
+  digitalWrite(_ss, HIGH);
+#endif
 }
 
 void sx126x::readBuffer(uint8_t* buffer, size_t size) {
   waitOnBusy();
-  // opcode + fifo-rx-addr + status-skip + payload, single ioctl.
+#if MCU_VARIANT == MCU_NATIVE
   uint8_t buf[3 + 256];
   buf[0] = OP_FIFO_READ_6X;
   buf[1] = _fifo_rx_addr_ptr;
@@ -306,6 +345,16 @@ void sx126x::readBuffer(uint8_t* buffer, size_t size) {
   SPI.endTransaction();
   digitalWrite(_ss, HIGH);
   for (size_t i = 0; i < size; i++) { buffer[i] = buf[3 + i]; }
+#else
+  digitalWrite(_ss, LOW);
+  SPI.beginTransaction(_spiSettings);
+  SPI.transfer(OP_FIFO_READ_6X);
+  SPI.transfer(_fifo_rx_addr_ptr);
+  SPI.transfer(0x00);
+  for (int i = 0; i < size; i++) { buffer[i] = SPI.transfer(0x00); }
+  SPI.endTransaction();
+  digitalWrite(_ss, HIGH);
+#endif
 }
 
 void sx126x::setModulationParams(uint8_t sf, uint8_t bw, uint8_t cr, int ldro) {
