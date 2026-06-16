@@ -48,6 +48,11 @@ namespace native_pinmap {
     void release_linux_gpios();
 }
 
+// Captured in native/main.cpp::portduinoSetup() before the chdir(data_dir).
+// We need to restore this before execv() so the child's load() can resolve
+// `rnoded.conf` against the same cwd as the original invocation.
+extern std::string g_launch_cwd;
+
 namespace native_reboot {
 
 namespace {
@@ -251,6 +256,18 @@ bool pending() {
     // kernel spidev driver on re-open. See close_inherited_spidev_fds()
     // for the full rationale.
     close_inherited_spidev_fds();
+
+    // Restore the original launch cwd. portduinoSetup() chdir'd to data_dir
+    // after loading config; without this restore the child's load() looks
+    // for rnoded.conf in data_dir, doesn't find it, and silently falls back
+    // to defaults — wrong pin map, radio doesn't respond.
+    if (!g_launch_cwd.empty()) {
+        if (::chdir(g_launch_cwd.c_str()) != 0) {
+            std::fprintf(stderr, "[reboot] chdir(%s) failed: %s — child may "
+                         "not find rnoded.conf\n",
+                         g_launch_cwd.c_str(), std::strerror(errno));
+        }
+    }
 
     // Resolve our own absolute path from the kernel — see file-top comment.
     std::string exe = resolve_exe_path();

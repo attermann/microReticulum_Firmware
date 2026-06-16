@@ -27,10 +27,18 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits.h>     // PATH_MAX
 #include <string>
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+
+// Captured at portduinoSetup() entry, before we chdir() to data_dir.
+// native/reboot.cpp reads this to restore the launch directory before
+// execv() so the re-exec'd child can resolve `rnoded.conf` against the
+// same cwd as the original invocation. Without this, the child runs with
+// defaults (wrong pin map → radio dead).
+std::string g_launch_cwd;
 
 // strchrnul is a glibc extension that argp-standalone (on macOS, via
 // Homebrew) expects to find in libc. Apple's libc doesn't provide it,
@@ -68,6 +76,19 @@ extern uint8_t op_mode;
 // The symbol replaces Portduino's weak default (which has C++ linkage,
 // no extern "C") — match its signature exactly so the linker picks ours.
 void portduinoSetup() {
+    // 0) Capture the launch directory before any chdir() so the deferred-
+    //    reboot path (native/reboot.cpp) can restore it before execv(). The
+    //    child resolves `rnoded.conf` (or $MR_CONFIG when relative) against
+    //    cwd; without this, after the parent's step 3 chdir() to data_dir
+    //    the child can't find the config and silently falls back to
+    //    defaults.
+    {
+        char buf[PATH_MAX];
+        if (::getcwd(buf, sizeof(buf))) {
+            g_launch_cwd = buf;
+        }
+    }
+
     // 1) Load config from the default path (or a path supplied via env var).
     const char* cfg_env = std::getenv("MR_CONFIG");
     std::string cfg_path = cfg_env ? cfg_env : "rnoded.conf";
