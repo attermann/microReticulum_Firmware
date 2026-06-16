@@ -126,6 +126,10 @@ To minify web console:
 npx html-minifier-terser --collapse-whitespace --remove-comments --minify-js true --minify-css true index.html -o index.min.html
 ```
 
+## WebSocket Server
+
+NOTE: To access a node on the LAN, Chrome [Local Network Access Checks](chrome://flags/#local-network-access-check) must be temporarily disabled.
+
 ## Roadmap
 
 - [x] Extend KISS interface to support config/control of the integrated microReticulum stack
