@@ -64,6 +64,13 @@ public:
   // default is a no-op.
   virtual void    reset() {}
 
+  // Health probe used by the native daemon's runtime watchdog. Returns
+  // true if the chip is responding to SPI and looks alive. Default
+  // returns true so drivers that don't implement a probe silently opt
+  // out of the watchdog (false-negatives, never false-positives — the
+  // watchdog only triggers recovery on a confirmed-bad read).
+  virtual bool    isResponding() { return true; }
+
   // Optional runtime SX126x knobs (no-op on other modems). Used by the
   // native target to override per-board compile-time defaults from
   // rnoded.conf without a downcast at the call site.

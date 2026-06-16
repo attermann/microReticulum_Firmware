@@ -17,6 +17,7 @@
 
 #include "config.h"
 #include "EEPROMShim.h"
+#include "Radio.h"
 #include "TCPHostInterface.h"
 #if defined(ENABLE_WEBSOCKETS) && __has_include(<WiFi.h>)
 #include "../WebSocketConsole.h"
@@ -24,6 +25,7 @@
 
 #include <Arduino.h>  // brings in `extern HardwareSPI SPI;` declaration
 
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -72,10 +74,30 @@ extern uint8_t current_modem;
 extern uint8_t op_mode;
 #define FIRMWARE_MODE_TNC 0x12   // mirrors MODE_TNC in Config.h
 
+// Async-signal-safe handler: just records the intent. The main loop polls
+// native_radio::g_shutdown_requested and calls on_shutdown_signal() from a
+// safe context, then exits. SIGKILL is uncatchable — boot-time
+// clean_reset_at_boot() covers that case on the next launch.
+static void shutdown_signal_handler(int /*sig*/) {
+    native_radio::g_shutdown_requested = 1;
+}
+
+static void install_signal_handlers() {
+    struct sigaction sa{};
+    sa.sa_handler = shutdown_signal_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+    sigaction(SIGINT,  &sa, nullptr);
+    sigaction(SIGTERM, &sa, nullptr);
+    sigaction(SIGHUP,  &sa, nullptr);
+}
+
 // Portduino calls this before invoking the Arduino sketch's setup().
 // The symbol replaces Portduino's weak default (which has C++ linkage,
 // no extern "C") — match its signature exactly so the linker picks ours.
 void portduinoSetup() {
+    install_signal_handlers();
+
     // 0) Capture the launch directory before any chdir() so the deferred-
     //    reboot path (native/reboot.cpp) can restore it before execv(). The
     //    child resolves `rnoded.conf` (or $MR_CONFIG when relative) against
@@ -130,6 +152,12 @@ void portduinoSetup() {
     //    registers libgpiod-backed pins with Portduino (no-op on macOS).
     native_pinmap::apply();
     native_pinmap::bind_linux_gpios();
+
+    // 5.5) Extended NRESET pulse before any SPI traffic. Recovers a chip
+    //      that was wedged by a prior daemon crash (SIGKILL mid-opcode,
+    //      BUSY stuck high, etc.) before the modem driver's own 10 ms
+    //      reset() runs inside LoRa->begin(). No-op when pin_reset == -1.
+    native_radio::clean_reset_at_boot();
 
     // 5a) Surface the configured modem family to setup() so the native LoRa
     //     factory can instantiate the right driver. Must precede setup().

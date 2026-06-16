@@ -181,6 +181,18 @@ bool sx126x::preInit() {
   return true;
 }
 
+// Single-shot health probe for the native daemon's runtime watchdog.
+// Reads the sync-word registers once and compares against the known-good
+// values (same pair preInit() validates against). No retry loop — the
+// watchdog handles repeated misses itself by counting consecutive
+// failures before triggering recovery.
+bool sx126x::isResponding() {
+  uint8_t msb = readRegister(REG_SYNC_WORD_MSB_6X);
+  uint8_t lsb = readRegister(REG_SYNC_WORD_LSB_6X);
+  uint16_t word = (uint16_t(msb) << 8) | lsb;
+  return word == 0x1424 || word == 0x4434;
+}
+
 uint8_t ISR_VECT sx126x::readRegister(uint16_t address) {
   return singleTransfer(OP_READ_REGISTER_6X, address, 0x00);
 }

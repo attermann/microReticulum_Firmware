@@ -152,6 +152,9 @@ bool load(const std::string& path) {
         else if (k == "kiss_tcp_public") g_config.kiss_tcp_public = parse_bool(v, g_config.kiss_tcp_public);
         else if (k == "kiss_ws_public")  g_config.kiss_ws_public  = parse_bool(v, g_config.kiss_ws_public);
         else if (k == "reboot_on_tx_failure") g_config.reboot_on_tx_failure = parse_bool(v, g_config.reboot_on_tx_failure);
+        else if (k == "radio_watchdog_enabled")      g_config.radio_watchdog_enabled      = parse_bool(v, g_config.radio_watchdog_enabled);
+        else if (k == "radio_watchdog_interval_ms")  g_config.radio_watchdog_interval_ms  = parse_u32(v, g_config.radio_watchdog_interval_ms);
+        else if (k == "radio_max_recovery_attempts") g_config.radio_max_recovery_attempts = parse_u32(v, g_config.radio_max_recovery_attempts);
         else {
             std::fprintf(stderr, "[config] %s:%d: unknown key '%s'\n",
                          path.c_str(), lineno, k.c_str());

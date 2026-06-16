@@ -60,6 +60,7 @@ public:
   void reset(void) override;
 
   bool preInit() override;
+  bool isResponding() override;
   uint8_t getTxPower() override;
   void setTxPower(int level, int outputPin = PA_OUTPUT_PA_BOOST_PIN) override;
   uint32_t getFrequency() override;

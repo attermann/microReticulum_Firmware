@@ -86,6 +86,17 @@ struct Config {
     // the embedded behavior of "reboot on any TX timeout".
     bool reboot_on_tx_failure = false;
 
+    // Runtime radio watchdog. When enabled, the daemon periodically reads
+    // the SX126x sync-word registers from its main loop and, on a mismatch,
+    // executes stopRadio() + extended-NRESET + startRadio(). After
+    // radio_max_recovery_attempts consecutive failures it escalates to
+    // hard_reset() (full daemon re-exec). Off by default — a wedged radio
+    // is rare in normal operation, so the watchdog is opt-in for deployments
+    // that have actually seen the failure mode and want auto-recovery.
+    bool     radio_watchdog_enabled      = false;
+    uint32_t radio_watchdog_interval_ms  = 5000;
+    uint32_t radio_max_recovery_attempts = 3;
+
     // KISS-over-TCP host transport. The native daemon listens on this
     // localhost port for a single client (rnodeconf, an RNS KISSInterface,
     // etc.). 7633 matches the ESP32 WiFi-remote convention in Remote.h.

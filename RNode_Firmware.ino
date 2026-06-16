@@ -38,6 +38,7 @@
 #if MODEM == MODEM_RUNTIME
 #include "native/LoRaFactory.h"
 #include "native/PinMap.h"
+#include "native/Radio.h"
 #include "native/config.h"
 #endif
 
@@ -2463,6 +2464,19 @@ void loop() {
     extern bool native_reboot_pending();
     extern void native_reboot_perform();
     if (native_reboot_pending()) native_reboot_perform();
+
+    // Signal-driven clean shutdown (SIGINT/SIGTERM/SIGHUP): the handler set
+    // a flag; here we park the chip in reset and exit. Polled from loop()
+    // rather than the handler so we never call non-async-signal-safe code
+    // from signal context.
+    if (native_radio::g_shutdown_requested) {
+      native_radio::on_shutdown_signal();
+      std::exit(0);
+    }
+
+    // Periodic SX126x health probe + soft-recovery (off by default;
+    // gated by radio_watchdog_enabled in rnoded.conf).
+    native_radio::watchdog_tick();
   #endif
 
 #ifdef HAS_RNS
