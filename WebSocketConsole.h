@@ -47,6 +47,11 @@ void on_serial_write(uint8_t byte);
 // True when a client is connected and the WS handshake is complete.
 bool client_attached();
 
+// Tear down the underlying WebSocketServer (close listener, drop client,
+// delete the singleton). Called from the native deferred-reboot path so
+// the re-exec'd process can re-bind the same port. Idempotent.
+void shutdown();
+
 } // namespace ws_console
 
 #endif // ENABLE_WEBSOCKETS && __has_include(<WiFi.h>)

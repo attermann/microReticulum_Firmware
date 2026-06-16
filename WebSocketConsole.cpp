@@ -124,6 +124,15 @@ bool client_attached() {
     return g_server && g_server->connected();
 }
 
+void shutdown() {
+    if (!g_server) return;
+    g_server->shutdown();
+    delete g_server;
+    g_server    = nullptr;
+    g_tx_len    = 0;
+    g_collecting = false;
+}
+
 } // namespace ws_console
 
 #endif // ENABLE_WEBSOCKETS && __has_include(<WiFi.h>)

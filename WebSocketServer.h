@@ -63,6 +63,12 @@ public:
     void begin();
     void service();  // call once per main-loop tick
 
+    // Close the listening socket and drop any active client. Used by the
+    // native deferred-reboot path so the re-exec'd process can re-bind the
+    // same port without inheriting our listen fd. Safe to call when already
+    // shut down (idempotent).
+    void shutdown();
+
     bool connected() const { return state_ == State::OPEN; }
 
     // Send a complete frame (FIN=1, no masking — server side).

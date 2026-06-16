@@ -93,6 +93,13 @@ void WebSocketServer::begin() {
     int yes = 1;
     setsockopt(listen_fd_, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
 
+    // Close-on-exec so a re-exec'd daemon (native_reboot::perform) doesn't
+    // inherit this listener and fail to re-bind with EADDRINUSE. The explicit
+    // shutdown() in the reboot path closes the fd too — this is belt and
+    // suspenders.
+    int fdflags = fcntl(listen_fd_, F_GETFD, 0);
+    if (fdflags >= 0) fcntl(listen_fd_, F_SETFD, fdflags | FD_CLOEXEC);
+
     const uint32_t bind_addr = bind_public_ ? INADDR_ANY : INADDR_LOOPBACK;
     const char* bind_label   = bind_public_ ? "0.0.0.0"  : "127.0.0.1";
 
@@ -154,6 +161,8 @@ void WebSocketServer::drive_accept() {
     }
     int flags = fcntl(s, F_GETFL, 0);
     fcntl(s, F_SETFL, flags | O_NONBLOCK);
+    int cflags = fcntl(s, F_GETFD, 0);
+    if (cflags >= 0) fcntl(s, F_SETFD, cflags | FD_CLOEXEC);
     client_      = WiFiClient(s);
     client_addr_ = cli;
     state_       = State::HANDSHAKING;
@@ -426,6 +435,22 @@ void WebSocketServer::send_close(uint16_t code) {
     uint8_t body[2] = { uint8_t(code >> 8), uint8_t(code) };
     send_frame(0x8, body, 2);
     state_ = State::CLOSING;
+}
+
+void WebSocketServer::shutdown() {
+    // Drop the active client first so we log a clean disconnect.
+    teardown();
+#if defined(PORTDUINO)
+    if (listen_fd_ >= 0) {
+        ::close(listen_fd_);
+        listen_fd_ = -1;
+    }
+#else
+    // No portable WiFiServer::stop() on stock Arduino — the destructor
+    // would handle it, but we're not destroying the object yet. ESP32 isn't
+    // affected by the inherited-fd bug (no execv() in our embedded flow);
+    // this is structural symmetry only.
+#endif
 }
 
 void WebSocketServer::teardown() {
