@@ -275,7 +275,7 @@ void init_provisioning() {
     // pending-reboot state.
   });
   register_provisioning_namespaces();
-  RNS::Provisioning::Manager::instance().begin("/config");
+  RNS::Provisioning::Manager::instance().begin();
   provisioning_started = true;
 }
 

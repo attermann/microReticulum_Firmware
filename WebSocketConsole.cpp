@@ -5,7 +5,6 @@
 
 #include <cstdint>
 #include <cstddef>
-#include <cstdio>
 
 // KISS frame boundary. Defined inline here rather than including Framing.h
 // because that header defines several globals at file scope (command,
@@ -52,23 +51,7 @@ void on_ws_message(const uint8_t* data, size_t len, bool /*is_text*/,
 void flush_outbound_frame() {
     if (g_tx_len == 0) return;
     if (g_server && g_server->connected()) {
-#if defined(PORTDUINO)
-        // Inspect the first two payload bytes (FEND, CMD) so we can tell
-        // schema/provision responses apart from RNS log frames in the log.
-        const uint8_t cmd = (g_tx_len >= 2) ? g_tx_buf[1] : 0;
-        std::fprintf(stderr, "[ws-console] flush KISS frame len=%zu cmd=0x%02X\n",
-                     g_tx_len, cmd);
-#endif
-        bool ok = g_server->send_binary(g_tx_buf, g_tx_len);
-#if defined(PORTDUINO)
-        if (!ok) {
-            std::fprintf(stderr, "[ws-console] send_binary FAILED for len=%zu — "
-                                 "frame lost (short write or disconnect)\n",
-                         g_tx_len);
-        }
-#else
-        (void)ok;
-#endif
+        g_server->send_binary(g_tx_buf, g_tx_len);
     }
     g_tx_len = 0;
 }
@@ -131,18 +114,7 @@ void on_serial_write(uint8_t byte) {
         g_tx_buf[g_tx_len++] = byte;
     } else {
         // Frame overflows our buffer. Drop the in-flight frame; the
-        // next FEND will start fresh. This is a guard, not a normal
-        // path — LoRa frames don't approach 1 KiB.
-#if defined(PORTDUINO)
-        // Diagnostic: which KISS command was about to overflow? The cmd
-        // byte is at g_tx_buf[1] (g_tx_buf[0] is the leading FEND).
-        const uint8_t cmd = (g_tx_len >= 2) ? g_tx_buf[1] : 0;
-        std::fprintf(stderr,
-            "[ws-console] OUTBOUND FRAME DROPPED at TX_BUF_CAP=%zu "
-            "cmd=0x%02X — schema/large responses won't reach the browser. "
-            "Raise TX_BUF_CAP.\n",
-            (size_t)TX_BUF_CAP, cmd);
-#endif
+        // next FEND will start fresh.
         g_tx_len     = 0;
         g_collecting = false;
     }

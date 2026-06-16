@@ -29,6 +29,8 @@
 #include <cstring>
 #include <string>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 // strchrnul is a glibc extension that argp-standalone (on macOS, via
 // Homebrew) expects to find in libc. Apple's libc doesn't provide it,
@@ -80,6 +82,7 @@ void portduinoSetup() {
     // 3) chdir to data dir so PosixFileSystem (microStore) and the EEPROM
     //    image are scoped there. Portduino's own VFS root (--fsroot) is a
     //    separate concern; we only care about cwd for our own persistence.
+    mkdir(native_config::g_config.data_dir.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
     if (chdir(native_config::g_config.data_dir.c_str()) != 0) {
         std::fprintf(stderr, "[portduinoSetup] chdir(%s): %s\n",
                      native_config::g_config.data_dir.c_str(),

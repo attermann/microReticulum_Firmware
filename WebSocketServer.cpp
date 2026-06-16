@@ -154,9 +154,10 @@ void WebSocketServer::drive_accept() {
     }
     int flags = fcntl(s, F_GETFL, 0);
     fcntl(s, F_SETFL, flags | O_NONBLOCK);
-    client_  = WiFiClient(s);
-    state_   = State::HANDSHAKING;
-    req_len_ = 0;
+    client_      = WiFiClient(s);
+    client_addr_ = cli;
+    state_       = State::HANDSHAKING;
+    req_len_     = 0;
 #else
     WiFiClient pending = server_.available();
     if (!pending.connected()) return;
@@ -230,6 +231,15 @@ bool WebSocketServer::finish_handshake() {
     msg_opcode_  = 0;
     msg_len_     = 0;
     reset_frame_rx();
+#if defined(PORTDUINO)
+    // ESP32 path intentionally silent — the Arduino-ESP32 Serial is the
+    // KISS host link in host mode, so any unsolicited bytes there would
+    // corrupt the framing. Add a Serial log only behind a debug flag if
+    // needed in the future.
+    std::fprintf(stderr, "[ws] client connected from %s:%u\n",
+                 inet_ntoa(client_addr_.sin_addr),
+                 (unsigned)ntohs(client_addr_.sin_port));
+#endif
     return true;
 }
 
@@ -398,27 +408,8 @@ bool WebSocketServer::send_frame(uint8_t opcode,
     } else {
         return false;  // not supported in this server
     }
-    size_t hw = client_.write(hdr, hdr_len);
-    if (hw != hdr_len) {
-#if defined(PORTDUINO)
-        std::fprintf(stderr,
-            "[ws] short header write: requested=%zu wrote=%zu opcode=0x%x len=%zu\n",
-            hdr_len, hw, (unsigned)opcode, len);
-#endif
-        return false;
-    }
-    if (len > 0) {
-        size_t dw = client_.write(data, len);
-        if (dw != len) {
-#if defined(PORTDUINO)
-            std::fprintf(stderr,
-                "[ws] short payload write: requested=%zu wrote=%zu opcode=0x%x — "
-                "frame truncated, browser will time out\n",
-                len, dw, (unsigned)opcode);
-#endif
-            return false;
-        }
-    }
+    if (client_.write(hdr, hdr_len) != hdr_len) return false;
+    if (len > 0 && client_.write(data, len) != len) return false;
     return true;
 }
 
@@ -438,6 +429,15 @@ void WebSocketServer::send_close(uint16_t code) {
 }
 
 void WebSocketServer::teardown() {
+#if defined(PORTDUINO)
+    // Only log a "disconnect" if we ever reached a usable state — skip
+    // handshake failures and idle wakeups to avoid noise.
+    if (state_ == State::OPEN || state_ == State::CLOSING) {
+        std::fprintf(stderr, "[ws] client disconnected (%s:%u)\n",
+                     inet_ntoa(client_addr_.sin_addr),
+                     (unsigned)ntohs(client_addr_.sin_port));
+    }
+#endif
     if (client_) client_.stop();
     state_      = State::WAITING;
     req_len_    = 0;

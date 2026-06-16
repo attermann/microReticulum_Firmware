@@ -30,6 +30,9 @@
 #include <WiFi.h>
 #include <cstdint>
 #include <cstddef>
+#if defined(PORTDUINO)
+#include <netinet/in.h>
+#endif
 
 class WebSocketServer {
 public:
@@ -119,6 +122,11 @@ private:
     WiFiServer server_;
 #endif
     WiFiClient client_;
+#if defined(PORTDUINO)
+    // Stashed peer address from accept(), used by connect/disconnect logs.
+    // ESP32 reads the equivalent via client_.remoteIP() directly.
+    sockaddr_in client_addr_   = {};
+#endif
     State      state_         = State::WAITING;
     MessageCb  on_message_    = nullptr;
     void*      on_message_ctx_= nullptr;
