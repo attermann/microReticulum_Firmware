@@ -129,12 +129,10 @@ void portduinoSetup() {
                           native_config::g_config.kiss_tcp_public);
 
     #if defined(ENABLE_WEBSOCKETS) && __has_include(<WiFi.h>)
-    // KISS-over-WebSocket on port 8080. On native there's no separate
-    // HTTP console yet (Portduino doesn't ship WebServer.h), so this is
-    // currently the only WS endpoint here — browser connects directly
-    // with `new WebSocket("ws://localhost:8080")`. Future: serve the
-    // console HTML from a small native HTTP server alongside.
-    ws_console::init(8080);
+    // KISS-over-WebSocket on port 8080. Loopback-only by default;
+    // kiss_ws_public=true in rnoded.conf opts into binding 0.0.0.0 the
+    // same way kiss_tcp_public does for the raw KISS TCP server.
+    ws_console::init(8080, native_config::g_config.kiss_ws_public);
     #endif
 
     // 6) Bind a SimSPIChip as a safety net. With LORA_TRANSPORT removed,

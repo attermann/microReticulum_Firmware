@@ -40,7 +40,22 @@ public:
     static constexpr uint16_t CLOSE_PROTO  = 1002;
     static constexpr uint16_t CLOSE_TOOBIG = 1009;
 
-    explicit WebSocketServer(uint16_t port) : server_(port), port_(port) {}
+    // bind_public is honored only on native (Portduino). When false, the
+    // listening socket is bound to 127.0.0.1; when true, to 0.0.0.0. On
+    // ESP32 the underlying Arduino WiFiServer always binds 0.0.0.0 (which
+    // is correct — the WS console is reached over the device's WiFi AP)
+    // and this argument is ignored. We default to false because the safe
+    // posture matches the existing kiss_tcp_public convention; on ESP32
+    // the default is effectively true anyway.
+    explicit WebSocketServer(uint16_t port, bool bind_public = false)
+        : port_(port)
+        , bind_public_(bind_public)
+#if !defined(PORTDUINO)
+        , server_(port)
+#endif
+    {}
+
+    ~WebSocketServer();
 
     void begin();
     void service();  // call once per main-loop tick
@@ -91,8 +106,18 @@ private:
     void teardown();
     void reset_frame_rx();     // frame-scoped state, NOT message-scoped
 
-    WiFiServer server_;
+    // The listening socket diverges by platform: on native (Portduino) we
+    // own a raw POSIX fd so we can choose the bind address; on ESP32 we
+    // use the stock Arduino WiFiServer (which always binds 0.0.0.0). Both
+    // paths still feed an accepted connection into a WiFiClient member,
+    // so the rest of the protocol code is platform-agnostic.
     uint16_t   port_;
+    bool       bind_public_;
+#if defined(PORTDUINO)
+    int        listen_fd_     = -1;
+#else
+    WiFiServer server_;
+#endif
     WiFiClient client_;
     State      state_         = State::WAITING;
     MessageCb  on_message_    = nullptr;

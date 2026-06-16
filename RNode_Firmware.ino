@@ -824,7 +824,7 @@ void setup() {
     TRACE("Registering filesystem...");
     RNS::Utilities::OS::register_filesystem(filesystem);
 
-#if !defined(NDEBUG) && defined(RNS_USE_FS)
+#if defined(RNS_USE_FS)
 #if 0
     filesystem.format();
 #endif

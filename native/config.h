@@ -96,6 +96,11 @@ struct Config {
     // no auth/encryption, so the daemon should only be reachable across a
     // network you trust. Turning this on is the explicit way to opt in.
     bool     kiss_tcp_public = false;
+
+    // Bind the KISS-over-WebSocket server on all interfaces (0.0.0.0)
+    // instead of just 127.0.0.1. Same caveats as kiss_tcp_public — no
+    // auth or encryption — so only opt in on networks you trust.
+    bool     kiss_ws_public  = false;
 };
 
 extern Config g_config;

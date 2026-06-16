@@ -5,7 +5,18 @@
 #include "native/ws_shims/sha1.h"
 
 #include <Arduino.h>
+#include <cstdio>
 #include <cstring>
+
+#if defined(PORTDUINO)
+  #include <arpa/inet.h>
+  #include <errno.h>
+  #include <fcntl.h>
+  #include <netinet/in.h>
+  #include <signal.h>
+  #include <sys/socket.h>
+  #include <unistd.h>
+#endif
 
 namespace {
 
@@ -57,8 +68,63 @@ const uint8_t* find_header(const uint8_t* buf, size_t len,
 
 } // namespace
 
+WebSocketServer::~WebSocketServer() {
+#if defined(PORTDUINO)
+    if (listen_fd_ >= 0) {
+        ::close(listen_fd_);
+        listen_fd_ = -1;
+    }
+#endif
+}
+
 void WebSocketServer::begin() {
+#if defined(PORTDUINO)
+    // Native (Portduino): we bypass WiFiServer entirely because Portduino's
+    // WiFiServer::begin() hardcodes INADDR_ANY, leaving no way to bind on
+    // loopback only. Open and bind our own listening socket so we honor
+    // bind_public_.
+    signal(SIGPIPE, SIG_IGN);  // a disconnecting WS peer shouldn't kill us
+
+    listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (listen_fd_ < 0) {
+        std::fprintf(stderr, "[ws] socket(): %s\n", std::strerror(errno));
+        return;
+    }
+    int yes = 1;
+    setsockopt(listen_fd_, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+
+    const uint32_t bind_addr = bind_public_ ? INADDR_ANY : INADDR_LOOPBACK;
+    const char* bind_label   = bind_public_ ? "0.0.0.0"  : "127.0.0.1";
+
+    sockaddr_in addr;
+    std::memset(&addr, 0, sizeof(addr));
+    addr.sin_family      = AF_INET;
+    addr.sin_addr.s_addr = htonl(bind_addr);
+    addr.sin_port        = htons(port_);
+    if (::bind(listen_fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+        std::fprintf(stderr, "[ws] bind(%s:%u): %s\n",
+                     bind_label, port_, std::strerror(errno));
+        ::close(listen_fd_);
+        listen_fd_ = -1;
+        return;
+    }
+    if (::listen(listen_fd_, 1) < 0) {
+        std::fprintf(stderr, "[ws] listen(): %s\n", std::strerror(errno));
+        ::close(listen_fd_);
+        listen_fd_ = -1;
+        return;
+    }
+    int flags = fcntl(listen_fd_, F_GETFL, 0);
+    fcntl(listen_fd_, F_SETFL, flags | O_NONBLOCK);
+    std::fprintf(stderr, "[ws] listening on %s:%u%s\n",
+                 bind_label, port_,
+                 bind_public_ ? " (PUBLIC — no auth)" : "");
+#else
+    // ESP32: stock Arduino WiFiServer. Always binds 0.0.0.0 (intended —
+    // the console is served over the device's WiFi AP). bind_public_ is
+    // ignored.
     server_.begin();
+#endif
 }
 
 void WebSocketServer::service() {
@@ -75,11 +141,29 @@ void WebSocketServer::service() {
 }
 
 void WebSocketServer::drive_accept() {
+#if defined(PORTDUINO)
+    if (listen_fd_ < 0) return;
+    sockaddr_in cli;
+    socklen_t   clen = sizeof(cli);
+    int s = ::accept(listen_fd_, reinterpret_cast<sockaddr*>(&cli), &clen);
+    if (s < 0) {
+        // EAGAIN/EWOULDBLOCK on a non-blocking listener = no pending
+        // client right now; ignore. Other errno values are unexpected
+        // but non-fatal — we'll try again next tick.
+        return;
+    }
+    int flags = fcntl(s, F_GETFL, 0);
+    fcntl(s, F_SETFL, flags | O_NONBLOCK);
+    client_  = WiFiClient(s);
+    state_   = State::HANDSHAKING;
+    req_len_ = 0;
+#else
     WiFiClient pending = server_.available();
     if (!pending.connected()) return;
     client_  = pending;
     state_   = State::HANDSHAKING;
     req_len_ = 0;
+#endif
 }
 
 void WebSocketServer::drive_handshake() {

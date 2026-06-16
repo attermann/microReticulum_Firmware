@@ -27,8 +27,11 @@
 namespace ws_console {
 
 // Initialize on the given TCP port (typically 81 alongside HTTP on 80).
+// bind_public is honored only on native (Portduino) — false binds the
+// listening socket to 127.0.0.1, true to 0.0.0.0. ESP32 always binds
+// 0.0.0.0 regardless (the console is served over WiFi AP).
 // Safe to call multiple times — second and subsequent calls no-op.
-void init(uint16_t port);
+void init(uint16_t port, bool bind_public = false);
 
 // Drive the underlying WebSocketServer. Call once per main-loop tick.
 // Non-blocking.

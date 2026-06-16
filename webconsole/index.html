@@ -2108,6 +2108,9 @@ function buildTopBar(){
   const wsInput = el('input', { type: 'text', placeholder: 'ws://host:port', style: { width: '220px' } });
   wsInput.value = state.wsUrl.get();
   wsInput.oninput = (e) => state.wsUrl.set(e.target.value);
+  // Mount once; toggle visibility in update() so typing doesn't detach the
+  // focused input (which would drop focus on every keystroke).
+  wsHost.appendChild(wsInput);
   const connectBtn = el('button');
   const disconnectBtn = el('button', null, 'Disconnect');
   const autoCheckbox = el('input', { type: 'checkbox' });
@@ -2141,9 +2144,9 @@ function buildTopBar(){
     const connected = conn.state === 'connected';
     sel.disabled = connecting || connected || reconnecting;
     if (sel.value !== tname) sel.value = tname;
-    wsHost.innerHTML = '';
-    if (tname === 'ws') {
-      wsHost.appendChild(wsInput);
+    const showWs = (tname === 'ws');
+    wsInput.style.display = showWs ? '' : 'none';
+    if (showWs) {
       if (document.activeElement !== wsInput && wsInput.value !== state.wsUrl.get()) wsInput.value = state.wsUrl.get();
       wsInput.disabled = connecting || connected || reconnecting;
     }

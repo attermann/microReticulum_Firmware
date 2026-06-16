@@ -56,9 +56,9 @@ void flush_outbound_frame() {
 
 namespace ws_console {
 
-void init(uint16_t port) {
+void init(uint16_t port, bool bind_public) {
     if (g_server) return;
-    g_server = new WebSocketServer(port);
+    g_server = new WebSocketServer(port, bind_public);
     g_server->on_message(&on_ws_message);
     g_server->begin();
 }
