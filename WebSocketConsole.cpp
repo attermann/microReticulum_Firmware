@@ -21,11 +21,15 @@ extern "C" void serial_fifo_push(uint8_t byte);
 
 namespace {
 
-// Max single KISS frame we'll emit over WS. Sized to comfortably cover
-// the LoRa MTU plus KISS escaping overhead. If a single frame exceeds
-// this, the buffer wraps via flush + restart on the next FEND — the
-// outbound stream stays self-synchronizing because FEND is unambiguous.
-constexpr size_t TX_BUF_CAP = 1024;
+// Max single KISS frame we'll emit over WS. Has to cover the largest
+// Provisioning response (msgpack-encoded schema for all registered
+// namespaces) plus KISS escaping overhead — schemas exceed 1 KiB on
+// builds with LORA_TRANSPORT registered, and any future namespace
+// additions only push it higher. The WS framing already supports 16-bit
+// ext-len, so this cap can grow up to 0xFFFF before the wire protocol
+// would need work. If a frame ever exceeds this, on_serial_write logs
+// "OUTBOUND FRAME DROPPED" and the in-flight frame is discarded.
+constexpr size_t TX_BUF_CAP = 4096;
 
 WebSocketServer* g_server = nullptr;
 uint8_t          g_tx_buf[TX_BUF_CAP];
