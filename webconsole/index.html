@@ -168,6 +168,14 @@ body.is-reconnecting .sidenav-detail button {
 (function(){
 'use strict';
 
+// ===== Debug toggle =====
+// Flip to false to silence the WS / Provisioning diagnostic logs added for
+// the schema-timeout investigation. They're intentionally chatty — each KISS
+// frame in/out of the browser is printed.
+const DEBUG_WS = true;
+const dlog = (...a) => { if (DEBUG_WS) console.log(...a); };
+const hex2 = (n) => ('0' + (n & 0xff).toString(16)).slice(-2);
+
 // ===== Protocol constants =====
 const FEND=0xC0, FESC=0xDB, TFEND=0xDC, TFESC=0xDD;
 const CMD_LOG=0x80, CMD_PROVISION_REQ=0x86, CMD_PROVISION_RSP=0x87;
@@ -803,7 +811,20 @@ class WebSocketTransport {
         let opened = false;
         this.ws.onopen = () => { opened = true; this.onStatus({state:'connected', info: url}); resolve(); };
         this.ws.onmessage = (e) => {
-          if (e.data instanceof ArrayBuffer) this.onBytes(new Uint8Array(e.data));
+          if (e.data instanceof ArrayBuffer) {
+            const u8 = new Uint8Array(e.data);
+            if (DEBUG_WS) {
+              // KISS layout when present: [FEND, CMD, ...payload, FEND].
+              const cmd = u8.length >= 2 ? u8[1] : -1;
+              const last = u8.length >= 1 ? u8[u8.length-1] : -1;
+              dlog('[ws] inbound frame len=' + u8.length
+                   + ' first2=0x' + hex2(u8[0]||0) + hex2(u8[1]||0)
+                   + ' last=0x' + hex2(last)
+                   + (cmd === 0x87 ? ' (CMD_PROVISION_RSP)'
+                      : cmd === 0x80 ? ' (CMD_LOG)' : ''));
+            }
+            this.onBytes(u8);
+          }
           else if (typeof e.data === 'string') this.onBytes(new TextEncoder().encode(e.data));
         };
         this.ws.onerror = () => { if (!opened) reject(new Error('connect failed')); };
@@ -850,6 +871,14 @@ class ProvisioningClient {
     this.t.onBytes = (b) => this.decoder.feed(b);
   }
   _onFrame(cmd, payload){
+    if (DEBUG_WS) {
+      const cls = cmd === CMD_PROVISION_RSP ? 'PROVISION_RSP'
+                : cmd === CMD_LOG           ? 'LOG'
+                : (cmd >= STAT_CMD_RANGE[0] && cmd <= STAT_CMD_RANGE[1]) ? 'STATUS'
+                : 'LEGACY';
+      dlog('[prov] <- KISS frame cmd=0x' + hex2(cmd)
+           + ' (' + cls + ') payloadLen=' + payload.length);
+    }
     if (cmd === CMD_PROVISION_RSP) this._onResponse(payload);
     else if (cmd === CMD_LOG) this.onLog(new TextDecoder().decode(payload));
     else if (cmd >= STAT_CMD_RANGE[0] && cmd <= STAT_CMD_RANGE[1]) this.onStatusFrame(cmd, payload);
@@ -859,11 +888,16 @@ class ProvisioningClient {
     let env;
     try { env = new Unpacker(payload).next(); }
     catch (e) { console.error('msgpack decode failed:', e); return; }
-    if (!Array.isArray(env) || env.length < 2) return;
+    if (!Array.isArray(env) || env.length < 2) {
+      dlog('[prov] <- response: envelope shape invalid', env);
+      return;
+    }
     const op = Number(env[0]);
     const seq = Number(env[1]);
     const body = env.length >= 3 ? env[2] : null;
     const w = this.waiters.get(seq);
+    dlog('[prov] <- response op=' + op + ' seq=' + seq
+         + (w ? ' (matched waiter)' : ' (no waiter — already timed out or stray)'));
     if (!w) return;
     this.waiters.delete(seq);
     clearTimeout(w.timeoutId);
@@ -889,9 +923,13 @@ class ProvisioningClient {
     if (has) packPayload(p);
     const frame = kissEncode(CMD_PROVISION_REQ, p.result());
     const timeout = (timeoutMs != null) ? timeoutMs : 5000;
+    dlog('[prov] -> request op=' + opId + ' seq=' + seq
+         + ' frameLen=' + frame.length + ' timeout=' + timeout + 'ms');
     return new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         this.waiters.delete(seq);
+        dlog('[prov] !! TIMEOUT op=' + opId + ' seq=' + seq
+             + ' — no CMD_PROVISION_RSP dispatched within ' + timeout + 'ms');
         reject(new Error('Provisioning request timed out (op '+opId+')'));
       }, timeout);
       this.waiters.set(seq, { resolve, reject, timeoutId });

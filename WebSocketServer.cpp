@@ -398,8 +398,27 @@ bool WebSocketServer::send_frame(uint8_t opcode,
     } else {
         return false;  // not supported in this server
     }
-    if (client_.write(hdr, hdr_len) != hdr_len) return false;
-    if (len > 0 && client_.write(data, len) != len) return false;
+    size_t hw = client_.write(hdr, hdr_len);
+    if (hw != hdr_len) {
+#if defined(PORTDUINO)
+        std::fprintf(stderr,
+            "[ws] short header write: requested=%zu wrote=%zu opcode=0x%x len=%zu\n",
+            hdr_len, hw, (unsigned)opcode, len);
+#endif
+        return false;
+    }
+    if (len > 0) {
+        size_t dw = client_.write(data, len);
+        if (dw != len) {
+#if defined(PORTDUINO)
+            std::fprintf(stderr,
+                "[ws] short payload write: requested=%zu wrote=%zu opcode=0x%x — "
+                "frame truncated, browser will time out\n",
+                len, dw, (unsigned)opcode);
+#endif
+            return false;
+        }
+    }
     return true;
 }
 
