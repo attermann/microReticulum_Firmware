@@ -174,6 +174,14 @@ const CMD_LOG=0x80, CMD_PROVISION_REQ=0x86, CMD_PROVISION_RSP=0x87;
 const CMD_RESET=0x55, CMD_RESET_BYTE=0xF8;
 const STAT_CMD_RANGE = [0x21, 0x29];
 
+// Optional schema baked in at packaging time. When BUNDLED_SCHEMA is non-null
+// and its hash/version match the device's GetInfo response, the web console
+// uses it directly and skips the GetSchema round-trip entirely — important
+// on LoRa where a full schema fetch is ~3 KB of airtime. The placeholder is
+// replaced by webconsole/package.sh from a build-time schema dump. Shape:
+//   { version: <int>, hash: <uint32>, schemaJson: "<serialised schema>" }
+const BUNDLED_SCHEMA = null;
+
 const OP = { GetSchema:1, GetInfo:2, GetCapabilities:3, GetState:4, SetState:5, Commit:6, Discard:7, FactoryReset:8, Reboot:9, Ack:100, Error:101 };
 const FT = { None:0, Bool:1, Int:2, Float:3, String:4, Bytes:5, Enum:6, BytesList:7, Void:8 };
 // Provisioning field flags (Field.h FF_*). Mutually exclusive uses:
@@ -186,7 +194,21 @@ const FT = { None:0, Bool:1, Int:2, Float:3, String:4, Bytes:5, Enum:6, BytesLis
 const FF = { LIVE_APPLY:1, REBOOT_REQUIRED:2, READ_ONLY:4, SECRET:8, WRITE_ONLY:16 };
 const ERR_NAMES = { 0:'Ok', 1:'BadRequest', 2:'UnknownOp', 3:'UnknownNs', 4:'UnknownField', 5:'InvalidValue', 6:'Constraint', 7:'ReadOnly', 8:'StorageError', 9:'NotInitialized', 99:'Internal' };
 const FK = { Id:1, Name:2, Type:3, Flags:4, MinI:5, MaxI:6, MinF:7, MaxF:8, MaxLen:9, EnumValues:10, EnumLabels:11, Default:12, ElementSize:13, MaxCount:14 };
-const IK = { FirmwareVersion:1, SchemaVersion:2, NeedsReboot:3 };
+const IK = { FirmwareVersion:1, SchemaVersion:2, NeedsReboot:3, SchemaHash:4 };
+// Wire-level transport keys (request-payload and response-sentinel). Reserved
+// at 100+ to avoid collision with low-numbered field/ns identifiers.
+const WK = { ReqCompress:100, CompressedPayload:101 };
+// heatshrink decoder config — MUST match the firmware build flags in microReticulum heatshrink_config.h.
+const HS_WINDOW_BITS    = 9;
+const HS_LOOKAHEAD_BITS = 4;
+// Ops where a ReqCompress flag is safe to inject in the request payload.
+// SetState / Commit / Discard use different payload shapes (map keyed by
+// ns-id, or array) where injecting a flag would conflict; their responses
+// are also small and don't benefit from compression.
+const COMPRESSIBLE_OPS = new Set([
+  OP.GetSchema, OP.GetInfo, OP.GetCapabilities, OP.GetState,
+  OP.FactoryReset, OP.Reboot,
+]);
 const GK = { NamespaceFilter:1, Pending:2 };
 const SK = { Applied:1, DraftHasReboot:2, FieldErrors:3 };
 const CK = { Applied:1, NeedsReboot:2 };
@@ -863,6 +885,9 @@ class RnsTransport {
     // before the response can land. ProvisioningClient picks this up via
     // duck-typing if the property is set on the transport.
     this.defaultRequestTimeoutMs = 30000;
+    // Bytes are expensive on LoRa — request heatshrink-compressed responses
+    // for bulky ops (schema, state). ProvisioningClient inspects this flag.
+    this.compressionPreferred = true;
   }
 
   // Server phase strings → user-friendly status labels.
@@ -1223,6 +1248,111 @@ class RnsTransport {
   }
 }
 
+// ===== Schema cache helpers =====
+// Schemas are content-addressed by the firmware's CRC32 hash (info.schemaHash),
+// so two devices reporting the same hash share the same cached entry. We cap
+// the total number of cached schemas at SCHEMA_CACHE_MAX to bound storage
+// growth as a user connects to many devices over time.
+const SCHEMA_CACHE_PREFIX = 'mrf_schema_v';
+const SCHEMA_CACHE_MAX    = 5;
+
+// Convert Uint8Array (bytes-typed defaults) to a JSON-safe tagged form. Most
+// schema fields are plain primitives, so this is rarely needed in practice.
+function _schemaJsonReplacer(_k, v){
+  if (v && v.constructor === Uint8Array) {
+    let s = '';
+    for (let i = 0; i < v.length; i++) s += String.fromCharCode(v[i]);
+    return { __u8: btoa(s) };
+  }
+  return v;
+}
+function _schemaJsonReviver(_k, v){
+  if (v && typeof v === 'object' && typeof v.__u8 === 'string' && Object.keys(v).length === 1) {
+    const s = atob(v.__u8);
+    const out = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i) & 0xff;
+    return out;
+  }
+  return v;
+}
+function _schemaSerialize(schema){
+  return JSON.stringify(schema, _schemaJsonReplacer);
+}
+function _schemaDeserialize(str){
+  return JSON.parse(str, _schemaJsonReviver);
+}
+// Evict the oldest entries to keep cache size bounded. Called before writing
+// a new key; the `keepKey` arg ensures we don't evict the entry we're about
+// to write if it already exists (LRU-bump semantics).
+function _schemaCachePrune(keepKey){
+  if (!window.localStorage) return;
+  const keys = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith(SCHEMA_CACHE_PREFIX) && k !== keepKey) keys.push(k);
+  }
+  // localStorage doesn't expose write order, so eviction is approximate —
+  // we drop in iteration order until under the cap. Good enough for an
+  // O(<=5) cache that's only churned when a user touches many devices.
+  while (keys.length >= SCHEMA_CACHE_MAX) {
+    const victim = keys.shift();
+    try { localStorage.removeItem(victim); } catch(_) {}
+  }
+}
+
+// ===== heatshrink decoder =====
+// Minimal LZSS decoder matching the firmware's heatshrink_encoder output.
+// Static config must agree with the build flags in platformio.ini —
+// changing HS_WINDOW_BITS / HS_LOOKAHEAD_BITS here without matching the
+// firmware will silently corrupt every decode.
+//
+// Token layout (MSB-first within each byte):
+//   1 tag bit:
+//     '1' followed by 8 bits → literal byte
+//     '0' followed by (window_bits + lookahead_bits) → backref { offset+1, length+2 }
+// EOF detection: stop when we can't read the next tag bit (out of input).
+function heatshrinkDecode(input){
+  const out = [];
+  let bitPos = 0;
+  const totalBits = input.length * 8;
+  function readBits(n){
+    if (bitPos + n > totalBits) return -1;
+    let v = 0;
+    for (let i = 0; i < n; i++) {
+      const byteIdx = bitPos >> 3;
+      const bitInByte = 7 - (bitPos & 7);
+      v = (v << 1) | ((input[byteIdx] >> bitInByte) & 1);
+      bitPos++;
+    }
+    return v;
+  }
+  while (bitPos < totalBits) {
+    const tag = readBits(1);
+    if (tag < 0) break;
+    if (tag === 1) {
+      const b = readBits(8);
+      if (b < 0) break;
+      out.push(b);
+    } else {
+      const offRaw = readBits(HS_WINDOW_BITS);
+      if (offRaw < 0) break;
+      const lenRaw = readBits(HS_LOOKAHEAD_BITS);
+      if (lenRaw < 0) break;
+      // heatshrink encodes offset and length as (real-value - 1) on the
+      // wire — see heatshrink_decoder.c HSDS_BACKREF_INDEX_LSB /
+      // HSDS_BACKREF_COUNT_LSB states. Minimum match length is 2 (a
+      // 1-byte match would cost more bits than a literal), so wire_length
+      // ranges 1..(2^lookahead_bits - 1) → real_length 2..(2^lb).
+      const offset = offRaw + 1;
+      const length = lenRaw + 1;
+      const start = out.length - offset;
+      if (start < 0) break;  // malformed input — bail rather than wrap
+      for (let i = 0; i < length; i++) out.push(out[start + i]);
+    }
+  }
+  return new Uint8Array(out);
+}
+
 // ===== Provisioning client =====
 class ProvisioningClient {
   constructor(transport){
@@ -1236,6 +1366,11 @@ class ProvisioningClient {
     this.onLegacyFrame = () => {};
     this.decoder = new KissDecoder((cmd, payload) => this._onFrame(cmd, payload));
     this.t.onBytes = (b) => this.decoder.feed(b);
+    // Whether to ask the server for compressed responses on bulky ops.
+    // Picked up by duck-typing from the transport (LoRa-backed transports
+    // set `compressionPreferred = true`). Local Serial / WebSocket leave
+    // it false: bytes are cheap there and decompression adds latency.
+    this.compressionEnabled = !!(transport && transport.compressionPreferred);
   }
   _onFrame(cmd, payload){
     if (cmd === CMD_PROVISION_RSP) this._onResponse(payload);
@@ -1250,11 +1385,28 @@ class ProvisioningClient {
     if (!Array.isArray(env) || env.length < 2) return;
     const op = Number(env[0]);
     const seq = Number(env[1]);
-    const body = env.length >= 3 ? env[2] : null;
+    let body = env.length >= 3 ? env[2] : null;
     const w = this.waiters.get(seq);
     if (!w) return;
     this.waiters.delete(seq);
     clearTimeout(w.timeoutId);
+    // Compressed-payload sentinel: a single-key map { CompressedPayload: <bin> }
+    // whose value decompresses to the original MsgPack-encoded payload.
+    // Transparent to the dispatch below — once decoded, body looks identical
+    // to what an uncompressed response would have produced.
+    if (body instanceof Map && body.size === 1 && body.has(WK.CompressedPayload)) {
+      const bin = body.get(WK.CompressedPayload);
+      if (bin instanceof Uint8Array) {
+        try {
+          const raw = heatshrinkDecode(bin);
+          body = new Unpacker(raw).next();
+        } catch (e) {
+          console.error('compressed payload decode failed:', e);
+          w.reject(new Error('failed to decompress response: ' + (e && e.message)));
+          return;
+        }
+      }
+    }
     if (op === OP.Error) {
       // Defensive against decoders that hand us a plain Object instead of a
       // Map for int-keyed msgpack maps. Some JS msgpack libs surface int keys
@@ -1285,11 +1437,26 @@ class ProvisioningClient {
   async _request(opId, packPayload, timeoutMs){
     const seq = this.seq++;
     const p = new Packer();
-    const has = !!packPayload;
+    // Compression negotiation: for ops whose payload either is currently nil
+    // (no map) or already a map of "options" with known keys, optionally
+    // inject the ReqCompress flag. SetState/Commit/Discard are excluded
+    // because their payload shapes (nsId-keyed map / array of nsIds) would
+    // collide with the flag's uint16 key and break the server-side parser.
+    const wantsCompress = this.compressionEnabled && COMPRESSIBLE_OPS.has(opId);
+    const has = !!packPayload || wantsCompress;
     p.arr(has ? 3 : 2);
     p.int(opId);
     p.int(seq);
-    if (has) packPayload(p);
+    if (packPayload) {
+      // Caller-driven payload. Pass wantsCompress through ctx so the
+      // caller (e.g. getState) can fold ReqCompress into its own map.
+      packPayload(p, { wantsCompress });
+    } else if (wantsCompress) {
+      // No caller payload — emit a single-entry map carrying just the flag.
+      p.map(1);
+      p.int(WK.ReqCompress);
+      p.bool(true);
+    }
     const frame = kissEncode(CMD_PROVISION_REQ, p.result());
     // Per-call timeout wins; otherwise the transport's advertised default
     // (RnsTransport publishes a longer one because LoRa Resource transfers
@@ -1312,7 +1479,15 @@ class ProvisioningClient {
   async getInfo(timeoutMs){
     const { body } = await this._request(OP.GetInfo, null, timeoutMs);
     const m = body instanceof Map ? body : new Map();
-    return { firmwareVersion: m.get(IK.FirmwareVersion), schemaVersion: m.get(IK.SchemaVersion), needsReboot: !!m.get(IK.NeedsReboot) };
+    // schemaHash is a uint32 CRC32 over the GetSchema response bytes. Older
+    // firmware that doesn't include it returns undefined here, which the
+    // schema cache layer treats as "uncacheable" and falls back to fetch.
+    return {
+      firmwareVersion: m.get(IK.FirmwareVersion),
+      schemaVersion: m.get(IK.SchemaVersion),
+      needsReboot: !!m.get(IK.NeedsReboot),
+      schemaHash: m.get(IK.SchemaHash),
+    };
   }
   async getSchema(){
     const { body } = await this._request(OP.GetSchema);
@@ -1353,14 +1528,53 @@ class ProvisioningClient {
     }
     return { namespaces };
   }
+  // Resolve the device's schema, preferring (1) a build-time bundled schema
+  // whose hash matches the device, then (2) a localStorage cache entry keyed
+  // by (schemaVersion, schemaHash), then (3) a network GetSchema fetch. The
+  // hash is the CRC32 the firmware computes over the GetSchema response
+  // bytes at boot and reports in GetInfo; identical hashes imply identical
+  // schemas, so no per-device key is needed.
+  //
+  // Firmware that predates SchemaHash returns info.schemaHash === undefined,
+  // in which case we bypass cache and bundle and just fetch as before.
+  async resolveSchema(info){
+    const hash = info && info.schemaHash;
+    const ver  = info && info.schemaVersion;
+    if (hash == null || ver == null) return await this.getSchema();
+    const hashHex = (Number(hash) >>> 0).toString(16).padStart(8, '0');
+    const cacheKey = `mrf_schema_v${Number(ver)}_${hashHex}`;
+    // 1) Bundled (zero network).
+    if (BUNDLED_SCHEMA &&
+        Number(BUNDLED_SCHEMA.version) === Number(ver) &&
+        (Number(BUNDLED_SCHEMA.hash) >>> 0) === (Number(hash) >>> 0) &&
+        typeof BUNDLED_SCHEMA.schemaJson === 'string') {
+      try { return _schemaDeserialize(BUNDLED_SCHEMA.schemaJson); } catch(_) {}
+    }
+    // 2) localStorage cache.
+    try {
+      const raw = window.localStorage && localStorage.getItem(cacheKey);
+      if (raw) return _schemaDeserialize(raw);
+    } catch(_) {}
+    // 3) Fetch + persist.
+    const schema = await this.getSchema();
+    try {
+      if (window.localStorage) {
+        _schemaCachePrune(cacheKey);
+        localStorage.setItem(cacheKey, _schemaSerialize(schema));
+      }
+    } catch(_) { /* quota/disabled — non-fatal */ }
+    return schema;
+  }
   async getState(nsIds, pending){
-    const { body } = await this._request(OP.GetState, (p) => {
+    const { body } = await this._request(OP.GetState, (p, ctx) => {
       const hasFilter = Array.isArray(nsIds) && nsIds.length > 0;
-      const entries = (hasFilter ? 1 : 0) + (pending ? 1 : 0);
+      const compress = !!(ctx && ctx.wantsCompress);
+      const entries = (hasFilter ? 1 : 0) + (pending ? 1 : 0) + (compress ? 1 : 0);
       if (entries === 0) { p.nil(); return; }
       p.map(entries);
       if (hasFilter) { p.int(GK.NamespaceFilter); p.arr(nsIds.length); for (const n of nsIds) p.int(n); }
       if (pending) { p.int(GK.Pending); p.bool(true); }
+      if (compress) { p.int(WK.ReqCompress); p.bool(true); }
     });
     const out = {};
     if (body instanceof Map) {
@@ -1923,7 +2137,7 @@ async function doConnect(){
 async function afterConnect(){
   try { state.info.set(await client.getInfo()); } catch (e) { console.error('getInfo:', e); showToast('Failed to fetch device info: ' + e.message, 'err'); }
   try {
-    const schema = await client.getSchema();
+    const schema = await client.resolveSchema(state.info.get());
     state.schema.set(schema);
     if (schema.namespaces.length > 0 && state.activeNsTab.get() == null) {
       // Default to the first ROOT namespace (parentId == 0) — children render
@@ -2033,9 +2247,12 @@ async function startReconnect(){
       state.reconnecting.set(false);
       showToast('Reconnected', 'ok');
 
-      // Refresh schema (usually stable across reboot, but cheap to re-fetch).
+      // Refresh schema. resolveSchema short-circuits via the in-memory cache /
+      // bundled schema if the device's hash is unchanged across the reboot —
+      // and only falls back to a real GetSchema fetch when the schema actually
+      // changed (e.g. firmware upgrade).
       try {
-        const schema = await client.getSchema();
+        const schema = await client.resolveSchema(info);
         state.schema.set(schema);
         if (schema.namespaces.length > 0 && state.activeNsTab.get() == null) {
           const firstRoot = schema.namespaces.find(n => !Number(n.parentId || 0)) || schema.namespaces[0];
@@ -3079,6 +3296,14 @@ function buildFieldRowWriteOnly(nsId, f, c){
     const verr = validateValue(f, v);
     if (verr) { errEl.textContent = verr; row.classList.add('has-err'); return; }
     errEl.textContent = ''; row.classList.remove('has-err');
+    // Write-only fields are imperative one-shot commands (Clear Storage,
+    // Clear Provisioning, reboots, etc.) that fire setters server-side with
+    // no draft / revert step. Always require an explicit confirmation so a
+    // misclick can't trigger a destructive action.
+    const label = f.label || f.name || 'this command';
+    if (!window.confirm(`Send "${label}"?\n\nThis is a one-shot command and cannot be undone.`)) {
+      return;
+    }
     sendBtn.disabled = true;
     const prevLbl = sendBtn.textContent || 'Send';
     sendBtn.textContent = 'Sending…';
