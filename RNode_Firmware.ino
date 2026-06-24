@@ -232,6 +232,7 @@ RNS::Interface udp_interface(RNS::Type::NONE);
     microStore::FileSystem filesystem{microStore::Adapters::PosixFileSystem()};
   #endif
   #else // RNS_USE_FS
+    #include <microStore/Adapters/NoopFileSystem.h>
     microStore::FileSystem filesystem{microStore::Adapters::NoopFileSystem()};
   #endif // RNS_USE_FS
 #endif  // HAS_RNS
@@ -359,6 +360,32 @@ int _write(int file, char *ptr, int len) {
   }
   return wrote;
 }
+
+#if defined(RNS_USE_FS)
+void dump_filesystem(const char* basepath, uint8_t level = 0) {
+  char prefix[17] = "";
+  for (uint8_t index = 0; index < level && index < 8; index++) {
+    prefix[index*2] = ' ';
+    prefix[index*2+1] = ' ';
+    prefix[index*2+2] = '\0';
+  }
+  filesystem.listDirectory(basepath, [&](const char* name) -> void {
+    // Adapter callbacks receive bare basenames — join with basepath before
+    // re-querying or recursing, and avoid emitting "//" when basepath is "/".
+    char fullpath[96];
+    const bool root = (basepath[0] == '/' && basepath[1] == '\0');
+    if (root) snprintf(fullpath, sizeof(fullpath), "/%s", name);
+    else snprintf(fullpath, sizeof(fullpath), "%s/%s", basepath, name);
+    if (filesystem.isDirectory(fullpath)) {
+      TRACEF("%s%s:", prefix, name);
+      dump_filesystem(fullpath, level + 1);
+    }
+    else {
+      TRACEF("%s%s", prefix, name);
+    }
+  });
+}
+#endif
 
 void setup() {
 
@@ -784,23 +811,32 @@ void setup() {
       // Finaly attempt to initialize internl flash
       TRACE("Using internal flash...");
       filesystem = microStore::Adapters::InternalFSFileSystem();
-      filesystem.init();
-      TRACE("Initialized internal flash");
+      if (!filesystem.init()) WARNING("Failed to initialize filesystem!");
+      else TRACE("Initialized internal flash");
     }
 #else
-    filesystem.init();
-    TRACE("Initialized filesystem");
+    if (!filesystem.init()) WARNING("Failed to initialize filesystem!");
 #endif
 
     // Remove legacy files
-    if (filesystem.exists("/destination_table")) filesystem.remove("/destination_table");
-    if (filesystem.isDirectory("/cache")) {
-      filesystem.listDirectory("/cache", [&](const char* path) -> void {
+    filesystem.remove("./destination_table");
+    filesystem.remove("./path_store_index.dat");
+    filesystem.remove("./path_store_0.dat");
+    filesystem.remove("./path_store_1.dat");
+    filesystem.remove("./path_store_2.dat");
+    filesystem.remove("./path_store_3.dat");
+    filesystem.remove("./path_store_4.dat");
+    filesystem.remove("./path_store_5.dat");
+    filesystem.remove("./path_store_6.dat");
+    filesystem.remove("./path_store_7.dat");
+    if (filesystem.isDirectory("./cache")) {
+      filesystem.listDirectory("./cache", [&](const char* name) -> void {
         char rmpath[64];
-        snprintf(rmpath, 64, "/cache/%s", path);
-        filesystem.remove(rmpath);
+        snprintf(rmpath, sizeof(rmpath), "./cache/%s", name);
+        if (filesystem.isDirectory(rmpath)) filesystem.rmdir(rmpath);
+        else                                filesystem.remove(rmpath);
       });
-      filesystem.rmdir("/cache");
+      filesystem.rmdir("./cache");
     }
 
 #if PLATFORM != PLATFORM_NATIVE
@@ -808,16 +844,16 @@ void setup() {
     if (filesystem.storageAvailable() < 1024) {
       WARNING("FileSystem is full, clearing space...");
       // CBA Delete the path store index file to force a rebuild
-      filesystem.remove("/path_store_index.dat");
+      filesystem.remove("/path_store/index.dat");
       // CBA Remove all path store data files
-      filesystem.remove("/path_store_0.dat");
-      filesystem.remove("/path_store_1.dat");
-      filesystem.remove("/path_store_2.dat");
-      filesystem.remove("/path_store_3.dat");
-      filesystem.remove("/path_store_4.dat");
-      filesystem.remove("/path_store_5.dat");
-      filesystem.remove("/path_store_6.dat");
-      filesystem.remove("/path_store_7.dat");
+      filesystem.remove("/path_store/seg0.dat");
+      filesystem.remove("/path_store/seg1.dat");
+      filesystem.remove("/path_store/seg2.dat");
+      filesystem.remove("/path_store/seg3.dat");
+      filesystem.remove("/path_store/seg4.dat");
+      filesystem.remove("/path_store/seg5.dat");
+      filesystem.remove("/path_store/seg6.dat");
+      filesystem.remove("/path_store/seg7.dat");
     }
 #endif
 
@@ -829,14 +865,8 @@ void setup() {
     filesystem.format();
 #endif
 #if 1
-    TRACE("Listing filesystem /:");
-    filesystem.listDirectory("/", [&](const char* path) -> void {
-      TRACEF("  %s", path);
-    });
-    TRACE("Listing filesystem /config/:");
-    filesystem.listDirectory("/config/", [&](const char* path) -> void {
-      TRACEF("  %s", path);
-    });
+    TRACE("Listing filesystem...");
+    dump_filesystem("./", 1);
 #endif
 #endif // !NDEBUG && RNS_USE_FS
 

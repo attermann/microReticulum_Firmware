@@ -183,7 +183,7 @@ RNS::Bytes serve_page(
           destination_path_responses += destination.path_responses().size();
         }
         uint32_t interface_announces = 0;
-        for (auto& [interface_hash, interface] : RNS::Transport::get_interfaces()) {
+        for (auto& interface : RNS::Transport::get_interfaces()) {
           interface_announces += interface.announce_queue().size();
         }
 

@@ -55,7 +55,6 @@
 #define PROV_GENERAL_UDP_MODE        3
 #define PROV_GENERAL_NOMADNET_ENABLE 4
 #define PROV_GENERAL_NOMADNET_NAME   5
-#define PROV_GENERAL_REBOOT          100
 
 #define PROV_METRICS_TRANS_ID   1
 #define PROV_METRICS_PROBE_DST  2
@@ -76,6 +75,8 @@
 #define PROV_METRICS_LORA_NF    7
 #define PROV_METRICS_LORA_LRSSI 8
 #define PROV_METRICS_LORA_LSNR  9
+#define PROV_METRICS_LORA_STAL  10
+#define PROV_METRICS_LORA_LTAL  11
 
 #define PROV_METRICS_UDP_ADDR   1
 #define PROV_METRICS_UDP_PORT   2
@@ -88,6 +89,8 @@
 #define PROV_RADIO_CR           5
 #define PROV_RADIO_TXP          6
 #define PROV_RADIO_IMPLICIT     7
+#define PROV_RADIO_STAL         8
+#define PROV_RADIO_LTAL         9
 
 #define PROV_NET_IP             1
 #define PROV_NET_PORT           2
