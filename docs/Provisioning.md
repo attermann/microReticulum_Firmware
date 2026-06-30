@@ -35,9 +35,9 @@ A node's identity in the RNS sense is a long-lived Ed25519 keypair generated on 
 
 ## Opening the Console
 
-The Console is a static HTML file. Open `Release/console.html` from disk (drag-and-drop into Chrome / Edge), serve it from any static web server, or — when the device is in console mode — load it directly from the node's HTTP endpoint at `http://10.0.0.1/`.
+The Console is a static HTML file. Open `Release/console.html` from disk (drag-and-drop into Chrome / Edge / latest Firefox), serve it from any static web server, or — when the device is in console mode — load it directly from the node's HTTP endpoint at `http://10.0.0.1/`.
 
-The Console only depends on the browser's Web Serial, Web Bluetooth, and WebSocket APIs. Chrome and Chromium-derived Edge are the supported browsers; Firefox and Safari lack Web Serial / Web Bluetooth and can only use the WebSocket and RNS transports.
+The Console only depends on the browser's Web Serial, Web Bluetooth, and WebSocket APIs. Chrome and Chromium-derived Edge are the supported browsers together with the latest versions of Firefox; older Firefox versions as well as Safari lack Web Serial / Web Bluetooth and can only use the WebSocket and RNS transports.
 
 > NOTE: Chrome's "Local Network Access Checks" feature may need to be temporarily disabled at `chrome://flags/#local-network-access-check` to connect to a node on the LAN, depending on your Chrome version.
 
@@ -46,7 +46,7 @@ The Console only depends on the browser's Web Serial, Web Bluetooth, and WebSock
 "Local" means you have a direct wire / radio link to the node: USB, BLE, or the same LAN. The recommended bring-up sequence for a fresh node:
 
 1. **Connect over Serial** (USB cable to the node).
-2. In the topbar, select `Transport: Serial` and click **Connect**. Pick the port for the device when Chrome prompts.
+2. In the topbar, select `Transport: Serial` and click **Connect**. Pick the port for the device when your browser prompts.
 3. Open the **Node Config** tab.
    - **Device Info** sub-tab: confirm board, platform, MCU, and firmware version.
    - **Radio** sub-tab: set frequency, bandwidth, spreading factor, coding rate, TX power. These are committed to EEPROM and only take effect on the *next* reboot when the device is in boot-into-TNC mode.
@@ -74,7 +74,7 @@ The RNode Console does **not** itself speak RNS — your browser can't open a Re
 
 ### Setup
 
-1. Install and run [MeshChatX](https://meshtastic.org/) on your workstation. Make sure it has at least one RNS interface configured that can reach the target node (typically a `TCPClientInterface` to your local rnsd, plus whatever LoRa / packet-radio interfaces sit between you and the node).
+1. Install and run [MeshChatX](https://meshchatx.com/) on your workstation. Make sure it has at least one RNS interface configured that can reach the target node (typically a `TCPClientInterface` to your local rnsd, plus whatever LoRa / packet-radio interfaces sit between you and the node).
 2. MeshChatX exposes a WebSocket bus (default `ws://localhost:8000/ws` — confirm the path in your MeshChatX install) with a generic `rns.link.*` API. The Console uses this bus to ask MeshChatX to open a Link, send frames over it, and receive replies.
 3. **Obtain the destination hash of the remote node.** When a node announces, its `rnstransport.remote.management` destination shows up in Reticulum's path table. Grab the 16-byte hex hash with `rnsd` / `rnpath` / `rnstatus`, or read it off the local Console's **Transport Config → Metrics → Destinations → mgmt_destination** field.
 4. In the Console topbar, select `Transport: RNS (via MeshChatX)`. Fill in:
@@ -104,9 +104,9 @@ Things that *don't* work over RNS:
 ### Serial (USB)
 
 - **Wire format:** standard RNode KISS over a USB CDC virtual serial port (`/dev/ttyACM*` on Linux/macOS, `COMx` on Windows).
-- **Browser API:** Web Serial. Chrome will prompt for permission the first time.
+- **Browser API:** Web Serial. Your browser might prompt for permission the first time.
 - **Latency:** sub-millisecond. Best transport for first-boot provisioning and EEPROM work.
-- **Caveat:** after a physical USB disconnect/reconnect, Chrome can leave the `SerialPort` JS object in a half-bound state; the Console works around this but you may see "Failed to open serial port" once — clicking **Connect** again resolves it.
+- **Caveat:** after a physical USB disconnect/reconnect, Your browser can leave the `SerialPort` JS object in a half-bound state; the Console works around this but you may see "Failed to open serial port" once — clicking **Connect** again resolves it.
 
 ### Bluetooth (BLE)
 
