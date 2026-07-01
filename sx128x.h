@@ -7,6 +7,7 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include "Modem.h"
+#include "LoRaRadio.h"
 
 #define LORA_DEFAULT_SS_PIN     10
 #define LORA_DEFAULT_RESET_PIN  9
@@ -19,24 +20,24 @@
 #define PA_OUTPUT_PA_BOOST_PIN  1
 #define RSSI_OFFSET             157
 
-class sx128x : public Stream {
+class sx128x : public ILoRaRadio {
 public:
   sx128x();
 
-  int begin(unsigned long frequency);
-  void end();
-  void reset();
+  int begin(uint32_t frequency) override;
+  void end() override;
+  void reset() override;
 
-  int beginPacket(int implicitHeader = false);
-  int endPacket();
+  int beginPacket(int implicitHeader = false) override;
+  int endPacket() override;
 
   int parsePacket(int size = 0);
-  int packetRssi();
-  int packetRssi(uint8_t pkt_snr_raw);
-  int currentRssi();
+  int packetRssi() override;
+  int packetRssi(uint8_t pkt_snr_raw) override;
+  int currentRssi() override;
   uint8_t packetRssiRaw();
   uint8_t currentRssiRaw();
-  uint8_t packetSnrRaw();
+  uint8_t packetSnrRaw() override;
   float packetSnr();
   long packetFrequencyError();
 
@@ -50,28 +51,28 @@ public:
   virtual int peek();
   virtual void flush();
 
-  void onReceive(void(*callback)(int));
+  void onReceive(void(*callback)(int)) override;
 
-  void receive(int size = 0);
+  void receive(int size = 0) override;
   void standby();
   void sleep();
 
-  bool preInit();
-  uint8_t getTxPower();
-  void setTxPower(int level, int outputPin = PA_OUTPUT_PA_BOOST_PIN);
-  uint32_t getFrequency();
-  void setFrequency(uint32_t frequency);
-  void setSpreadingFactor(int sf);
+  bool preInit() override;
+  uint8_t getTxPower() override;
+  void setTxPower(int level, int outputPin = PA_OUTPUT_PA_BOOST_PIN) override;
+  uint32_t getFrequency() override;
+  void setFrequency(uint32_t frequency) override;
+  void setSpreadingFactor(int sf) override;
   uint8_t getSpreadingFactor();
-  uint32_t getSignalBandwidth();
-  void setSignalBandwidth(uint32_t sbw);
-  void setCodingRate4(int denominator);
+  uint32_t getSignalBandwidth() override;
+  void setSignalBandwidth(uint32_t sbw) override;
+  void setCodingRate4(int denominator) override;
   uint8_t getCodingRate4();
-  void setPreambleLength(long preamble_symbols);
+  void setPreambleLength(long preamble_symbols) override;
   void setSyncWord(int sw);
-  bool dcd();
+  bool dcd() override;
   void clearIRQStatus();
-  void enableCrc();
+  void enableCrc() override;
   void disableCrc();
   void enableTCXO();
   void disableTCXO();
@@ -94,7 +95,7 @@ public:
   void setSPIFrequency(uint32_t frequency);
 
   void dumpRegisters(Stream& out);
-  void handleDio0IfPending();
+  void handleDio0IfPending() override;
 
 private:
   void explicitHeaderMode();

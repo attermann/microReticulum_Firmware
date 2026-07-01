@@ -3,8 +3,11 @@
 
 #include "Boards.h"
 
-#if MODEM == SX1262
+#if MODEM == SX1262 || MODEM == MODEM_RUNTIME
 #include "sx126x.h"
+#if MCU_VARIANT == MCU_NATIVE
+  #include <cstdio>  // for std::fprintf diagnostics
+#endif
 
 #if MCU_VARIANT == MCU_ESP32
   #if MCU_VARIANT == MCU_ESP32 and !defined(CONFIG_IDF_TARGET_ESP32S3)
@@ -97,6 +100,14 @@
   #define SPI spiModem
 #endif
 
+#if HAS_LORA_PA
+  uint8_t lora_pa_model = LORA_PA_MODEL;
+#endif
+
+#if HAS_LORA_LNA
+  int lora_lna_gain = LORA_LNA_GAIN;
+#endif
+
 extern SPIClass SPI;
 
 #define MAX_PKT_LENGTH 255
@@ -117,15 +128,18 @@ sx126x::sx126x() :
   _crcMode(1),
   _fifo_tx_addr_ptr(0),
   _fifo_rx_addr_ptr(0),
-  _packet({0}),
+  _packet{0},
   _preinit_done(false),
-  _onReceive(NULL)
+  _onReceive(NULL),
+  _tcxoVoltageOverride(0xFF),
+  _dio2_as_rf_switch_override(false),
+  _dio2_as_rf_switch_set(false)
 { setTimeout(0); }
 
 bool sx126x::preInit() {
   pinMode(_ss, OUTPUT);
   digitalWrite(_ss, HIGH);
-  
+
   #if BOARD_MODEL == BOARD_T3S3 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_HELTEC32_V4 || BOARD_MODEL == BOARD_TDECK || BOARD_MODEL == BOARD_XIAO_S3
     SPI.begin(pin_sclk, pin_miso, pin_mosi, pin_cs);
   #elif BOARD_MODEL == BOARD_TECHO
@@ -135,11 +149,11 @@ bool sx126x::preInit() {
     SPI.begin();
   #endif
 
-  // Check version (retry for up to 2 seconds)
+  // Check version (retry for up to 2 seconds).
   // TODO: Actually read version registers, not syncwords
   long start = millis();
-  uint8_t syncmsb;
-  uint8_t synclsb;
+  uint8_t syncmsb = 0;
+  uint8_t synclsb = 0;
   while (((millis() - start) < 2000) && (millis() >= start)) {
       syncmsb = readRegister(REG_SYNC_WORD_MSB_6X);
       synclsb = readRegister(REG_SYNC_WORD_LSB_6X);
@@ -149,8 +163,19 @@ bool sx126x::preInit() {
       delay(100);
   }
   if ( uint16_t(syncmsb << 8 | synclsb) != 0x1424 && uint16_t(syncmsb << 8 | synclsb) != 0x4434) {
+      #if MCU_VARIANT == MCU_NATIVE
+        // Sync word read failed — chip didn't respond. Most likely causes:
+        // (0xFF, 0xFF) MISO floating / chip not present; (0x00, 0x00) chip
+        // held in reset or SPI pins miswired.
+        std::fprintf(stderr,
+            "[sx126x] preInit FAILED: chip did not respond (got msb=0x%02X lsb=0x%02X, expected 0x14/0x24)\n",
+            syncmsb, synclsb);
+      #endif
       return false;
   }
+  #if MCU_VARIANT == MCU_NATIVE
+    std::fprintf(stderr, "[sx126x] preInit OK (sync_word=0x%02X%02X)\n", syncmsb, synclsb);
+  #endif
 
   _preinit_done = true;
   return true;
@@ -166,7 +191,38 @@ void sx126x::writeRegister(uint16_t address, uint8_t value) {
 
 uint8_t ISR_VECT sx126x::singleTransfer(uint8_t opcode, uint16_t address, uint8_t value) {
   waitOnBusy();
-  
+
+#if MCU_VARIANT == MCU_NATIVE
+  // Native (Portduino / Linux spidev) only: each SPI.transfer(byte) is its
+  // own SPI_IOC_MESSAGE ioctl, and the kernel spidev driver deasserts CS
+  // between ioctls — the chip sees each byte as an independent (1-byte)
+  // command. Route the whole sequence through the buffer form so CS stays
+  // asserted across all bytes in a single ioctl. Embedded targets keep
+  // the per-byte path because Arduino-ESP32's SPI.transfer(buf, len) is
+  // a hardware-FIFO call with different MISO sampling / CS timing — it
+  // corrupted SX1262 RX on ESP32-S3 (Heltec V4).
+  uint8_t buf[5];
+  buf[0] = opcode;
+  buf[1] = (address & 0xFF00) >> 8;
+  buf[2] = address & 0x00FF;
+  uint8_t len;
+  if (opcode == OP_READ_REGISTER_6X) {
+    buf[3] = 0x00;   // status-byte skip
+    buf[4] = value;
+    len = 5;
+  } else {
+    buf[3] = value;
+    len = 4;
+  }
+
+  digitalWrite(_ss, LOW);
+  SPI.beginTransaction(_spiSettings);
+  SPI.transfer(buf, len);
+  SPI.endTransaction();
+  digitalWrite(_ss, HIGH);
+
+  return buf[len - 1];
+#else
   uint8_t response;
   digitalWrite(_ss, LOW);
   SPI.beginTransaction(_spiSettings);
@@ -176,10 +232,9 @@ uint8_t ISR_VECT sx126x::singleTransfer(uint8_t opcode, uint16_t address, uint8_
   if (opcode == OP_READ_REGISTER_6X) { SPI.transfer(0x00); }
   response = SPI.transfer(value);
   SPI.endTransaction();
-
   digitalWrite(_ss, HIGH);
-
   return response;
+#endif
 }
 
 void sx126x::rxAntEnable() {
@@ -207,16 +262,41 @@ void sx126x::waitOnBusy() {
 
 void sx126x::executeOpcode(uint8_t opcode, uint8_t *buffer, uint8_t size) {
   waitOnBusy();
+#if MCU_VARIANT == MCU_NATIVE
+  // Native-only batched form — see singleTransfer() for rationale.
+  // Max payload of any opcode on the SX1262 is well under 64 bytes.
+  uint8_t buf[1 + 64];
+  buf[0] = opcode;
+  for (uint8_t i = 0; i < size; i++) { buf[1 + i] = buffer[i]; }
+  digitalWrite(_ss, LOW);
+  SPI.beginTransaction(_spiSettings);
+  SPI.transfer(buf, 1 + size);
+  SPI.endTransaction();
+  digitalWrite(_ss, HIGH);
+#else
   digitalWrite(_ss, LOW);
   SPI.beginTransaction(_spiSettings);
   SPI.transfer(opcode);
   for (int i = 0; i < size; i++) { SPI.transfer(buffer[i]); }
   SPI.endTransaction();
   digitalWrite(_ss, HIGH);
+#endif
 }
 
 void sx126x::executeOpcodeRead(uint8_t opcode, uint8_t *buffer, uint8_t size) {
   waitOnBusy();
+#if MCU_VARIANT == MCU_NATIVE
+  uint8_t buf[2 + 64];
+  buf[0] = opcode;
+  buf[1] = 0x00;
+  for (uint8_t i = 0; i < size; i++) { buf[2 + i] = 0x00; }
+  digitalWrite(_ss, LOW);
+  SPI.beginTransaction(_spiSettings);
+  SPI.transfer(buf, 2 + size);
+  SPI.endTransaction();
+  digitalWrite(_ss, HIGH);
+  for (uint8_t i = 0; i < size; i++) { buffer[i] = buf[2 + i]; }
+#else
   digitalWrite(_ss, LOW);
   SPI.beginTransaction(_spiSettings);
   SPI.transfer(opcode);
@@ -224,10 +304,23 @@ void sx126x::executeOpcodeRead(uint8_t opcode, uint8_t *buffer, uint8_t size) {
   for (int i = 0; i < size; i++) { buffer[i] = SPI.transfer(0x00); }
   SPI.endTransaction();
   digitalWrite(_ss, HIGH);
+#endif
 }
 
 void sx126x::writeBuffer(const uint8_t* buffer, size_t size) {
   waitOnBusy();
+#if MCU_VARIANT == MCU_NATIVE
+  uint8_t buf[2 + 256];
+  buf[0] = OP_FIFO_WRITE_6X;
+  buf[1] = _fifo_tx_addr_ptr;
+  for (size_t i = 0; i < size; i++) { buf[2 + i] = buffer[i]; }
+  _fifo_tx_addr_ptr += size;
+  digitalWrite(_ss, LOW);
+  SPI.beginTransaction(_spiSettings);
+  SPI.transfer(buf, 2 + size);
+  SPI.endTransaction();
+  digitalWrite(_ss, HIGH);
+#else
   digitalWrite(_ss, LOW);
   SPI.beginTransaction(_spiSettings);
   SPI.transfer(OP_FIFO_WRITE_6X);
@@ -235,10 +328,24 @@ void sx126x::writeBuffer(const uint8_t* buffer, size_t size) {
   for (int i = 0; i < size; i++) { SPI.transfer(buffer[i]); _fifo_tx_addr_ptr++; }
   SPI.endTransaction();
   digitalWrite(_ss, HIGH);
+#endif
 }
 
 void sx126x::readBuffer(uint8_t* buffer, size_t size) {
   waitOnBusy();
+#if MCU_VARIANT == MCU_NATIVE
+  uint8_t buf[3 + 256];
+  buf[0] = OP_FIFO_READ_6X;
+  buf[1] = _fifo_rx_addr_ptr;
+  buf[2] = 0x00;
+  for (size_t i = 0; i < size; i++) { buf[3 + i] = 0x00; }
+  digitalWrite(_ss, LOW);
+  SPI.beginTransaction(_spiSettings);
+  SPI.transfer(buf, 3 + size);
+  SPI.endTransaction();
+  digitalWrite(_ss, HIGH);
+  for (size_t i = 0; i < size; i++) { buffer[i] = buf[3 + i]; }
+#else
   digitalWrite(_ss, LOW);
   SPI.beginTransaction(_spiSettings);
   SPI.transfer(OP_FIFO_READ_6X);
@@ -247,6 +354,7 @@ void sx126x::readBuffer(uint8_t* buffer, size_t size) {
   for (int i = 0; i < size; i++) { buffer[i] = SPI.transfer(0x00); }
   SPI.endTransaction();
   digitalWrite(_ss, HIGH);
+#endif
 }
 
 void sx126x::setModulationParams(uint8_t sf, uint8_t bw, uint8_t cr, int ldro) {
@@ -275,9 +383,24 @@ void sx126x::setPacketParams(long preamble_symbols, uint8_t headermode, uint8_t 
   buf[4] = crc;
   buf[5] = 0x00; // standard IQ setting (no inversion)
   buf[6] = 0x00; // unused params
-  buf[7] = 0x00; 
-  buf[8] = 0x00; 
+  buf[7] = 0x00;
+  buf[8] = 0x00;
   executeOpcode(OP_PACKET_PARAMS_6X, buf, 9);
+
+  // SX1262 errata section 15.4: IQ polarity is inverted compared to
+  // SX1276. The SetPacketParams command resets register 0x0736 to an
+  // incorrect default. For standard IQ (no inversion), bit 2 must be
+  // SET after every SetPacketParams call. For inverted IQ, bit 2 must
+  // be CLEARED. Without this fix, LoRa RX demodulation fails silently
+  // while TX continues to work.
+  uint8_t iqreg = readRegister(0x0736);
+  if (buf[5] == 0x00) {
+    // Standard IQ: set bit 2
+    writeRegister(0x0736, iqreg | 0x04);
+  } else {
+    // Inverted IQ: clear bit 2
+    writeRegister(0x0736, iqreg & ~0x04);
+  }
 }
 
 void sx126x::reset(void) {
@@ -314,7 +437,7 @@ void sx126x::calibrate_image(long frequency) {
   waitOnBusy();
 }
 
-int sx126x::begin(long frequency) {
+int sx126x::begin(uint32_t frequency) {
   reset();
   
   if (_busy != -1) { pinMode(_busy, INPUT); }
@@ -330,11 +453,15 @@ int sx126x::begin(long frequency) {
   // Set sync word
   setSyncWord(SYNC_WORD_6X);
 
-  #if DIO2_AS_RF_SWITCH
-    // enable dio2 rf switch
+  // DIO2-as-RF-switch: runtime override wins over the per-board macro.
+  // Boards.h sets a global fallback (DIO2_AS_RF_SWITCH = false at the
+  // bottom), so the macro is always defined and safe to read as a bool.
+  bool enable_dio2_rf = _dio2_as_rf_switch_set ? _dio2_as_rf_switch_override
+                                               : (bool)(DIO2_AS_RF_SWITCH);
+  if (enable_dio2_rf) {
     uint8_t byte = 0x01;
     executeOpcode(OP_DIO2_RF_CTRL_6X, &byte, 1);
-  #endif
+  }
 
   rxAntEnable();
   setFrequency(frequency);
@@ -348,7 +475,22 @@ int sx126x::begin(long frequency) {
   setPacketParams(_preambleLength, _implicitHeaderMode, _payloadLength, _crcMode);
 
   #if HAS_LORA_PA
-    #if LORA_PA_GC1109
+    if (lora_pa_model == LORA_PA_UNKNOWN) {
+      #if BOARD_MODEL == BOARD_HELTEC32_V4
+        
+        pinMode(LORA_PA_PWR_EN, OUTPUT);
+        pinMode(LORA_PA_CSD, INPUT);
+        digitalWrite(LORA_PA_PWR_EN, HIGH); delay(5);
+        if (digitalRead(LORA_PA_CSD) == HIGH) {
+          lora_pa_model = LORA_PA_KCT8103L;
+          lora_lna_gain = LORA_LNA_KCT8103L_GAIN;
+        } else {
+          lora_pa_model = LORA_PA_GC1109;
+        }
+      #endif
+    }
+
+    if (lora_pa_model == LORA_PA_GC1109) {
       // Enable Vfem_ctl for supply to
       // PA power net.
       pinMode(LORA_PA_PWR_EN, OUTPUT);
@@ -373,7 +515,26 @@ int sx126x::begin(long frequency) {
       // is driven by the SX1262 DIO2
       // pin directly, so we do not
       // need to manually raise this.
-    #endif
+
+    } else if (lora_pa_model == LORA_PA_KCT8103L) {
+      // Enable Vfem_ctl for supply to
+      // PA power net.
+      pinMode(LORA_PA_PWR_EN, OUTPUT);
+      digitalWrite(LORA_PA_PWR_EN, HIGH);
+
+      // Enable KCT8103L chip
+      pinMode(LORA_PA_CSD, OUTPUT);
+      digitalWrite(LORA_PA_CSD, HIGH);
+
+      // Enable receive LNA
+      pinMode(LORA_PA_CTX, OUTPUT);
+      digitalWrite(LORA_PA_CTX, LOW);
+
+      // On Heltec V4.3, the PA CPS pin
+      // is driven by the SX1262 DIO2
+      // pin directly, so we do not
+      // need to manually raise this.
+    }
   #endif
 
   return 1;
@@ -383,13 +544,15 @@ void sx126x::end() { sleep(); SPI.end(); _preinit_done = false; }
 
 int sx126x::beginPacket(int implicitHeader) {
   #if HAS_LORA_PA
-    #if LORA_PA_GC1109
+    if (lora_pa_model == LORA_PA_GC1109) {
       // Enable PA CPS for transmit
       // digitalWrite(LORA_PA_CPS, HIGH);
       // Disabled since we're keeping it
       // on permanently as long as the
       // radio is powered up.
-    #endif
+    } else if (lora_pa_model == LORA_PA_KCT8103L) {
+      digitalWrite(LORA_PA_CTX, HIGH);
+    }
   #endif
 
   standby();
@@ -433,10 +596,10 @@ int sx126x::endPacket() {
   if (timed_out) { return 0; } else { return 1; }
 }
 
-unsigned long preamble_detected_at = 0;
+static unsigned long preamble_detected_at = 0;
 extern long lora_preamble_time_ms;
 extern long lora_header_time_ms;
-bool false_preamble_detected = false;
+static bool false_preamble_detected = false;
 
 bool sx126x::dcd() {
   uint8_t buf[2] = {0}; executeOpcodeRead(OP_GET_IRQ_STATUS_6X, buf, 2);
@@ -477,7 +640,7 @@ int ISR_VECT sx126x::currentRssi() {
   executeOpcodeRead(OP_CURRENT_RSSI_6X, &byte, 1);
   int rssi = -(int(byte)) / 2;
   #if HAS_LORA_LNA
-    rssi -= LORA_LNA_GAIN;
+    rssi -= lora_lna_gain;
   #endif
   return rssi;
 }
@@ -493,7 +656,7 @@ int ISR_VECT sx126x::packetRssi() {
   executeOpcodeRead(OP_PACKET_STATUS_6X, buf, 3);
   int pkt_rssi = -buf[0] / 2;
   #if HAS_LORA_LNA
-    pkt_rssi -= LORA_LNA_GAIN;
+    pkt_rssi -= lora_lna_gain;
   #endif
   return pkt_rssi;
 }
@@ -585,7 +748,7 @@ void sx126x::onReceive(void(*callback)(int)){
     buf[7] = 0x00;
     executeOpcode(OP_SET_IRQ_FLAGS_6X, buf, 8);
 
-    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
       #ifdef SPI_HAS_NOTUSINGINTERRUPT
         SPI.usingInterrupt(digitalPinToInterrupt(_dio0));
       #endif
@@ -594,7 +757,7 @@ void sx126x::onReceive(void(*callback)(int)){
 
   } else {
     detachInterrupt(digitalPinToInterrupt(_dio0));
-    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
       #ifdef SPI_HAS_NOTUSINGINTERRUPT
         SPI.notUsingInterrupt(digitalPinToInterrupt(_dio0));
       #endif
@@ -604,7 +767,7 @@ void sx126x::onReceive(void(*callback)(int)){
 
 void sx126x::receive(int size) {
   #if HAS_LORA_PA
-    #if LORA_PA_GC1109
+    if (lora_pa_model == LORA_PA_GC1109) {
       // Disable PA CPS for receive
       // digitalWrite(LORA_PA_CPS, LOW);
       // That turned out to be a bad idea.
@@ -612,7 +775,9 @@ void sx126x::receive(int size) {
       // on and off too quickly. We'll keep
       // it on permanently, as long as the
       // radio is powered up.
-    #endif
+    } else if (lora_pa_model == LORA_PA_KCT8103L) {
+      digitalWrite(LORA_PA_CTX, LOW);
+    }
   #endif
 
   if (size > 0) {
@@ -635,25 +800,54 @@ void sx126x::sleep() { uint8_t byte = 0x00; executeOpcode(OP_SLEEP_6X, &byte, 1)
 
 void sx126x::enableTCXO() {
   #if HAS_TCXO
-    #if BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_XIAO_S3
-      uint8_t buf[4] = {MODE_TCXO_3_3V_6X, 0x00, 0x00, 0xFF};
-    #elif BOARD_MODEL == BOARD_TBEAM
-      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
-    #elif BOARD_MODEL == BOARD_TDECK
-      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
-    #elif BOARD_MODEL == BOARD_TBEAM_S_V1
-      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
-    #elif BOARD_MODEL == BOARD_T3S3
-      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
-    #elif BOARD_MODEL == BOARD_HELTEC_T114
-      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
-    #elif BOARD_MODEL == BOARD_TECHO
-      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
-    #elif BOARD_MODEL == BOARD_HELTEC32_V4
-      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
+    #if MCU_VARIANT == MCU_NATIVE
+      // On native, the TCXO code path is always compiled in but the actual
+      // OP_DIO3_TCXO_CTRL opcode is only emitted when the operator opted
+      // in via rnoded.conf's dio3_tcxo_voltage. Without the opt-in we
+      // leave the chip on its default oscillator config — driving DIO3
+      // and switching to TCXO mode would break HATs that use an XTAL.
+      if (_tcxoVoltageOverride == 0xFF) {
+        std::fprintf(stderr, "[sx126x] TCXO disabled (dio3_tcxo_voltage not set)\n");
+        return;
+      }
+      uint8_t mode = _tcxoVoltageOverride;
+      std::fprintf(stderr, "[sx126x] TCXO enabled via DIO3 (mode byte 0x%02X)\n", mode);
+    #else
+      uint8_t mode;
+      if (_tcxoVoltageOverride != 0xFF) {
+        mode = _tcxoVoltageOverride;
+      } else {
+        #if BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_XIAO_S3
+          mode = MODE_TCXO_3_3V_6X;
+        #elif BOARD_MODEL == BOARD_TBEAM
+          mode = MODE_TCXO_1_8V_6X;
+        #elif BOARD_MODEL == BOARD_TDECK
+          mode = MODE_TCXO_1_8V_6X;
+        #elif BOARD_MODEL == BOARD_TBEAM_S_V1
+          mode = MODE_TCXO_1_8V_6X;
+        #elif BOARD_MODEL == BOARD_T3S3
+          mode = MODE_TCXO_1_8V_6X;
+        #elif BOARD_MODEL == BOARD_HELTEC_T114
+          mode = MODE_TCXO_1_8V_6X;
+        #elif BOARD_MODEL == BOARD_TECHO
+          mode = MODE_TCXO_1_8V_6X;
+        #elif BOARD_MODEL == BOARD_HELTEC32_V4
+          mode = MODE_TCXO_1_8V_6X;
+        #endif
+      }
     #endif
+    uint8_t buf[4] = {mode, 0x00, 0x00, 0xFF};
     executeOpcode(OP_DIO3_TCXO_CTRL_6X, buf, 4);
   #endif
+}
+
+void sx126x::setTcxoVoltage(uint8_t mode_byte) {
+  _tcxoVoltageOverride = mode_byte;
+}
+
+void sx126x::setDio2AsRfSwitch(bool enable) {
+  _dio2_as_rf_switch_override = enable;
+  _dio2_as_rf_switch_set = true;
 }
 
 // TODO: Once enabled, SX1262 needs a complete reset to disable TCXO
@@ -687,7 +881,7 @@ void sx126x::setTxPower(int level, int outputPin) {
 
 uint8_t sx126x::getTxPower() { return _txp; }
 
-void sx126x::setFrequency(long frequency) {
+void sx126x::setFrequency(uint32_t frequency) {
   _frequency = frequency;
   uint8_t buf[4];
   uint32_t freq = (uint32_t)((double)frequency / (double)FREQ_STEP_6X);
@@ -713,7 +907,7 @@ void sx126x::setSpreadingFactor(int sf) {
   setModulationParams(sf, _bw, _cr, _ldro);
 }
 
-long sx126x::getSignalBandwidth() {
+uint32_t sx126x::getSignalBandwidth() {
   int bw = _bw;
   switch (bw) {
     case 0x00: return 7.8E3;
@@ -738,9 +932,19 @@ void sx126x::handleLowDataRate() {
 }
 
 // TODO: Check if there's anything the sx1262 can do here
-void sx126x::optimizeModemSensitivity(){ }
+// SX1262 errata section 15.1: Modulation quality with 500 kHz LoRa BW.
+// Register 0x0889 bit 2 must be cleared for 500 kHz, set for all other
+// bandwidths. Improves receiver sensitivity at non-500 kHz bandwidths.
+void sx126x::optimizeModemSensitivity(){
+  uint8_t reg = readRegister(0x0889);
+  if (getSignalBandwidth() == 500E3) {
+    writeRegister(0x0889, reg & 0xFB); // clear bit 2
+  } else {
+    writeRegister(0x0889, reg | 0x04); // set bit 2
+  }
+}
 
-void sx126x::setSignalBandwidth(long sbw) {
+void sx126x::setSignalBandwidth(uint32_t sbw) {
   if (sbw <= 7.8E3)        { _bw = 0x00; }
   else if (sbw <= 10.4E3)  { _bw = 0x08; }
   else if (sbw <= 15.6E3)  { _bw = 0x01; }
@@ -819,7 +1023,7 @@ void ISR_VECT sx126x::handleDio0Rise() {
 }
 
 void ISR_VECT sx126x::onDio0Rise() {
-  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
     sx126x_modem._dio0_pending = true;
   #else
     sx126x_modem.handleDio0Rise();

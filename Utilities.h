@@ -16,7 +16,17 @@
 #include "Config.h"
 
 #if HAS_EEPROM
-    #include <EEPROM.h>
+    #if MCU_VARIANT == MCU_NATIVE
+        // File-backed shim: provides EEPROMClass + global `EEPROM` instance
+        // so the EEPROM.read/write/update/commit/begin calls below resolve
+        // against a 1 KB buffer flushed to ./eeprom on disk.
+        #include "native/EEPROMShim.h"
+        // Localhost TCP transport replacing the embedded USB-serial KISS
+        // channel — declares the native_kiss_tcp namespace.
+        #include "native/TCPHostInterface.h"
+    #else
+        #include <EEPROM.h>
+    #endif
 #elif PLATFORM == PLATFORM_NRF52
 		#include <hal/nrf_rng.h>
     #include <Adafruit_LittleFS.h>
@@ -29,7 +39,17 @@
 #endif
 #include <stddef.h>
 
-#if MODEM == SX1262
+#if MODEM == MODEM_RUNTIME
+// Native target: all three drivers compile in; the runtime-selected one is
+// chosen during portduinoSetup() via the native LoRa factory. The pointer
+// stays null until the factory assigns it before setup() runs.
+#include "sx126x.h"
+#include "sx127x.h"
+#include "sx128x.h"
+#include "LoRaRadio.h"
+ILoRaRadio *LoRa = nullptr;
+uint8_t current_modem = 0;
+#elif MODEM == SX1262
 #include "sx126x.h"
 sx126x *LoRa = &sx126x_modem;
 #elif MODEM == SX1276 || MODEM == SX1278
@@ -43,6 +63,7 @@ sx128x *LoRa = &sx128x_modem;
 #include "ROM.h"
 #include "Framing.h"
 #include "MD5.h"
+#include "WebSocketConsole.h"
 
 #if !HAS_EEPROM && MCU_VARIANT == MCU_NRF52
 uint8_t eeprom_read(uint32_t mapped_addr);
@@ -72,7 +93,7 @@ uint8_t eeprom_read(uint32_t mapped_addr);
 	#include "Input.h"
 #endif
 
-#if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+#if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
 	#include "Device.h"
 #endif
 #if MCU_VARIANT == MCU_ESP32
@@ -109,7 +130,7 @@ uint8_t boot_vector = 0x00;
 #endif
 
 #ifdef HAS_RNS
-#include <Reticulum.h>
+#include <microReticulum.h>
 extern RNS::Reticulum reticulum;
 #endif
 
@@ -198,11 +219,14 @@ extern RNS::Reticulum reticulum;
   void boot_seq() { }
 #endif
 
-#if MCU_VARIANT == MCU_1284P || MCU_VARIANT == MCU_2560
-	void led_rx_on()  { digitalWrite(pin_led_rx, HIGH); }
-	void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
-	void led_tx_on()  { digitalWrite(pin_led_tx, HIGH); }
-	void led_tx_off() { digitalWrite(pin_led_tx, LOW); }
+#if MCU_VARIANT == MCU_1284P || MCU_VARIANT == MCU_2560 || MCU_VARIANT == MCU_NATIVE
+	// -1 = "no LED" — needed for native builds where the LED pins are
+	// optional. On AVR the const-int defaults are always >= 0, so these
+	// guards are trivially true on those boards (no regression).
+	void led_rx_on()  { if (pin_led_rx >= 0) digitalWrite(pin_led_rx, HIGH); }
+	void led_rx_off() { if (pin_led_rx >= 0) digitalWrite(pin_led_rx, LOW);  }
+	void led_tx_on()  { if (pin_led_tx >= 0) digitalWrite(pin_led_tx, HIGH); }
+	void led_tx_off() { if (pin_led_tx >= 0) digitalWrite(pin_led_tx, LOW);  }
 	void led_id_on()  { }
 	void led_id_off() { }
 #elif MCU_VARIANT == MCU_ESP32
@@ -389,6 +413,14 @@ void hard_reset(void) {
 		ESP.restart();
 	#elif MCU_VARIANT == MCU_NRF52
     NVIC_SystemReset();
+	#elif MCU_VARIANT == MCU_NATIVE
+		// Defined in native/reboot.cpp. Sets a flag; the main loop performs
+		// the re-exec on its next iteration so any in-progress KISS ACK
+		// finishes flushing first. Returns to the caller (unlike the
+		// embedded branches above), so callers that run cleanup after
+		// hard_reset() behave as expected on native.
+		extern void native_request_reboot();
+		native_request_reboot();
 	#endif
 }
 
@@ -409,11 +441,13 @@ void led_indicate_error(int cycles) {
 		bool forever = (cycles == 0) ? true : false;
 		cycles = forever ? 1 : cycles;
 		while(cycles > 0) {
-	        digitalWrite(pin_led_rx, HIGH);
-	        digitalWrite(pin_led_tx, LOW);
+	        // Go through the guarded helpers so a board with no physical
+	        // LEDs configured (pin_led_rx / pin_led_tx == -1, e.g. native
+	        // builds) doesn't pass 255 to digitalWrite() and trip
+	        // Portduino's pin-range assert.
+	        led_rx_on();  led_tx_off();
 	        delay(100);
-	        digitalWrite(pin_led_rx, LOW);
-	        digitalWrite(pin_led_tx, HIGH);
+	        led_rx_off(); led_tx_on();
 	        delay(100);
 	        if (!forever) cycles--;
 	    }
@@ -463,7 +497,10 @@ void led_indicate_warning(int cycles) {
 	#else
 		bool forever = (cycles == 0) ? true : false;
 		cycles = forever ? 1 : cycles;
-		digitalWrite(pin_led_tx, HIGH);
+		// Use the guarded helper instead of raw digitalWrite so unset
+		// LED pins (-1, native builds) don't trip Portduino's pin-range
+		// assert. The first led_tx_on() below has the same effect.
+		led_tx_on();
 		while(cycles > 0) {
       led_tx_off();
       delay(100);
@@ -476,7 +513,7 @@ void led_indicate_warning(int cycles) {
 }
 
 // LED Indication: Info
-#if MCU_VARIANT == MCU_1284P || MCU_VARIANT == MCU_2560
+#if MCU_VARIANT == MCU_1284P || MCU_VARIANT == MCU_2560 || MCU_VARIANT == MCU_NATIVE
 	void led_indicate_info(int cycles) {
 		bool forever = (cycles == 0) ? true : false;
 		cycles = forever ? 1 : cycles;
@@ -560,7 +597,7 @@ void led_indicate_warning(int cycles) {
 
 
 unsigned long led_standby_ticks = 0;
-#if MCU_VARIANT == MCU_1284P || MCU_VARIANT == MCU_2560
+#if MCU_VARIANT == MCU_1284P || MCU_VARIANT == MCU_2560 || MCU_VARIANT == MCU_NATIVE
 	uint8_t led_standby_min = 1;
 	uint8_t led_standby_max = 40;
 	unsigned long led_standby_wait = 11000;
@@ -610,7 +647,7 @@ unsigned long led_standby_ticks = 0;
 unsigned long led_standby_value = led_standby_min;
 int8_t  led_standby_direction = 0;
 
-#if MCU_VARIANT == MCU_1284P || MCU_VARIANT == MCU_2560
+#if MCU_VARIANT == MCU_1284P || MCU_VARIANT == MCU_2560 || MCU_VARIANT == MCU_NATIVE
 	void led_indicate_standby() {
 		led_standby_ticks++;
 		if (led_standby_ticks > led_standby_wait) {
@@ -621,7 +658,7 @@ int8_t  led_standby_direction = 0;
 				led_standby_direction = -1;
 			}
 			led_standby_value += led_standby_direction;
-			analogWrite(pin_led_rx, led_standby_value);
+			if (pin_led_rx >= 0) analogWrite(pin_led_rx, led_standby_value);
 			led_tx_off();
 		}
 	}
@@ -727,7 +764,7 @@ int8_t  led_standby_direction = 0;
   #endif
 #endif
 
-#if MCU_VARIANT == MCU_1284P || MCU_VARIANT == MCU_2560
+#if MCU_VARIANT == MCU_1284P || MCU_VARIANT == MCU_2560 || MCU_VARIANT == MCU_NATIVE
 	void led_indicate_not_ready() {
 		led_standby_ticks++;
 		if (led_standby_ticks > led_standby_wait) {
@@ -738,7 +775,7 @@ int8_t  led_standby_direction = 0;
 				led_standby_direction = -1;
 			}
 			led_standby_value += led_standby_direction;
-			analogWrite(pin_led_tx, led_standby_value);
+			if (pin_led_tx >= 0) analogWrite(pin_led_tx, led_standby_value);
 			led_rx_off();
 		}
 	}
@@ -804,7 +841,13 @@ int8_t  led_standby_direction = 0;
 #endif
 
 void serial_write(uint8_t byte) {
-	#if HAS_BLUETOOTH || HAS_BLE == true
+	#if MCU_VARIANT == MCU_NATIVE
+		// KISS-over-TCP transport. On native the embedded "Serial" channel
+		// doesn't terminate at a useful host process; the localhost TCP
+		// server in native/TCPHostInterface.cpp carries KISS instead.
+		// Logs (on_log, _write printf) keep going to Serial.
+		native_kiss_tcp::write(byte);
+	#elif HAS_BLUETOOTH || HAS_BLE == true
 		if (bt_state != BT_STATE_CONNECTED) {
 			#if HAS_WIFI
 				if (wifi_host_is_connected()) { wifi_remote_write(byte); }
@@ -824,6 +867,14 @@ void serial_write(uint8_t byte) {
 	#else
 		Serial.write(byte);
 	#endif
+
+	// WebSocket fan-out: every outbound KISS byte is also offered to the
+	// WS console. The WS bridge buffers between FEND markers and emits
+	// one binary WS frame per complete KISS frame. No-op when the WS
+	// console isn't compiled in or no client is attached.
+	#if defined(ENABLE_WEBSOCKETS) && __has_include(<WiFi.h>)
+		ws_console::on_serial_write(byte);
+	#endif
 }
 
 void escaped_serial_write(uint8_t byte) {
@@ -831,6 +882,7 @@ void escaped_serial_write(uint8_t byte) {
     if (byte == FESC) { serial_write(FESC); byte = TFESC; }
     serial_write(byte);
 }
+
 
 void kiss_indicate_reset() {
 	serial_write(FEND);
@@ -1075,7 +1127,7 @@ void kiss_indicate_fbstate() {
 	serial_write(FEND);
 }
 
-#if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+#if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
 	void kiss_indicate_device_hash() {
 	  serial_write(FEND);
 	  serial_write(CMD_DEV_HASH);
@@ -1220,6 +1272,13 @@ void kiss_indicate_mcu() {
 	serial_write(FEND);
 }
 
+void kiss_indicate_log(const char* line, size_t len) {
+  serial_write(FEND);
+  serial_write(CMD_LOG);
+  for (size_t i = 0; i < len; ++i) escaped_serial_write((uint8_t)line[i]);
+  serial_write(FEND);
+}
+
 inline bool isSplitPacket(uint8_t header) {
 	return (header & FLAG_SPLIT);
 }
@@ -1292,11 +1351,33 @@ int getTxPower() {
 }
 
 #if HAS_LORA_PA
-	const int tx_gain[PA_GAIN_POINTS] = {PA_GAIN_VALUES};
+	#if BOARD_MODEL == BOARD_HELTEC32_V4
+		bool pa_values_determined = false;
+		int tx_gain[PA_GAIN_POINTS] = {100};
+	#else
+		bool pa_values_determined = true;
+		const int tx_gain[PA_GAIN_POINTS] = {PA_GAIN_VALUES};
+	#endif
 #endif
+
+extern uint8_t lora_pa_model;
+void determine_pa_values() {
+	#if BOARD_MODEL == BOARD_HELTEC32_V4
+		if (lora_pa_model == LORA_PA_GC1109) {
+			for (int i=0; i < PA_GAIN_POINTS; i++) { tx_gain[i] = PA_GC1109_VALUES[i]; }
+			pa_values_determined = true;
+			for (int i=0; i < PA_GAIN_POINTS; i++) { Serial.print(" "); Serial.printf("%d", tx_gain[i]); }
+		} else if (lora_pa_model == LORA_PA_KCT8103L) {
+			for (int i=0; i < PA_GAIN_POINTS; i++) { tx_gain[i] = PA_KCT8103L_VALUES[i]; }
+			pa_values_determined = true;
+			for (int i=0; i < PA_GAIN_POINTS; i++) { Serial.print(" "); Serial.printf("%d", tx_gain[i]); }
+		}
+	#endif
+}
 
 int map_target_power_to_modem_output(int target_tx_power) {
 	#if HAS_LORA_PA
+		if (!pa_values_determined) { determine_pa_values(); }
 		int modem_output_dbm = -9;
 		for (int i = 0; i < PA_GAIN_POINTS; i++) {
 			int gain = tx_gain[i];
@@ -1642,6 +1723,8 @@ bool eeprom_product_valid() {
 	if (rval == PRODUCT_RNODE || rval == BOARD_RNODE_NG_20 || rval == BOARD_RNODE_NG_21 || rval == PRODUCT_HMBRW || rval == PRODUCT_TBEAM || rval == PRODUCT_T32_10 || rval == PRODUCT_T32_20 || rval == PRODUCT_T32_21 || rval == PRODUCT_H32_V2 || rval == PRODUCT_H32_V3 || rval == PRODUCT_H32_V4 || rval == PRODUCT_TDECK_V1 || rval == PRODUCT_TBEAM_S_V1  || rval == PRODUCT_XIAO_S3) {
 	#elif PLATFORM == PLATFORM_NRF52
 	if (rval == PRODUCT_RAK4631 || rval == PRODUCT_HELTEC_T114 || rval == PRODUCT_TECHO || rval == PRODUCT_HMBRW) {
+	#elif PLATFORM == PLATFORM_NATIVE
+	if (rval == PRODUCT_NATIVE_LINUX) {
 	#else
 	if (false) {
 	#endif
@@ -1697,6 +1780,8 @@ bool eeprom_model_valid() {
 	if (model == MODEL_FF) {
 	#elif BOARD_MODEL == BOARD_GENERIC_ESP32
 	if (model == MODEL_FF || model == MODEL_FE) {
+	#elif BOARD_MODEL == BOARD_NATIVE_LINUX
+	if (model == MODEL_60) {
 	#else
 	if (false) {
 	#endif
@@ -1928,7 +2013,7 @@ inline void fifo_flush(FIFOBuffer *f) {
   f->head = f->tail;
 }
 
-#if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+#if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
 	static inline bool fifo_isempty_locked(const FIFOBuffer *f) {
 	  bool result;
 	  ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
@@ -2010,7 +2095,7 @@ inline void fifo16_flush(FIFOBuffer16 *f) {
   f->head = f->tail;
 }
 
-#if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+#if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
 	static inline bool fifo16_isempty_locked(const FIFOBuffer16 *f) {
 	  bool result;
 	  ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {

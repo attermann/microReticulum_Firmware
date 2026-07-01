@@ -1,0 +1,2 @@
+#docker rmi -f pio-ubuntu-jammy
+docker buildx build --platform linux/arm64,linux/arm/v7 -t pio-ubuntu-jammy --file Dockerfile.ubuntu-jammy .

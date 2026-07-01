@@ -1,0 +1,6 @@
+#!/bin/sh
+./build_debian_bookworm_arm64
+./build_debian_bookworm_armhf
+./build_ubuntu_jammy_amd64
+./build_ubuntu_jammy_arm64
+./build_ubuntu_jammy_armhf

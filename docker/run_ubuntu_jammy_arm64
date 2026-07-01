@@ -1,0 +1,2 @@
+#!/bin/sh
+docker run --platform linux/arm64 --rm -it -v $(pwd)/workspace:/workspace -v platformio-cache:/root/.platformio pio-ubuntu-jammy

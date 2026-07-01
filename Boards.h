@@ -21,11 +21,13 @@
   #define PLATFORM_AVR        0x90
   #define PLATFORM_ESP32      0x80
   #define PLATFORM_NRF52      0x70
+  #define PLATFORM_NATIVE     0x60
 
   #define MCU_1284P           0x91
   #define MCU_2560            0x92
   #define MCU_ESP32           0x81
   #define MCU_NRF52           0x71
+  #define MCU_NATIVE          0x61
 
   // Products, boards and models ////
   #define PRODUCT_RNODE       0x03 // RNode devices
@@ -122,21 +124,37 @@
   #define MODEL_FE            0xFE // Homebrew board, max 17dBm output power
   #define MODEL_FF            0xFF // Homebrew board, max 14dBm output power
 
-  #if defined(__AVR_ATmega1284P__)
-    #define PLATFORM PLATFORM_AVR
-    #define MCU_VARIANT MCU_1284P
-  #elif defined(__AVR_ATmega2560__)
-    #define PLATFORM PLATFORM_AVR
-    #define MCU_VARIANT MCU_2560
-  #elif defined(ESP32)
-    #define PLATFORM PLATFORM_ESP32
-    #define MCU_VARIANT MCU_ESP32
-  #elif defined(NRF52840_XXAA)
-    #include <variant.h>
-    #define PLATFORM PLATFORM_NRF52
-    #define MCU_VARIANT MCU_NRF52
-  #else
-      #error "The firmware cannot be compiled for the selected MCU variant"
+  // Native Linux build: runs the firmware as a userspace process on
+  // Linux (RPi/FemtoFox/x86), driving an SPI-attached SX126x/SX127x/SX128x
+  // modem through Portduino (libgpiod + /dev/spidev). Pins are populated
+  // at runtime from a config file, not from board macros below.
+  #define PRODUCT_NATIVE_LINUX 0x60
+  #define BOARD_NATIVE_LINUX   0x60
+  #define MODEL_60             0x60 // Native build, configurable at runtime
+
+  // Native Linux builds pre-define MCU_VARIANT via the build system
+  // (-DMCU_VARIANT=MCU_NATIVE); skip auto-detection in that case so the
+  // chain doesn't fall through to #error on a host that has none of the
+  // Arduino-core compiler macros.
+  #ifndef MCU_VARIANT
+    #if defined(__AVR_ATmega1284P__)
+      #define PLATFORM PLATFORM_AVR
+      #define MCU_VARIANT MCU_1284P
+    #elif defined(__AVR_ATmega2560__)
+      #define PLATFORM PLATFORM_AVR
+      #define MCU_VARIANT MCU_2560
+    #elif defined(ESP32)
+      #define PLATFORM PLATFORM_ESP32
+      #define MCU_VARIANT MCU_ESP32
+    #elif defined(NRF52840_XXAA)
+      #include <variant.h>
+      #define PLATFORM PLATFORM_NRF52
+      #define MCU_VARIANT MCU_NRF52
+    #else
+        #error "The firmware cannot be compiled for the selected MCU variant"
+    #endif
+  #elif MCU_VARIANT == MCU_NATIVE
+    #define PLATFORM PLATFORM_NATIVE
   #endif
 
   #ifndef MODEM
@@ -148,6 +166,10 @@
       #define MODEM SX1276
     #endif
   #endif
+
+  #define LORA_PA_UNKNOWN  0x00
+  #define LORA_PA_GC1109   0x01
+  #define LORA_PA_KCT8103L 0x02
 
   #define HAS_DISPLAY false
   #define HAS_BLUETOOTH false
@@ -251,7 +273,7 @@
         #define HAS_TCXO true
         #define HAS_BUSY true
         #define DIO2_AS_RF_SWITCH true
-        #define OCP_TUNED 0x18
+        #define OCP_TUNED 0x28
         const int pin_busy = 32;
         const int pin_dio = 33;
         const int pin_tcxo_enable = -1;
@@ -358,7 +380,7 @@
       #define HAS_SLEEP true
       #define PIN_WAKEUP GPIO_NUM_0
       #define WAKEUP_LEVEL 0
-      #define OCP_TUNED 0x18
+      #define OCP_TUNED 0x28
 
       const int pin_btn_usr1 = 0;
 
@@ -400,8 +422,9 @@
       #define HAS_LORA_LNA true
       #define PIN_WAKEUP GPIO_NUM_0
       #define WAKEUP_LEVEL 0
-      #define OCP_TUNED 0x18
+      #define OCP_TUNED 0x28
       #define Vext GPIO_NUM_36
+      #define LORA_PA_MODEL LORA_PA_UNKNOWN;
 
       const int pin_btn_usr1 = 0;
 
@@ -423,14 +446,17 @@
 
       #define LORA_LNA_GAIN  17
       #define LORA_LNA_GVT   12
-      #define LORA_PA_GC1109 true
       #define LORA_PA_PWR_EN  7
-      #define LORA_PA_CSD     2
-      #define LORA_PA_CPS    46
+      #define LORA_PA_CSD     2 // Same pin on GC1109
+      #define LORA_PA_CPS    46 // Same pin on GC1109
+      #define LORA_PA_CTX     5 // Only used on KCT8103
 
       #define PA_MAX_OUTPUT  28
       #define PA_GAIN_POINTS 22
-      #define PA_GAIN_VALUES 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 10, 10, 9, 9, 8, 7
+      
+      #define LORA_LNA_KCT8103L_GAIN 21
+      const int PA_GC1109_VALUES[PA_GAIN_POINTS] =   {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 10, 10,  9, 9, 8, 7};
+      const int PA_KCT8103L_VALUES[PA_GAIN_POINTS] = {13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 12, 12, 11, 11, 10, 9, 8, 7};
 
       const int pin_cs = 8;
       const int pin_busy = 13;
@@ -622,7 +648,7 @@
       #define DIO2_AS_RF_SWITCH true
       #define HAS_BUSY true
       #define HAS_TCXO true
-      #define OCP_TUNED 0x18
+      #define OCP_TUNED 0x28
 
       #define HAS_DISPLAY true
       #define HAS_CONSOLE true
@@ -895,6 +921,50 @@
       #error An unsupported nRF board was selected. Cannot compile RNode firmware.
     #endif
 
+  #elif MCU_VARIANT == MCU_NATIVE
+
+    // Native Linux build: pin numbers are populated at runtime from a
+    // config file by native/PinMap.cpp before LoRa->begin(). The extern
+    // declarations let existing Arduino-style setup() code reference
+    // pin_cs/pin_reset/pin_dio/etc. without modification.
+    extern int pin_cs;
+    extern int pin_reset;
+    extern int pin_dio;
+    extern int pin_busy;
+    extern int pin_rxen;
+    extern int pin_txen;
+    extern int pin_led_rx;
+    extern int pin_led_tx;
+    extern int pin_tcxo_enable;
+    extern int pin_sclk;
+    extern int pin_mosi;
+    extern int pin_miso;
+
+    // Suppress the default const-int pin declarations later in this header
+    // (HAS_RF_SWITCH_RX_TX / HAS_BUSY blocks) so they don't collide with
+    // the extern declarations above. Whether the modem actually uses the
+    // RXEN/TXEN/BUSY lines is driven by the runtime pin map (-1 = disabled).
+    #define HAS_RF_SWITCH_RX_TX true
+    #define HAS_BUSY true
+
+    // Native build: device config (lora_sf/lora_freq/etc.) persists through
+    // a file-backed EEPROM shim (native/EEPROMShim.h) so all the existing
+    // Utilities.h paths reading/writing EEPROM.read()/EEPROM.write() work
+    // unchanged. RNS identity & path table go through microStore PosixFS.
+    #define HAS_EEPROM true
+    #define EEPROM_SIZE 1024
+    #define EEPROM_OFFSET EEPROM_SIZE-EEPROM_RESERVED
+
+    #define CONFIG_UART_BUFFER_SIZE 6144
+    #define CONFIG_QUEUE_SIZE 6144
+    #define CONFIG_QUEUE_MAX_LENGTH 200
+
+    // BOARD_MODEL and MODEM are expected to be supplied by the build
+    // (-DBOARD_MODEL=BOARD_NATIVE_LINUX -DMODEM=SX1262 etc.).
+    #ifndef BOARD_MODEL
+      #define BOARD_MODEL BOARD_NATIVE_LINUX
+    #endif
+
   #endif
 
   #ifndef DISPLAY_SCALE
@@ -925,11 +995,28 @@
   // Default OCP value if not specified
   // in board configuration
   #ifndef OCP_TUNED
-    #define OCP_TUNED 0x18
+    #define OCP_TUNED 0x28
   #endif
 
   #ifndef NP_M
     #define NP_M 0.15
+  #endif
+
+  // Enable forcing features via preprocessor directive
+  #ifdef DISABLE_CONSOLE
+    #define HAS_CONSOLE false
+  #endif
+  #ifdef DISABLE_WIFI
+    #define HAS_WIFI false
+  #endif
+  #ifdef DISABLE_DISPLAY
+    #define HAS_DISPLAY false
+  #endif
+  #ifdef DISABLE_BLUETOOTH
+    #define HAS_BLUETOOTH false
+  #endif
+  #ifdef DISABLE_BLE
+    #define HAS_BLE false
   #endif
 
 #endif

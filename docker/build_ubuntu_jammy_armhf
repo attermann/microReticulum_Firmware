@@ -1,0 +1,2 @@
+#!/bin/sh
+docker run --platform linux/arm/v7 --rm -v $(pwd)/workspace:/workspace -v platformio-cache:/root/.platformio pio-ubuntu-jammy bash -c "./build"

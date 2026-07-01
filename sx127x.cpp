@@ -3,7 +3,7 @@
 
 #include "Boards.h"
 
-#if MODEM == SX1276
+#if MODEM == SX1276 || MODEM == MODEM_RUNTIME
 #include "sx127x.h"
 
 #if MCU_VARIANT == MCU_ESP32
@@ -99,7 +99,23 @@ void sx127x::flush() { }
 bool sx127x::preInit() {
   pinMode(_ss, OUTPUT);
   digitalWrite(_ss, HIGH);
-  
+
+  // Pulse RESET to put the chip in a known state before reading the
+  // version register. Without this, preInit runs against whatever state
+  // the chip was left in (relevant on native Linux daemons where the
+  // chip stays powered across daemon restarts — meshtasticd may have
+  // left it half-configured, an earlier crashed run may have left RESET
+  // floating, etc.). On embedded targets the MCU's power-on reset
+  // brings the chip up alongside the MCU, but the extra ~20ms pulse
+  // here is harmless. begin() will reset again later — also harmless.
+  if (_reset != -1) {
+    pinMode(_reset, OUTPUT);
+    digitalWrite(_reset, LOW);
+    delay(10);
+    digitalWrite(_reset, HIGH);
+    delay(10);
+  }
+
   #if BOARD_MODEL == BOARD_T3S3
     SPI.begin(pin_sclk, pin_miso, pin_mosi, pin_cs);
   #else
@@ -107,7 +123,7 @@ bool sx127x::preInit() {
   #endif
 
   // Check modem version
-  uint8_t version;
+  uint8_t version = 0xAA;  // sentinel — overwritten on first read
   long start = millis();
   while (((millis() - start) < 500) && (millis() >= start)) {
       version = readRegister(REG_VERSION_7X);
@@ -115,25 +131,49 @@ bool sx127x::preInit() {
       delay(100);
   }
 
-  if (version != 0x12) { return false; }
+  if (version != 0x12) {
+      // Diagnostic: log what we actually read so the user can tell whether
+      // MISO is floating (0xFF), shorted/pulled low (0x00), or the chip is
+      // talking but returning an unexpected silicon version. Remove once
+      // bring-up is verified.
+      Serial.print("sx127x: version read = 0x");
+      Serial.println(version, HEX);
+      return false;
+  }
   _preinit_done = true;
   return true;
 }
 
 uint8_t ISR_VECT sx127x::singleTransfer(uint8_t address, uint8_t value) {
-  uint8_t response;
+#if MCU_VARIANT == MCU_NATIVE
+  // Native (Portduino / Linux spidev) only: per-byte SPI.transfer() becomes
+  // one ioctl per byte and spidev deasserts CS between them — the chip sees
+  // the address byte as a complete (1-byte) command and returns 0xFF for
+  // the follow-up. Send both bytes in one ioctl so CS stays asserted.
+  // Embedded targets keep the per-byte path — see sx126x for the ESP32-S3
+  // RX regression that was traced to the batched SPI.transfer(buf, len).
+  uint8_t buf[2] = { address, value };
 
+  digitalWrite(_ss, LOW);
+  SPI.beginTransaction(_spiSettings);
+  SPI.transfer(buf, sizeof(buf));
+  SPI.endTransaction();
+  digitalWrite(_ss, HIGH);
+
+  return buf[1];
+#else
+  uint8_t response;
   digitalWrite(_ss, LOW);
   SPI.beginTransaction(_spiSettings);
   SPI.transfer(address);
   response = SPI.transfer(value);
   SPI.endTransaction();
   digitalWrite(_ss, HIGH);
-
   return response;
+#endif
 }
 
-int sx127x::begin(long frequency) {
+int sx127x::begin(uint32_t frequency) {
   if (_reset != -1) {
     pinMode(_reset, OUTPUT);
     digitalWrite(_reset, LOW);
@@ -311,7 +351,7 @@ void sx127x::onReceive(void(*callback)(int)) {
     pinMode(_dio0, INPUT);
     writeRegister(REG_DIO_MAPPING_1_7X, 0x00);
     
-    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
       #ifdef SPI_HAS_NOTUSINGINTERRUPT
         SPI.usingInterrupt(digitalPinToInterrupt(_dio0));
       #endif
@@ -322,7 +362,7 @@ void sx127x::onReceive(void(*callback)(int)) {
   } else {
     detachInterrupt(digitalPinToInterrupt(_dio0));
 
-    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
       #ifdef SPI_HAS_NOTUSINGINTERRUPT
         SPI.notUsingInterrupt(digitalPinToInterrupt(_dio0));
       #endif
@@ -359,7 +399,7 @@ void sx127x::setTxPower(int level, int outputPin) {
 
 uint8_t sx127x::getTxPower() { byte txp = readRegister(REG_PA_CONFIG_7X); return txp; }
 
-void sx127x::setFrequency(unsigned long frequency) {
+void sx127x::setFrequency(uint32_t frequency) {
   _frequency = frequency;
   uint32_t frf = ((uint64_t)frequency << 19) / 32000000;
 
@@ -398,7 +438,7 @@ void sx127x::setSpreadingFactor(int sf) {
   handleLowDataRate();
 }
 
-long sx127x::getSignalBandwidth() {
+uint32_t sx127x::getSignalBandwidth() {
   byte bw = (readRegister(REG_MODEM_CONFIG_1_7X) >> 4);
   switch (bw) {
     case 0: return 7.8E3;
@@ -415,7 +455,7 @@ long sx127x::getSignalBandwidth() {
   return 0;
 }
 
-void sx127x::setSignalBandwidth(long sbw) {
+void sx127x::setSignalBandwidth(uint32_t sbw) {
   int bw;
   if (sbw <= 7.8E3) {
       bw = 0;
@@ -508,7 +548,7 @@ void ISR_VECT sx127x::handleDio0Rise() {
 }
 
 void ISR_VECT sx127x::onDio0Rise() {
-  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
     sx127x_modem._dio0_pending = true;
   #else
     sx127x_modem.handleDio0Rise();

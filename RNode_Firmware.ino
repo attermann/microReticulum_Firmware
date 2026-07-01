@@ -1,4 +1,4 @@
-// Copyright (C) 2024, Mark Qvist
+// Copyright (C) 2024-2026, Mark Qvist and Chad Attermann
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,26 +15,30 @@
 
 // CBA Reticulum includes must come before local to avoid collision with local defines
 #ifdef HAS_RNS
-#include <Transport.h>
-#include <Reticulum.h>
-#include <Interface.h>
-#include <Log.h>
-#include <Bytes.h>
-#include <queue>
+#include <microReticulum.h>
+#include "Provisioning.h"
+#if defined(LORA_TRANSPORT)
+#include "LoRaInterface.h"
 #endif
 #if defined(UDP_TRANSPORT)
 #include "UDPInterface.h"
 #endif
+#ifdef URTN_STATS_PAGES
+#include "Pages.h"
+#endif
+#endif // HAS_RNS
 
 #include <Arduino.h>
 #include <SPI.h>
 #include "Utilities.h"
+#include "DeviceUID.h"
+#include "Platform.h"
+#include "WebSocketConsole.h"
 
-// CBA FileSystem
-#if defined(RNS_USE_FS)
-#include "FileSystem.h"
-#else
-#include "NoopFileSystem.h"
+#if MODEM == MODEM_RUNTIME
+#include "native/LoRaFactory.h"
+#include "native/PinMap.h"
+#include "native/config.h"
 #endif
 
 // CBA SD
@@ -53,6 +57,13 @@ SPIClass SDSPI(HSPI);
 FIFOBuffer serialFIFO;
 uint8_t serialBuffer[CONFIG_UART_BUFFER_SIZE+1];
 
+// Inbound byte sink used by WebSocketConsole (and any other non-polled
+// transport). Drops the byte if the FIFO is full — same behavior as the
+// existing buffer_serial() code paths for the polled sources.
+extern "C" void serial_fifo_push(uint8_t byte) {
+  if (!fifo_isfull(&serialFIFO)) fifo_push(&serialFIFO, byte);
+}
+
 FIFOBuffer16 packet_starts;
 uint16_t packet_starts_buf[CONFIG_QUEUE_MAX_LENGTH+1];
 
@@ -70,11 +81,20 @@ volatile bool serial_buffering = false;
   bool bt_init_ran = false;
 #endif
 
+#if PLATFORM == PLATFORM_NATIVE
+bool kiss_framed_logs = false;
+#else
+bool kiss_framed_logs = true;
+#endif
+bool nomadnet_enabled = true;
+RNS::Destination nomadnet_destination = {RNS::Type::NONE};
+char nomadnet_name[64];
+
 #if HAS_CONSOLE
   #include "Console.h"
 #endif
 
-#if PLATFORM == PLATFORM_ESP32 || PLATFORM == PLATFORM_NRF52
+#if PLATFORM == PLATFORM_ESP32 || PLATFORM == PLATFORM_NRF52 || PLATFORM == PLATFORM_NATIVE
   #define MODEM_QUEUE_SIZE 8
   typedef struct {
           size_t len;
@@ -87,15 +107,26 @@ volatile bool serial_buffering = false;
 
 char sbuf[128];
 
-#if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+#if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
   bool packet_ready = false;
 #endif
 
-#if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+#if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
 void update_csma_parameters();
 #endif
 
+// CBA Forward function declarations for CPP compatibility
+void serial_interrupt_init();
+void validate_status();
+void update_radio_lock();
+void transmit(uint16_t size);
+void update_airtime();
+void update_modem_status();
+void buffer_serial();
+void serial_poll();
+
 #ifdef HAS_RNS
+/*
 // CBA LoRa interface
 class LoRaInterface : public RNS::InterfaceImpl {
 public:
@@ -103,6 +134,7 @@ public:
 		_IN = true;
 		_OUT = true;
 		_HW_MTU = 508;
+    _bitrate = lora_bitrate;
 	}
 	LoRaInterface() : LoRaInterface("LoRaInterface") {}
 	virtual ~LoRaInterface() {
@@ -122,7 +154,7 @@ protected:
       ERRORF("LoRaInterface::handle_incoming: %s", e.what());
     }
   }
-	virtual void send_outgoing(const RNS::Bytes& data) {
+	virtual bool send_outgoing(const RNS::Bytes& data) {
     // CBA NOTE header will be addded later by transmit function
     TRACEF("LoRaInterface.send_outgoing: (%u bytes) data: %s", data.size(), data.toHex().c_str());
     try {
@@ -160,32 +192,78 @@ protected:
     }
     catch (const std::bad_alloc&) {
       ERROR("LoRaInterface::send_outgoing: bad_alloc - out of memory");
+      return false;
     }
     catch (std::exception& e) {
       ERRORF("LoRaInterface::send_outgoing: %s", e.what());
+      return false;
     }
+    return true;
   }
 };
+*/
 
+// CBA RNS
+RNS::Reticulum reticulum(RNS::Type::NONE);
+RNS::Interface lora_interface(RNS::Type::NONE);
+#if defined(UDP_TRANSPORT)
+RNS::Interface udp_interface(RNS::Type::NONE);
+#endif
+#if defined(RNS_USE_FS)
+  // CBA microStore
+  #if MCU_VARIANT == MCU_ESP32
+    #if defined(USTORE_USE_SD)
+      #include <microStore/Adapters/SDFileSystem.h>
+      microStore::FileSystem filesystem{microStore::Adapters::SDFileSystem(SDCARD_SCLK, SDCARD_MISO, SDCARD_MOSI, SDCARD_CS)};
+    #else
+      //#include <microStore/Adapters/SPIFFSFileSystem.h>
+      //microStore::FileSystem filesystem{microStore::Adapters::SPIFFSFileSystem()};
+      //#include <microStore/Adapters/LittleFSFileSystem.h>
+      //microStore::FileSystem filesystem{microStore::Adapters::LittleFSFileSystem()};
+      #include <microStore/Adapters/PosixFileSystem.h>
+      microStore::FileSystem filesystem{microStore::Adapters::PosixFileSystem()};
+    #endif
+  #elif MCU_VARIANT == MCU_NRF52
+    #include <microStore/Adapters/InternalFSFileSystem.h>
+    #include <microStore/Adapters/FlashFSFileSystem.h>
+    microStore::FileSystem filesystem{microStore::Adapters::InternalFSFileSystem()};
+  #else
+    #include <microStore/Adapters/PosixFileSystem.h>
+    microStore::FileSystem filesystem{microStore::Adapters::PosixFileSystem()};
+  #endif
+  #else // RNS_USE_FS
+    #include <microStore/Adapters/NoopFileSystem.h>
+    microStore::FileSystem filesystem{microStore::Adapters::NoopFileSystem()};
+  #endif // RNS_USE_FS
+#endif  // HAS_RNS
 // CBA logger callback
 void on_log(const char* msg, RNS::LogLevel level) {
-  // Using individual Serial.print statements to avoid memory allocation for String
-	Serial.print(RNS::getTimeString());
-	Serial.print(" [");
-	Serial.print(RNS::getLevelName(level));
-	Serial.print("] ");
-	Serial.println(msg);
-	Serial.flush();
-/*
-  String line = RNS::getTimeString() + String(" [") + RNS::getLevelName(level) + "] " + msg + "\n";
-	Serial.print(line);
-	Serial.flush();
-*/
+  if (kiss_framed_logs) {
+    // Compose "<timestamp> [<level>] <msg>" into a stack buffer to avoid
+    // String heap allocation. 256 bytes covers the longest practical line.
+    char line[256];
+    int n = snprintf(line, sizeof(line), "%s [%s] %s",
+                     RNS::getTimeString(),
+                     RNS::getLevelName(level),
+                     msg);
+    if (n < 0) n = 0;
+    if ((size_t)n >= sizeof(line)) n = sizeof(line) - 1;
+    kiss_indicate_log(line, (size_t)n);
+  }
+  else {
+    // Using individual Serial.print statements to avoid memory allocation for String
+    Serial.print(RNS::getTimeString());
+    Serial.print(" [");
+    Serial.print(RNS::getLevelName(level));
+    Serial.print("] ");
+    Serial.println(msg);
+    Serial.flush();
+  }
 
 #ifdef HAS_SDCARD
 	File file = SD.open("/logfile.txt", FILE_APPEND);
 	if (file) {
-    file.write((uint8_t*)line.c_str(), line.length());
+    file.write((uint8_t*)msg, strlen(msg));
     file.close();
   }
 #endif  // HAS_SDCARD
@@ -196,21 +274,38 @@ void on_receive_packet(const RNS::Bytes& raw, const RNS::Interface& interface) {
 #ifdef HAS_SDCARD
   TRACE("Logging receive packet to SD");
   String line = RNS::getTimeString() + String(" recv: ") + String(raw.toHex().c_str()) + "\n";
-	File file = SD.open("/tracefile.txt", FILE_APPEND);
+	File file = SD.open("./tracefile.txt", FILE_APPEND);
 	if (file) {
     file.write((uint8_t*)line.c_str(), line.length());
     file.close();
   }
-	RNS::Packet packet({RNS::Type::NONE}, raw);
+	RNS::Packet packet(raw);
 	if (packet.unpack()) {
     String line = RNS::getTimeString() + String(" recv: ") + String(packet.dumpString().c_str()) + "\n";
-    File file = SD.open("/tracedetails.txt", FILE_APPEND);
+    File file = SD.open("./tracedetails.txt", FILE_APPEND);
     if (file) {
       file.write((uint8_t*)line.c_str(), line.length());
       file.close();
     }
 	}
 #endif  // HAS_SDCARD
+#if PLATFORM == PLATFORM_NATIVE
+  String line = RNS::getTimeString() + String(" RECV: ") + String(raw.toHex().c_str()) + "\n";
+	microStore::File file = filesystem.open("./tracefile.txt", microStore::File::ModeAppend);
+	if (file) {
+    file.write((uint8_t*)line.c_str(), line.length());
+    file.close();
+  }
+	RNS::Packet packet(raw);
+	if (packet.unpack()) {
+    String line = RNS::getTimeString() + String(" RECV: ") + String(packet.dumpString().c_str()) + "\n";
+  	microStore::File file = filesystem.open("./tracedetails.txt", microStore::File::ModeAppend);
+    if (file) {
+      file.write((uint8_t*)line.c_str(), line.length());
+      file.close();
+    }
+	}
+#endif
 }
 
 // CBA transmit packet callback
@@ -223,7 +318,7 @@ void on_transmit_packet(const RNS::Bytes& raw, const RNS::Interface& interface) 
     file.write((uint8_t*)line.c_str(), line.length());
     file.close();
   }
-	RNS::Packet packet({RNS::Type::NONE}, raw);
+	RNS::Packet packet(raw);
 	if (packet.unpack()) {
     String line = RNS::getTimeString() + String(" send: ") + String(packet.dumpString().c_str()) + "\n";
     File file = SD.open("/tracedetails.txt", FILE_APPEND);
@@ -233,13 +328,64 @@ void on_transmit_packet(const RNS::Bytes& raw, const RNS::Interface& interface) 
     }
 	}
 #endif  // HAS_SDCARD
+#if PLATFORM == PLATFORM_NATIVE
+  String line = RNS::getTimeString() + String(" SEND: ") + String(raw.toHex().c_str()) + "\n";
+	microStore::File file = filesystem.open("./tracefile.txt", microStore::File::ModeAppend);
+	if (file) {
+    file.write((uint8_t*)line.c_str(), line.length());
+    file.close();
+  }
+	RNS::Packet packet(raw);
+	if (packet.unpack()) {
+    String line = RNS::getTimeString() + String(" SEND: ") + String(packet.dumpString().c_str()) + "\n";
+  	microStore::File file = filesystem.open("./tracedetails.txt", microStore::File::ModeAppend);
+    if (file) {
+      file.write((uint8_t*)line.c_str(), line.length());
+      file.close();
+    }
+	}
+#endif
 }
 
-// CBA RNS
-RNS::Reticulum reticulum(RNS::Type::NONE);
-RNS::Interface lora_interface(RNS::Type::NONE);
-RNS::FileSystem filesystem(RNS::Type::NONE);
-#endif  // HAS_RNS
+// CBA For printf
+int _write(int file, char *ptr, int len) {
+  size_t wrote = 0;
+  if (kiss_framed_logs) {
+    kiss_indicate_log(ptr, len);
+    wrote = len;
+  }
+  else {
+    wrote = Serial.write(ptr, len);
+    Serial.flush();
+  }
+  return wrote;
+}
+
+#if defined(RNS_USE_FS)
+void dump_filesystem(const char* basepath, uint8_t level = 0) {
+  char prefix[17] = "";
+  for (uint8_t index = 0; index < level && index < 8; index++) {
+    prefix[index*2] = ' ';
+    prefix[index*2+1] = ' ';
+    prefix[index*2+2] = '\0';
+  }
+  filesystem.listDirectory(basepath, [&](const char* name) -> void {
+    // Adapter callbacks receive bare basenames — join with basepath before
+    // re-querying or recursing, and avoid emitting "//" when basepath is "/".
+    char fullpath[96];
+    const bool root = (basepath[0] == '/' && basepath[1] == '\0');
+    if (root) snprintf(fullpath, sizeof(fullpath), "/%s", name);
+    else snprintf(fullpath, sizeof(fullpath), "%s/%s", basepath, name);
+    if (filesystem.isDirectory(fullpath)) {
+      TRACEF("%s%s:", prefix, name);
+      dump_filesystem(fullpath, level + 1);
+    }
+    else {
+      TRACEF("%s%s", prefix, name);
+    }
+  });
+}
+#endif
 
 void setup() {
 
@@ -259,6 +405,18 @@ void setup() {
   // CBA Test
   delay(2000);
 
+#ifdef HAS_RNS
+  printf("Total SRAM:  %7u bytes\n", RNS::Utilities::Memory::heap_size());
+  printf("Free SRAM:   %7u bytes\n", RNS::Utilities::Memory::heap_available());
+#endif
+#if defined(ESP32)
+	printf("Total PSRAM: %7u bytes\n", ESP.getPsramSize());
+#endif
+	//printf("Total flash: %zu bytes\n", RNS::Utilities::OS::storage_size());
+
+  device_uid_init();
+  INFOF("Device UID:  %s", device_uid_str);
+
   // Configure WDT
   #if MCU_VARIANT == MCU_ESP32
     #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
@@ -267,7 +425,12 @@ void setup() {
           .idle_core_mask = 0,
           .trigger_panic  = true,
       };
-      esp_task_wdt_init(&wdt_config);
+      // In IDF 5.x, the framework initializes TWDT before setup(); reconfigure
+      // it with our timeout rather than calling init() (which would fail with
+      // "TWDT already initialized").  Fall back to init() if not yet started.
+      if (esp_task_wdt_reconfigure(&wdt_config) == ESP_ERR_INVALID_STATE) {
+          esp_task_wdt_init(&wdt_config);
+      }
     #else
       esp_task_wdt_init(WDT_TIMEOUT, true); // enable panic so ESP32 restarts
     #endif
@@ -359,8 +522,10 @@ void setup() {
   #endif
 
   #if HAS_NP == false
-    pinMode(pin_led_rx, OUTPUT);
-    pinMode(pin_led_tx, OUTPUT);
+    // -1 = "no LED" — skip pinMode rather than pass -1 (which Portduino's
+    // pin_size_t-cast turns into 255 and asserts > NUM_GPIOS).
+    if (pin_led_rx >= 0) pinMode(pin_led_rx, OUTPUT);
+    if (pin_led_tx >= 0) pinMode(pin_led_tx, OUTPUT);
   #endif
 
   #if HAS_TCXO == true
@@ -382,21 +547,50 @@ void setup() {
   memset(packet_lengths_buf, 0, sizeof(packet_starts_buf));
   fifo16_init(&packet_lengths, packet_lengths_buf, CONFIG_QUEUE_MAX_LENGTH);
 
-  #if PLATFORM == PLATFORM_ESP32 || PLATFORM == PLATFORM_NRF52
+  #if PLATFORM == PLATFORM_ESP32 || PLATFORM == PLATFORM_NRF52 || PLATFORM == PLATFORM_NATIVE
     modem_packet_queue = xQueueCreate(MODEM_QUEUE_SIZE, sizeof(modem_packet_t*));
   #endif
 
+  // LoRa modem init — gated so [env:native-macos] (which removes
+  // LORA_TRANSPORT via build_unflags) launches with no radio, no
+  // SPI activity, and modem_installed stays false (default from Config.h).
+  // Downstream `if (modem_installed)` checks handle the no-radio case.
+  #if defined(LORA_TRANSPORT)
   // Set chip select, reset and interrupt
   // pins for the LoRa module
-  #if MODEM == SX1276 || MODEM == SX1278
+  #if MODEM == MODEM_RUNTIME
+  // Native target: factory instantiates the runtime-selected driver and
+  // performs its driver-native setPins() with the right arity using the
+  // pin_* globals already populated by native_pinmap::apply().
+  LoRa = native_lora::create_radio(current_modem);
+  // Apply rnoded.conf SX126x overrides before preInit() / begin(). Both
+  // setters are virtual no-ops on non-SX126x drivers, but we still gate
+  // on current_modem so the byte conversion only runs when relevant.
+  if (LoRa != nullptr && current_modem == SX1262) {
+    float v = native_config::g_config.dio3_tcxo_voltage;
+    if (v > 0.0f) {
+      // Snap to nearest of the 8 discrete MODE_TCXO_* bytes the SX1262
+      // accepts (see sx126x.cpp MODE_TCXO_*_6X defines).
+      uint8_t mode;
+      if      (v >= 3.15f) mode = 0x07; // 3.3 V
+      else if (v >= 2.30f) mode = 0x06; // 2.4 / 2.7 / 3.0 V
+      else if (v >= 2.00f) mode = 0x03; // 2.2 V
+      else if (v >= 1.75f) mode = 0x02; // 1.8 V
+      else if (v >= 1.65f) mode = 0x01; // 1.7 V
+      else                 mode = 0x00; // 1.6 V
+      LoRa->setTcxoVoltage(mode);
+    }
+    LoRa->setDio2AsRfSwitch(native_config::g_config.dio2_as_rf_switch);
+  }
+  #elif MODEM == SX1276 || MODEM == SX1278
   LoRa->setPins(pin_cs, pin_reset, pin_dio, pin_busy);
   #elif MODEM == SX1262
   LoRa->setPins(pin_cs, pin_reset, pin_dio, pin_busy, pin_rxen);
   #elif MODEM == SX1280
   LoRa->setPins(pin_cs, pin_reset, pin_dio, pin_busy, pin_rxen, pin_txen);
   #endif
-  
-  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+
+  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
     init_channel_stats();
 
     #if BOARD_MODEL == BOARD_T3S3
@@ -416,9 +610,27 @@ void setup() {
 
     // Check installed transceiver chip and
     // probe boot parameters.
+    #if MCU_VARIANT == MCU_NATIVE
+      // Power up any external supplies the chip needs before preInit()
+      // can read sync-word registers. Without this, a HAT with an EN
+      // line (e.g. RAK13302) sees no power and the probe returns "No
+      // radio module found". Leave the pins asserted after a successful
+      // preInit so the chip stays powered through startRadio(); only
+      // deassert on probe failure.
+      native_pinmap::assert_radio_enable_pins();
+      // Pulse NRESET before the probe. On embedded targets pinMode()
+      // defaults reset-line GPIOs to OUTPUT-HIGH at boot, so the chip is
+      // already out of reset by the time preInit() runs; under libgpiod
+      // the line stays in high-Z INPUT until reset() drives it, so the
+      // chip can be stuck in reset when preInit() reads syncword regs.
+      // Same pattern as the BOARD_T3S3 / BOARD_XIAO_S3 blocks above.
+      delay(10);
+      LoRa->reset();
+      delay(10);
+    #endif
     if (LoRa->preInit()) {
       modem_installed = true;
-      
+
       #if HAS_INPUT
         // Skip quick-reset console activation
       #else
@@ -440,12 +652,16 @@ void setup() {
 
     } else {
       modem_installed = false;
+      #if MCU_VARIANT == MCU_NATIVE
+        native_pinmap::deassert_radio_enable_pins();
+      #endif
     }
   #else
     // Older variants only came with SX1276/78 chips,
     // so assume that to be the case for now.
     modem_installed = true;
   #endif
+  #endif // defined(LORA_TRANSPORT)
 
   #if HAS_DISPLAY
     #if HAS_EEPROM
@@ -469,7 +685,7 @@ void setup() {
     update_display();
   #endif
 
-  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
     #if HAS_PMU == true
       pmu_ready = init_pmu();
     #endif
@@ -494,8 +710,29 @@ void setup() {
     }
   #endif
 
-  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
-    #if MODEM == SX1280
+  #if defined(ENABLE_WEBSOCKETS) && __has_include(<WiFi.h>)
+    // KISS-over-WebSocket on port 81, alongside HTTP on 80. The browser
+    // page served by `server` connects back to this with `new WebSocket(
+    // "ws://" + location.hostname + ":81")`. Single client at a time —
+    // same model as Remote.h's KISS-over-TCP.
+    ws_console::init(81);
+  #endif
+
+  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
+    #if MODEM == MODEM_RUNTIME
+      // Native runtime selection: SX1280 (2.4 GHz) skips interference avoidance.
+      if (current_modem == SX1280) {
+        avoid_interference = false;
+      } else {
+        #if HAS_EEPROM
+          uint8_t ia_conf = EEPROM.read(eeprom_addr(ADDR_CONF_DIA));
+          if (ia_conf == 0x00) { avoid_interference = true; }
+          else                 { avoid_interference = false; }
+        #else
+          avoid_interference = false;
+        #endif
+      }
+    #elif MODEM == SX1280
       avoid_interference = false;
     #else
       #if HAS_EEPROM
@@ -513,31 +750,30 @@ void setup() {
   // Validate board health, EEPROM and config
   validate_status();
 
+  #if defined(LORA_TRANSPORT)
   if (op_mode != MODE_TNC) LoRa->setFrequency(0);
+  #endif
 
-  // CBA SD
+// CBA SD
 #ifdef HAS_SDCARD
   pinMode(SDCARD_MISO, INPUT_PULLUP);
   SDSPI.begin(SDCARD_SCLK, SDCARD_MISO, SDCARD_MOSI, SDCARD_CS);
   if (!SD.begin(SDCARD_CS, SDSPI)) {
-      Serial.println("setupSDCard FAIL");
+      printf("setupSDCard FAIL\n");
   } else {
       uint32_t cardSize = SD.cardSize() / (1024 * 1024);
-      Serial.print("setupSDCard PASS . SIZE = ");
-      Serial.print(cardSize / 1024.0);
-      Serial.println(" GB");
+      printf("setupSDCard PASS . SIZE = %u GB\n", cardSize / 1024.0);
       SD.remove("/logfile");
       SD.remove("/logfile.txt");
       SD.remove("/tracefile");
       SD.remove("/tracedetails");
       SD.remove("/tracefile.txt");
       SD.remove("/tracedetails.txt");
-      Serial.println("DIR: /");
+      printf("DIR: /\n");
       File root = SD.open("/");
       File file = root.openNextFile();
       while(file){
-          Serial.print("  FILE: ");
-          Serial.println(file.name());
+          printf("  FILE: %s\n", file.name());
           file = root.openNextFile();
       }
   }
@@ -545,99 +781,179 @@ void setup() {
 #endif
 
 #ifdef HAS_RNS
+
+  // Set sane default memory limits based on hardware-specific availability
+  // (note these may be adjusted dynamically based on detected hardware below)
+  RNS::Transport::path_table_maxsize(URTN_PATH_TABLE_MAX_RECS);
+  RNS::Transport::announce_table_maxsize(50);
+  RNS::Transport::hashlist_maxsize(50);
+  RNS::Identity::known_destinations_maxsize(50);
+  RNS::Transport::max_pr_tags(50);
+  RNS::Reticulum::clean_interval(60*15); // 60 minutes
+  //RNS::Reticulum::clean_interval(60*15); // 15 minutes
+  RNS::Reticulum::persist_interval(60*60); // 60 minutes
+  //RNS::Reticulum::persist_interval(60*10); // 10 minutes
+  //RNS::Reticulum::persist_interval(60); // 1 minute
+
+  // Configure callbacks
+  RNS::set_log_callback(&on_log);
+  RNS::Transport::set_receive_packet_callback(on_receive_packet);
+  RNS::Transport::set_transmit_packet_callback(on_transmit_packet);
+
   try {
     // CBA Init filesystem
-#if defined(RNS_USE_FS)
-    filesystem = new FileSystem();
-    ((FileSystem*)filesystem.get())->init();
+    HEAD("Initializing filesystem...", RNS::LOG_TRACE);
+#if BOARD_MODEL == BOARD_RAK4631
+    // First attempt to initialize RAK15001 flash
+    TRACE("Looking for RAK15001 flash...");
+    static const SPIFlash_Device_t device_rak15001 = RAK15001;
+    filesystem = microStore::Adapters::FlashFSFileSystem(&device_rak15001);
+    if (filesystem.init()) {
+      TRACE("Initialized RAK15001 flash");
+      // Raise path store limits to account for larger external flash size
+      RNS::Transport::path_table_maxsize(500);
+      RNS::Transport::path_store_segment_size(24576);
+      RNS::Transport::path_store_segment_count(8);
+    }
+    else {
+      // Finaly attempt to initialize internl flash
+      TRACE("Using internal flash...");
+      filesystem = microStore::Adapters::InternalFSFileSystem();
+      if (!filesystem.init()) WARNING("Failed to initialize filesystem!");
+      else TRACE("Initialized internal flash");
+    }
 #else
-    filesystem = new NoopFileSystem();
-    ((FileSystem*)filesystem.get())->init();
+    if (!filesystem.init()) WARNING("Failed to initialize filesystem!");
 #endif
 
-    HEAD("Registering filesystem...", RNS::LOG_TRACE);
+    // Remove legacy files
+    filesystem.remove("./destination_table");
+    filesystem.remove("./path_store_index.dat");
+    filesystem.remove("./path_store_0.dat");
+    filesystem.remove("./path_store_1.dat");
+    filesystem.remove("./path_store_2.dat");
+    filesystem.remove("./path_store_3.dat");
+    filesystem.remove("./path_store_4.dat");
+    filesystem.remove("./path_store_5.dat");
+    filesystem.remove("./path_store_6.dat");
+    filesystem.remove("./path_store_7.dat");
+    if (filesystem.isDirectory("./cache")) {
+      filesystem.listDirectory("./cache", [&](const char* name) -> void {
+        char rmpath[64];
+        snprintf(rmpath, sizeof(rmpath), "./cache/%s", name);
+        if (filesystem.isDirectory(rmpath)) filesystem.rmdir(rmpath);
+        else                                filesystem.remove(rmpath);
+      });
+      filesystem.rmdir("./cache");
+    }
+
+#if PLATFORM != PLATFORM_NATIVE
+    // If filesystem is essentially full then clear all path store files
+    if (filesystem.storageAvailable() < 1024) {
+      WARNING("FileSystem is full, clearing space...");
+      // CBA Delete the path store index file to force a rebuild
+      filesystem.remove("/path_store/index.dat");
+      // CBA Remove all path store data files
+      filesystem.remove("/path_store/seg0.dat");
+      filesystem.remove("/path_store/seg1.dat");
+      filesystem.remove("/path_store/seg2.dat");
+      filesystem.remove("/path_store/seg3.dat");
+      filesystem.remove("/path_store/seg4.dat");
+      filesystem.remove("/path_store/seg5.dat");
+      filesystem.remove("/path_store/seg6.dat");
+      filesystem.remove("/path_store/seg7.dat");
+    }
+#endif
+
+    TRACE("Registering filesystem...");
     RNS::Utilities::OS::register_filesystem(filesystem);
 
-#ifndef NDEBUG
-    //filesystem.remove_directory("/cache");
-    //filesystem.remove_file("/destination_table");
-    //filesystem.reformat();
-    TRACE("Listing filesystem...");
 #if defined(RNS_USE_FS)
-    //FileSystem::listDir("/");
+#if 0
+    filesystem.format();
 #endif
-    TRACE("Finished listing");
-    //TRACE("Dumping filesystem...");
-    //FileSystem::dumpDir("/");
-    //TRACE("Finished dumping");
-    //reticulum.clear_caches();
-
-    // CBA DEBUG
-/*
-    std::list<std::string> files = filesystem.list_directory("/cache");
-    for (auto& file : files) {
-      Serial.print("  FILE: ");
-      Serial.println(file.c_str());
-      //RNS::Bytes content = filesystem.read_file(file.c_str());
-      //DEBUG(std::string("FILE: ") + file);
-      //DEBUG(content.toString());
-      }
-*/
-/*
-    TRACE("FILE: destination_table");
-    RNS::Bytes content;
-    if (filesystem.read_file("/destination_table", content) > 0) {
-      TRACE(content.toString().c_str());
-    }
-*/
-#endif  // NDEBUG
+#if 1
+    TRACE("Listing filesystem...");
+    dump_filesystem("./", 1);
+#endif
+#endif // !NDEBUG && RNS_USE_FS
 
     // CBA Start RNS
-    if (hw_ready) {
+    //if (hw_ready) {
+    if (true) {
 
-      // Set sane memory limits based on hardware-specific availability
-      RNS::Transport::path_table_maxsize(50);
-      RNS::Transport::announce_table_maxsize(50);
-      RNS::Transport::hashlist_maxsize(50);
-      RNS::Transport::max_pr_tags(32);
-      RNS::Identity::known_destinations_maxsize(50);
-      RNS::Type::Reticulum::CLEAN_INTERVAL = 60*15; // 15 minutes
-      RNS::Type::Reticulum::PERSIST_INTERVAL = 60*60; // 60 minutes
+#if defined(LORA_TRANSPORT)
+      lora_interface = new LoRaInterface();
+      // Provisioning default
+      lora_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
+#endif
+#if HAS_WIFI && defined(UDP_TRANSPORT)
+      if (wifi_mode != WR_WIFI_OFF) {
+        udp_interface = new UDPInterface();
+        // Provisioning default
+        udp_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
+      }
+#endif
 
-      // Configure callbacks
-      RNS::setLogCallback(&on_log);
-      RNS::Transport::set_receive_packet_callback(on_receive_packet);
-      RNS::Transport::set_transmit_packet_callback(on_transmit_packet);
+    // Provisioning default
+    reticulum.transport_enabled(true);
+    // Provisioning default
+    reticulum.probe_destination_enabled(true);
+    // Provisioning default
+    reticulum.remote_management_enabled(true);
 
-      Serial.write("Starting RNS...\r\n");
+#ifdef URTN_STATS_PAGES
+    // Provisioning default
+    snprintf(nomadnet_name, sizeof(nomadnet_name), "microReticulum Node [%s]", device_uid_str);
+#endif
+
+#ifdef HAS_PROVISIONING
+      // Bring the Provisioning subsystem up. Loads persisted MsgPack files
+      // (including the radio + general namespaces registered here) and fires
+      // FF_LIVE_APPLY setters. FF_REBOOT_REQUIRED setters only fire if the
+      // disk value differs from the declared default — so on a fresh device
+      // the lora_* globals stay at their Config.h defaults until either
+      // eeprom_conf_load() runs or a Provisioning SetState arrives.
+      // CBA NOTE: All app-default-values must be set *before* calling init_provisioning so that they take effect for fresh installs
+      HEAD("Initializing Provisioning subsystem...", RNS::LOG_TRACE);
+      init_provisioning();
+      auto& prov = RNS::Provisioning::Provisioner::instance();
+#endif
+
+      //reticulum.clear_caches();
+
+      HEAD("Starting RNS...\r\n", RNS::LOG_VERBOSE);
 #if defined(RNS_MEM_LOG)
       RNS::loglevel(RNS::LOG_MEM);
 #else
       RNS::loglevel(RNS::LOG_TRACE);
 #endif
 
+#if defined(LORA_TRANSPORT)
       HEAD("Registering LoRA Interface...", RNS::LOG_TRACE);
-      lora_interface = new LoRaInterface();
-      lora_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
       RNS::Transport::register_interface(lora_interface);
       TRACEF("LoRaInterface hash: %s", lora_interface.get_hash().toHex().c_str());
-
+#endif
 #if HAS_WIFI && defined(UDP_TRANSPORT)
-      HEAD("Registering UDP Interface...", RNS::LOG_TRACE);
-      udp_interface = new UDPInterface();
-      udp_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
-      RNS::Transport::register_interface(udp_interface);
-      TRACEF("UDPInterface hash: %s", udp_interface.get_hash().toHex().c_str());
+      if (wifi_mode != WR_WIFI_OFF) {
+        HEAD("Registering UDP Interface...", RNS::LOG_TRACE);
+        RNS::Transport::register_interface(udp_interface);
+        TRACEF("UDPInterface hash: %s", udp_interface.get_hash().toHex().c_str());
+      }
 #endif
 
       HEAD("Creating Reticulum instance...", RNS::LOG_TRACE);
       reticulum = RNS::Reticulum();
-      reticulum.transport_enabled(op_mode == MODE_TNC);
-      reticulum.probe_destination_enabled(true);
+      // CBA NOTE: `transport_enabled` needs to always be overridden to false when op_mode is not MODE_TNC
+      if (op_mode != MODE_TNC) reticulum.transport_enabled(false);
       reticulum.start();
 
+      // Set loop callback only after the Reticulum instance is started
+      // (to avoid looping without a completely initialized instance)
+      RNS::Utilities::OS::set_loop_callback(&loop);
+
       // CBA load/create local destination for admin node
-/*
+#if 0
       RNS::Identity identity = {RNS::Type::NONE};
       std::string local_identity_path = RNS::Reticulum::_storagepath + "/local_identity";
       if (RNS::Utilities::OS::file_exists(local_identity_path.c_str())) {
@@ -652,23 +968,57 @@ void setup() {
         RNS::verbose("Loaded local identity from storage");
       }
       RNS::Destination destination(identity, RNS::Type::Destination::IN, RNS::Type::Destination::SINGLE, "rnstransport", "local");
-*/
-      RNS::Destination destination(RNS::Transport::identity(), RNS::Type::Destination::IN, RNS::Type::Destination::SINGLE, "rnstransport", "local");
+#endif
+      //RNS::Destination destination(RNS::Transport::identity(), RNS::Type::Destination::IN, RNS::Type::Destination::SINGLE, "rnstransport", "local");
+
+#ifdef URTN_STATS_PAGES
+      if (nomadnet_enabled) {
+        // Create an IN/SINGLE destination on the NomadNet aspect, so
+        // clients (this example, or a Python NomadNet browser) can find
+        // us by aspect/announce and open a Link.
+        nomadnet_destination = RNS::Destination(
+          RNS::Transport::identity(),
+          RNS::Type::Destination::IN,
+          RNS::Type::Destination::SINGLE,
+          "nomadnetwork",
+          "node"
+        );
+
+        // Register the page handler. ALLOW_ALL because page browsing is open
+        // to anyone who can reach the node, just like a Python NomadNet
+        // node's default policy.
+        //nomadnet_destination.register_request_handler("/page/index.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
+        nomadnet_destination.register_request_handler("/page/index.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
+        nomadnet_destination.register_request_handler("/page/stack.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
+        //nomadnet_destination.register_request_handler("/page/stack.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
+        nomadnet_destination.register_request_handler("/page/device.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
+        //nomadnet_destination.register_request_handler("/page/device.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
+
+        // Announce once at startup so a client that's already listening can
+        // discover us immediately. The node name is sent as the announce
+        // app_data (plain UTF-8 bytes), matching nomadnet/Node.py:217-222 —
+        // this is what other NomadNet clients show in their site listing.
+        {
+          NOTICEF("Announcing NomadNet site \"%s\" at destination <%s>", nomadnet_name, nomadnet_destination.hash().toHex().c_str());
+          nomadnet_destination.announce(nomadnet_name);
+        }
+      }
+#endif // URTN_STATS_PAGES
 
       HEAD("RNS is READY!", RNS::LOG_TRACE);
       if (op_mode == MODE_TNC) {
         HEAD("RNS transport mode is ENABLED", RNS::LOG_TRACE);
         TRACEF("Frequency: %d Hz", lora_freq);
         TRACEF("Bandwidth: %d Hz", lora_bw);
-        TRACEF("TX Power: %d dBm", lora_txp);
         TRACEF("Spreading Factor: %d", lora_sf);
         TRACEF("Coding Rate: %d", lora_cr);
+        TRACEF("TX Power: %d dBm", lora_txp);
+        HEAD("RNS Transport is READY!", RNS::LOG_TRACE);
       }
       else {
         HEAD("RNS transport mode is DISABLED", RNS::LOG_INFO);
         HEAD("Configure TNC mode with radio configuration to enable RNS transport", RNS::LOG_INFO);
       }
-      //RNS::loglevel(RNS::LOG_NONE);
     }
     else {
       HEAD("RNS is inoperable because hardware is not ready!", RNS::LOG_ERROR);
@@ -696,23 +1046,13 @@ void lora_receive() {
 
 inline void kiss_write_packet() {
 
-#ifdef HAS_RNS
-  TRACEF("Received %d byte packet", host_write_len);
-  // CBA send packet received over LoRa to RNS in addition to connected client
-  // CBA RESERVE
-  //RNS::Bytes data();
-  RNS::Bytes data(512);
-  for (uint16_t i = 0; i < host_write_len; i++) {
-    #if MCU_VARIANT == MCU_NRF52
-      portENTER_CRITICAL();
-      uint8_t byte = pbuf[i];
-      portEXIT_CRITICAL();
-    #else
-      uint8_t byte = pbuf[i];
-    #endif
-    data << byte;
+#if defined(HAS_RNS) && defined(LORA_TRANSPORT)
+  if (host_write_len > 0) {
+    TRACEF("Received %d byte packet", host_write_len);
+    // CBA send packet received over LoRa to RNS in addition to connected client
+    RNS::Bytes data(pbuf, host_write_len);
+    lora_interface.handle_incoming(data);
   }
-  lora_interface.handle_incoming(data);
 #endif
 
   serial_write(FEND);
@@ -735,7 +1075,7 @@ inline void kiss_write_packet() {
   serial_write(FEND);
   host_write_len = 0;
 
-  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
     packet_ready = false;
   #endif
 
@@ -787,7 +1127,7 @@ void ISR_VECT receive_callback(int packet_size) {
       
       seq = sequence;
 
-      #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+      #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
         last_rssi = LoRa->packetRssi();
         last_snr_raw = LoRa->packetSnrRaw();
       #endif
@@ -798,7 +1138,7 @@ void ISR_VECT receive_callback(int packet_size) {
       // This is the second part of a split
       // packet, so we add it to the buffer
       // and set the ready flag.
-      #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+      #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
         last_rssi = (last_rssi+LoRa->packetRssi())/2;
         last_snr_raw = (last_snr_raw+LoRa->packetSnrRaw())/2;
       #endif
@@ -819,7 +1159,7 @@ void ISR_VECT receive_callback(int packet_size) {
       #endif
       seq = sequence;
 
-      #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+      #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
         last_rssi = LoRa->packetRssi();
         last_snr_raw = LoRa->packetSnrRaw();
       #endif
@@ -842,7 +1182,7 @@ void ISR_VECT receive_callback(int packet_size) {
         seq = SEQ_UNSET;
       }
 
-      #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+      #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
         last_rssi = LoRa->packetRssi();
         last_snr_raw = LoRa->packetSnrRaw();
       #endif
@@ -855,7 +1195,7 @@ void ISR_VECT receive_callback(int packet_size) {
     // output directly to the host
     read_len = 0;
 
-    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
       last_rssi = LoRa->packetRssi();
       last_snr_raw = LoRa->packetSnrRaw();
       getPacketData(packet_size);
@@ -875,7 +1215,7 @@ void ISR_VECT receive_callback(int packet_size) {
   }
 
   if (ready) {
-    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+    #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
       // We first signal the RSSI of the
       // recieved packet to the host.
       kiss_indicate_stat_rssi();
@@ -892,7 +1232,7 @@ void ISR_VECT receive_callback(int packet_size) {
       if(!modem_packet) { memory_low = true; return; }
 
       // Get packet RSSI and SNR
-      #if MCU_VARIANT == MCU_ESP32
+      #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NATIVE
         modem_packet->snr_raw = LoRa->packetSnrRaw();
         modem_packet->rssi = LoRa->packetRssi(modem_packet->snr_raw);
       #endif
@@ -913,10 +1253,19 @@ bool startRadio() {
   update_radio_lock();
   if (!radio_online && !console_active) {
     if (!radio_locked && hw_ready) {
+      #if MCU_VARIANT == MCU_NATIVE
+        // Drive any configured radio_enable_pins to their active level
+        // before the modem comes up so external rails (LDOs, TCXO supply,
+        // PA bias) are stable before the SX126x probes them.
+        native_pinmap::assert_radio_enable_pins();
+      #endif
       if (!LoRa->begin(lora_freq)) {
         // The radio could not be started.
         // Indicate this failure over both the
         // serial port and with the onboard LEDs
+        #if MCU_VARIANT == MCU_NATIVE
+          native_pinmap::deassert_radio_enable_pins();
+        #endif
         radio_error = true;
         kiss_indicate_error(ERROR_INITRADIO);
         led_indicate_error(0);
@@ -961,8 +1310,21 @@ bool startRadio() {
 }
 
 void stopRadio() {
-  LoRa->end();
+  // Idempotent: LoRa->end() calls SPI.end() which nulls Portduino's
+  // spiChip on native. The main loop's `else { stopRadio(); }` branch
+  // fires every iteration while radio_online is false, so we must not
+  // re-end an already-stopped radio — otherwise the next SPI access
+  // (e.g. lora_receive() at the tail of flush_queue) asserts on a null
+  // spiChip.
+  #if defined(LORA_TRANSPORT)
+  if (radio_online) LoRa->end();
+  #endif
   radio_online = false;
+  #if MCU_VARIANT == MCU_NATIVE
+    // De-assert after LoRa->end() so SPI cleanup completes while supply
+    // rails are still up — avoids transients on power-down.
+    native_pinmap::deassert_radio_enable_pins();
+  #endif
 }
 
 void update_radio_lock() {
@@ -981,7 +1343,7 @@ void flush_queue(void) {
     queue_flushing = true;
     led_tx_on();
 
-    #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+    #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
     while (!fifo16_isempty(&packet_starts)) {
     #else
     while (!fifo16_isempty_locked(&packet_starts)) {
@@ -1006,7 +1368,7 @@ void flush_queue(void) {
   queue_height = 0;
   queued_bytes = 0;
 
-  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
     update_airtime();
   #endif
 
@@ -1021,7 +1383,7 @@ void pop_queue() {
   if (!queue_flushing) {
     queue_flushing = true; led_tx_on();
 
-    #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+    #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
     if (!fifo16_isempty(&packet_starts)) {
     #else
     if (!fifo16_isempty_locked(&packet_starts)) {
@@ -1044,7 +1406,7 @@ void pop_queue() {
     lora_receive(); led_tx_off();
   }
 
-  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
     update_airtime();
   #endif
 
@@ -1056,18 +1418,40 @@ void pop_queue() {
 }
 
 void add_airtime(uint16_t written) {
-  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
     float lora_symbols = 0;
     float packet_cost_ms = 0.0;
     int ldr_opt = 0; if (lora_low_datarate) ldr_opt = 1;
 
-    #if MODEM == SX1276 || MODEM == SX1278
+    #if MODEM == MODEM_RUNTIME
+      if (current_modem == SX1276 || current_modem == SX1278) {
+        lora_symbols += (8*written + PHY_CRC_LORA_BITS - 4*lora_sf + 8 + PHY_HEADER_LORA_SYMBOLS);
+        lora_symbols /=                          4*(lora_sf-2*ldr_opt);
+        lora_symbols *= lora_cr;
+        lora_symbols += lora_preamble_symbols + 0.25 + 8;
+        packet_cost_ms += lora_symbols * lora_symbol_time_ms;
+      } else { // SX1262 / SX1280
+        if (lora_sf < 7) {
+          lora_symbols += (8*written + PHY_CRC_LORA_BITS - 4*lora_sf + PHY_HEADER_LORA_SYMBOLS);
+          lora_symbols /=                              4*lora_sf;
+          lora_symbols *= lora_cr;
+          lora_symbols += lora_preamble_symbols + 2.25 + 8;
+          packet_cost_ms += lora_symbols * lora_symbol_time_ms;
+        } else {
+          lora_symbols += (8*written + PHY_CRC_LORA_BITS - 4*lora_sf + 8 + PHY_HEADER_LORA_SYMBOLS);
+          lora_symbols /=                         4*(lora_sf-2*ldr_opt);
+          lora_symbols *= lora_cr;
+          lora_symbols += lora_preamble_symbols + 0.25 + 8;
+          packet_cost_ms += lora_symbols * lora_symbol_time_ms;
+        }
+      }
+    #elif MODEM == SX1276 || MODEM == SX1278
       lora_symbols += (8*written + PHY_CRC_LORA_BITS - 4*lora_sf + 8 + PHY_HEADER_LORA_SYMBOLS);
       lora_symbols /=                          4*(lora_sf-2*ldr_opt);
       lora_symbols *= lora_cr;
       lora_symbols += lora_preamble_symbols + 0.25 + 8;
       packet_cost_ms += lora_symbols * lora_symbol_time_ms;
-      
+
     #elif MODEM == SX1262 || MODEM == SX1280
       if (lora_sf < 7) {
         lora_symbols += (8*written + PHY_CRC_LORA_BITS - 4*lora_sf + PHY_HEADER_LORA_SYMBOLS);
@@ -1083,7 +1467,7 @@ void add_airtime(uint16_t written) {
         lora_symbols += lora_preamble_symbols + 0.25 + 8;
         packet_cost_ms += lora_symbols * lora_symbol_time_ms;
       }
-    
+
     #endif
 
     uint16_t cb = current_airtime_bin();
@@ -1095,7 +1479,7 @@ void add_airtime(uint16_t written) {
 }
 
 void update_airtime() {
-  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
     uint16_t cb = current_airtime_bin();
     uint16_t pb = cb-1; if (cb-1 < 0) { pb = AIRTIME_BINS-1; }
     uint16_t nb = cb+1; if (nb == AIRTIME_BINS) { nb = 0; }
@@ -1109,7 +1493,7 @@ void update_airtime() {
     for (uint16_t bin = 0; bin < AIRTIME_BINS; bin++) { longterm_channel_util_sum += longterm_bins[bin]; }
     longterm_channel_util = (float)longterm_channel_util_sum/(float)AIRTIME_BINS;
 
-    #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+    #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
       update_csma_parameters();
     #endif
 
@@ -1135,7 +1519,12 @@ void transmit(uint16_t size) {
             kiss_indicate_error(ERROR_MODEM_TIMEOUT);
             kiss_indicate_error(ERROR_TXFAILED);
             led_indicate_error(5);
-            hard_reset();
+            #if MCU_VARIANT == MCU_NATIVE
+              if (native_config::g_config.reboot_on_tx_failure) { hard_reset(); }
+              else { LoRa->receive(); return; }
+            #else
+              hard_reset();
+            #endif
           }
 
           add_airtime(written);
@@ -1149,7 +1538,12 @@ void transmit(uint16_t size) {
         kiss_indicate_error(ERROR_MODEM_TIMEOUT);
         kiss_indicate_error(ERROR_TXFAILED);
         led_indicate_error(5);
-        hard_reset();
+        #if MCU_VARIANT == MCU_NATIVE
+          if (native_config::g_config.reboot_on_tx_failure) { hard_reset(); }
+          else { LoRa->receive(); return; }
+        #else
+          hard_reset();
+        #endif
       }
 
       add_airtime(written);
@@ -1186,6 +1580,12 @@ void serial_callback(uint8_t sbyte) {
         }
     }
 
+#ifdef HAS_PROVISIONING
+  } else if (IN_FRAME && sbyte == FEND && command == CMD_PROVISION_REQ) {
+    IN_FRAME = false;
+    on_provision_request(provision_rx_buf);
+    provision_rx_buf.clear();
+#endif
   } else if (sbyte == FEND) {
     IN_FRAME = true;
     command = CMD_UNKNOWN;
@@ -1212,6 +1612,21 @@ void serial_callback(uint8_t sbyte) {
               if (queue_cursor == CONFIG_QUEUE_SIZE) queue_cursor = 0;
             }
         }
+#ifdef HAS_PROVISIONING
+    } else if (command == CMD_PROVISION_REQ) {
+        if (sbyte == FESC) {
+            ESCAPE = true;
+        } else {
+            if (ESCAPE) {
+                if (sbyte == TFEND) sbyte = FEND;
+                if (sbyte == TFESC) sbyte = FESC;
+                ESCAPE = false;
+            }
+            if (provision_rx_buf.size() < PROVISION_RX_BUF_MAX) {
+                provision_rx_buf.append(sbyte);
+            }
+        }
+#endif
     } else if (command == CMD_FREQUENCY) {
       if (sbyte == FESC) {
             ESCAPE = true;
@@ -1263,7 +1678,15 @@ void serial_callback(uint8_t sbyte) {
         kiss_indicate_txpower();
       } else {
         int txp = sbyte;
-        #if MODEM == SX1262
+        #if MODEM == MODEM_RUNTIME
+          if (current_modem == SX1262) {
+            if (txp > 22) txp = 22;
+          } else if (current_modem == SX1280) {
+            if (txp > 13) txp = 13;
+          } else {
+            if (txp > 17) txp = 17;
+          }
+        #elif MODEM == SX1262
           #if HAS_LORA_PA
             if (txp > PA_MAX_OUTPUT) txp = PA_MAX_OUTPUT;
           #else
@@ -1485,13 +1908,13 @@ void serial_callback(uint8_t sbyte) {
     } else if (command == CMD_DISP_READ) {
       if (sbyte != 0x00) { kiss_indicate_disp(); }
     } else if (command == CMD_DEV_HASH) {
-      #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+      #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
         if (sbyte != 0x00) {
           kiss_indicate_device_hash();
         }
       #endif
     } else if (command == CMD_DEV_SIG) {
-      #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+      #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
         if (sbyte == FESC) {
               ESCAPE = true;
           } else {
@@ -1515,7 +1938,7 @@ void serial_callback(uint8_t sbyte) {
         firmware_update_mode = false;
       }
     } else if (command == CMD_HASHES) {
-      #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+      #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
         if (sbyte == 0x01) {
           kiss_indicate_target_fw_hash();
         } else if (sbyte == 0x02) {
@@ -1527,7 +1950,7 @@ void serial_callback(uint8_t sbyte) {
         }
       #endif
     } else if (command == CMD_FW_HASH) {
-      #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+      #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
         if (sbyte == FESC) {
               ESCAPE = true;
           } else {
@@ -1760,7 +2183,7 @@ bool noise_floor_sampled = false;
 int  noise_floor_sample  = 0;
 int  noise_floor_buffer[NOISE_FLOOR_SAMPLES] = {0};
 void update_noise_floor() {
-  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
     if (!dcd) {
       #if BOARD_MODEL != BOARD_HELTEC32_V4
       if (!noise_floor_sampled || current_rssi < noise_floor + CSMA_INFR_THRESHOLD_DB) {
@@ -1837,21 +2260,22 @@ void update_modem_status() {
   dcd_led = dcd;
   if (dcd_led) { led_rx_on(); }
   else {
-    if (interference_detected) {
-      if (led_id_filter >= LED_ID_TRIG && noise_floor_sampled) { led_id_on(); }
+    if (interference_detected && noise_floor_sampled) {
+      if (led_id_filter >= LED_ID_TRIG) { led_id_on(); }
     } else {
       if (airtime_lock) { led_indicate_airtime_lock(); }
       else              { led_rx_off(); led_id_off(); }
     }
   }
+
+  update_noise_floor();
 }
 
 void check_modem_status() {
   if (millis()-last_status_update >= status_interval_ms) {
     update_modem_status();
-    update_noise_floor();
 
-    #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+    #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
       util_samples[dcd_sample] = dcd;
       dcd_sample = (dcd_sample+1)%DCD_SAMPLES;
       if (dcd_sample % UTIL_UPDATE_INTERVAL == 0) {
@@ -1898,6 +2322,13 @@ void validate_status() {
       uint8_t F_POR = 0x00;
       uint8_t F_BOR = 0x00;
       uint8_t F_WDR = 0x01;
+  #elif MCU_VARIANT == MCU_NATIVE
+      // Native userspace daemon — no MCU reset cause registers. Report
+      // a synthetic "power-on, bootloader path" status.
+      uint8_t boot_flags = 0x02;
+      uint8_t F_POR = 0x00;
+      uint8_t F_BOR = 0x00;
+      uint8_t F_WDR = 0x01;
   #endif
 
   if (hw_ready || device_init_done) {
@@ -1932,10 +2363,17 @@ void validate_status() {
   if (boot_vector == START_FROM_BOOTLOADER || boot_vector == START_FROM_POWERON) {
     if (eeprom_lock_set()) {
       if (eeprom_product_valid() && eeprom_model_valid() && eeprom_hwrev_valid()) {
+#ifdef DISABLE_FIRMWARE_CHECKSUM
+        // Native builds self-provision the EEPROM in PinMap.cpp's
+        // seed_eeprom_if_unprovisioned() but skip MD5 computation —
+        // they short-circuit the checksum check here.
+        if (true) {
+#else
         if (eeprom_checksum_valid()) {
+#endif
           eeprom_ok = true;
           if (modem_installed) {
-            #if PLATFORM == PLATFORM_ESP32 || PLATFORM == PLATFORM_NRF52
+            #if PLATFORM == PLATFORM_ESP32 || PLATFORM == PLATFORM_NRF52 || PLATFORM == PLATFORM_NATIVE
               if (device_init()) {
                 hw_ready = true;
               } else {
@@ -2003,7 +2441,7 @@ void validate_status() {
   }
 }
 
-#if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+#if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
   void update_csma_parameters() {
     int airtime_pct = (int)(airtime*100);
     int new_cw_band = cw_band;
@@ -2059,6 +2497,17 @@ void work_while_waiting() { loop(); }
 
 void loop() {
 
+  #if MCU_VARIANT == MCU_NATIVE
+    // Deferred-reboot hook: a KISS-driven property change or CMD_RESET in
+    // a prior iteration called hard_reset() → native_request_reboot(), which
+    // just set a flag. By the time we re-enter loop(), any KISS ACK from
+    // that handler has already been written to the socket. Now perform the
+    // cleanup + re-exec. native_reboot::perform() is [[noreturn]].
+    extern bool native_reboot_pending();
+    extern void native_reboot_perform();
+    if (native_reboot_pending()) native_reboot_perform();
+  #endif
+
 #ifdef HAS_RNS
   // CBA
   if (reticulum) {
@@ -2075,7 +2524,7 @@ void loop() {
 #endif
 
   if (radio_online) {
-    #if MCU_VARIANT == MCU_ESP32
+    #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NATIVE
       LoRa->handleDio0IfPending();
       modem_packet_t *modem_packet = NULL;
       if(modem_packet_queue && xQueueReceive(modem_packet_queue, &modem_packet, 0) == pdTRUE && modem_packet) {
@@ -2121,7 +2570,13 @@ void loop() {
 
     tx_queue_handler();
     check_modem_status();
-  
+    #if MCU_VARIANT == MCU_NATIVE
+      // Drop a TCP host client that's gone silent past the idle window.
+      // poll_accept() in buffer_serial() handles the connect side; this
+      // is the disconnect-side sweep.
+      native_kiss_tcp::check_active();
+    #endif
+
   } else {
     if (hw_ready) {
       if (console_active) {
@@ -2138,11 +2593,15 @@ void loop() {
     }
   }
 
-  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
       buffer_serial();
       if (!fifo_isempty(&serialFIFO)) serial_poll();
   #else
     if (!fifo_isempty_locked(&serialFIFO)) serial_poll();
+  #endif
+
+  #if defined(ENABLE_WEBSOCKETS) && __has_include(<WiFi.h>)
+    ws_console::service();
   #endif
 
   #if HAS_DISPLAY
@@ -2234,7 +2693,7 @@ void sleep_now() {
 }
 
 void button_event(uint8_t event, unsigned long duration) {
-  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
     if (display_blanked) {
       display_unblank();
     } else {
@@ -2275,7 +2734,7 @@ volatile bool serial_polling = false;
 void serial_poll() {
   serial_polling = true;
 
-  #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
+  #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
   while (!fifo_isempty_locked(&serialFIFO)) {
   #else
   while (!fifo_isempty(&serialFIFO)) {
@@ -2298,6 +2757,16 @@ void buffer_serial() {
 
     uint8_t c = 0;
 
+    #if MCU_VARIANT == MCU_NATIVE
+    // Refill the TCP staging buffer once per buffer_serial() pass —
+    // accept any pending connection (or reject if we're already busy),
+    // then drain whatever the kernel queued for the active client.
+    native_kiss_tcp::poll_accept();
+    while (c < MAX_CYCLES && native_kiss_tcp::available()) {
+      c++;
+      if (!fifo_isfull(&serialFIFO)) { fifo_push(&serialFIFO, native_kiss_tcp::read()); }
+    }
+    #else
     #if HAS_BLUETOOTH || HAS_BLE == true
     while (
       c < MAX_CYCLES &&
@@ -2325,6 +2794,7 @@ void buffer_serial() {
         if (!fifo_isfull(&serialFIFO)) { fifo_push(&serialFIFO, Serial.read()); }
       #endif
     }
+    #endif
 
     serial_buffering = false;
   }

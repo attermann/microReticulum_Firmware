@@ -926,11 +926,13 @@ void draw_disp_area() {
         } else {
           disp_area.setFont(SMALL_FONT); disp_area.setTextWrap(false); disp_area.setTextColor(SSD1306_WHITE); disp_area.setTextSize(2);
           disp_area.fillRect(0, 20, disp_area.width(), 17, SSD1306_BLACK); uint8_t ofsc = 0;
-          if ((bt_dh[14] & 0b00001111) == 0x01) { ofsc += 8; }
-          if ((bt_dh[14] >> 4)         == 0x01) { ofsc += 8; }
-          if ((bt_dh[15] & 0b00001111) == 0x01) { ofsc += 8; }
-          if ((bt_dh[15] >> 4)         == 0x01) { ofsc += 8; }
-          disp_area.setCursor(17+ofsc, 32); disp_area.printf("%02X%02X", bt_dh[14], bt_dh[15]);
+          #if HAS_BT
+            if ((bt_dh[14] & 0b00001111) == 0x01) { ofsc += 8; }
+            if ((bt_dh[14] >> 4)         == 0x01) { ofsc += 8; }
+            if ((bt_dh[15] & 0b00001111) == 0x01) { ofsc += 8; }
+            if ((bt_dh[15] >> 4)         == 0x01) { ofsc += 8; }
+            disp_area.setCursor(17+ofsc, 32); disp_area.printf("%02X%02X", bt_dh[14], bt_dh[15]);
+          #endif
         }
       }
 
@@ -1083,6 +1085,7 @@ void update_display(bool blank = false) {
       #if BOARD_MODEL == BOARD_HELTEC_T114
         display.clear();
         display.display();
+        digitalWrite(PIN_T114_TFT_BLGT, HIGH);
       #elif BOARD_MODEL != BOARD_TDECK && BOARD_MODEL != BOARD_TECHO
         display.clearDisplay();
         display.display();
@@ -1103,6 +1106,7 @@ void update_display(bool blank = false) {
 
       #if BOARD_MODEL == BOARD_HELTEC_T114
         display.clear();
+        digitalWrite(PIN_T114_TFT_BLGT, LOW);
       #elif BOARD_MODEL != BOARD_TDECK && BOARD_MODEL != BOARD_TECHO
         display.clearDisplay();
       #endif

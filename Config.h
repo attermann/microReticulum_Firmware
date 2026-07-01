@@ -16,11 +16,13 @@
 #include "ROM.h"
 #include "Boards.h"
 
+#include <SPI.h>
+
 #ifndef CONFIG_H
 	#define CONFIG_H
 
 	#define MAJ_VERS  0x01
-	#define MIN_VERS  0x55
+	#define MIN_VERS  0x56
 
 	#define MODE_HOST 0x11
 	#define MODE_TNC  0x12
@@ -174,7 +176,7 @@
 	uint32_t stat_tx		= 0;
 
 	#define STATUS_INTERVAL_MS 3
-	#if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+	#if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
 	  #define DCD_SAMPLES 2500
 		#define UTIL_UPDATE_INTERVAL_MS 1000
 		#define UTIL_UPDATE_INTERVAL (UTIL_UPDATE_INTERVAL_MS/STATUS_INTERVAL_MS)

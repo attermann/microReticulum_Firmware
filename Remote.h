@@ -14,10 +14,9 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include <WiFi.h>
-#include <esp_wifi.h>
 #if defined(UDP_TRANSPORT)
 #include <WiFiUdp.h>
-#include <Bytes.h>
+#include <microReticulum/Bytes.h>
 #endif
 
 #if CONFIG_IDF_TARGET_ESP32
@@ -53,7 +52,7 @@ wl_status_t wr_wifi_status = WL_IDLE_STATUS;
 WiFiUDP udp;
 RNS::Bytes udp_buffer;
 #if defined(HAS_RNS)
-RNS::Interface udp_interface(RNS::Type::NONE);
+extern RNS::Interface udp_interface;
 #endif
 #endif
 
@@ -64,6 +63,7 @@ bool wifi_initialized = false;
 char wr_ssid[33];
 char wr_psk[33];
 
+extern uint16_t udp_port;
 extern void host_disconnected();
 
 void wifi_dbg(String msg) { Serial.print("[WiFi] "); Serial.println(msg); }
@@ -106,14 +106,32 @@ void wifi_remote_start_sta() {
     WiFi.config(sta_ip, sta_ip, sta_nm);
   }
 
+  WiFi.setMinSecurity(WIFI_AUTH_WPA2_PSK);
+#if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
+  WiFi.setPmf(true, false);   // capable, not required
+#endif
+
+  //WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
+  //  Serial.printf("[WiFi] event=%d\n", event);
+  //});
+
   delay(100);
+  Serial.print("[WiFi] ssid: ");
+  Serial.println(wr_ssid);
+  //Serial.print("[WiFi] psk: ");
+  //Serial.println(wr_psk);
   if (wr_ssid[0] != 0x00) {
     if (wr_psk[0] != 0x00) { WiFi.begin(wr_ssid, wr_psk); }
     else                   { WiFi.begin(wr_ssid); }
   }
   
   delay(500);
+  //delay(10000);
   wr_wifi_status = WiFi.status(); 
+  //Serial.print("[WiFi] status: ");
+  //Serial.println(wr_wifi_status);
+	//Serial.print("[WiFi] ip: ");
+	//Serial.println(WiFi.localIP());
   wifi_initialized = true;
   wr_last_connect_try = millis();
 }
@@ -135,7 +153,7 @@ void wifi_remote_start() {
     remote_listener.setTimeout(WR_SOCKET_TIMEOUT);
     wr_state = WR_STATE_ON;
 #if defined(UDP_TRANSPORT)
-    udp.begin(UDP_PORT);
+    udp.begin(udp_port);
 #endif
   } else {
     remote_listener.end();
@@ -147,6 +165,7 @@ void wifi_remote_start() {
 }
 
 void wifi_remote_init() {
+  //Serial.print("Initializing WiFi...\n");
   memcpy(wr_hostname, bt_devname, 5);
   memcpy(wr_hostname+5, bt_devname+6, 4);
   wr_hostname[9] = 0x00;
@@ -219,7 +238,13 @@ void wifi_remote_write(uint8_t byte) { if (connection) { connection.write(byte);
 
 void wifi_update_status() {
   wr_wifi_status = WiFi.status();
-  if (wr_wifi_status == WL_CONNECTED) { wr_device_ip = WiFi.localIP(); }
+  //Serial.print("[WiFi] status: ");
+  //Serial.println(wr_wifi_status);
+  if (wr_wifi_status == WL_CONNECTED) {
+    wr_device_ip = WiFi.localIP();
+    //Serial.print("[WiFi] ip: ");
+    //Serial.println(WiFi.localIP());
+  }
   if (wifi_mode == WR_WIFI_AP && wifi_initialized) { wr_device_ip = WiFi.softAPIP(); wr_wifi_status = WL_CONNECTED; }
   if (wifi_init_ran && wifi_mode == WR_WIFI_STA && wr_wifi_status != WL_CONNECTED) {
     if (millis()-wr_last_connect_try >= WR_RECONNECT_INTERVAL_MS) { wifi_remote_init(); }
@@ -228,15 +253,17 @@ void wifi_update_status() {
 
 void update_wifi() {
 #if defined(UDP_TRANSPORT)
-  if (udp.parsePacket() > 0) {
-    size_t len = udp.read(udp_buffer.writable(MTU), MTU);
-   if (len > 0) {
-      udp_buffer.resize(len);
+  if (wifi_initialized) {
+    if (udp.parsePacket() > 0) {
+      size_t len = udp.read(udp_buffer.writable(MTU), MTU);
+    if (len > 0) {
+        udp_buffer.resize(len);
 #if defined(HAS_RNS)
-      if (udp_interface) {
-        udp_interface.handle_incoming(udp_buffer);
-      }
+        if (udp_interface) {
+          udp_interface.handle_incoming(udp_buffer);
+        }
 #endif
+      }
     }
   }
 #endif

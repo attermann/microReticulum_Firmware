@@ -1,0 +1,2 @@
+#docker rmi -f pio-debian-bookworm
+docker buildx build --platform linux/arm64,linux/arm/v7 -t pio-debian-bookworm --file Dockerfile.debian-bookworm .

@@ -171,6 +171,7 @@ char bt_devname[11];
 
   #elif HAS_BLE == true
     bool bt_setup_hw(); void bt_security_setup();
+    // CBA Why this unused leaked pointer?
     BLESecurity *ble_security = new BLESecurity();
     bool ble_authenticated = false;
     uint32_t pairing_pin = 0;

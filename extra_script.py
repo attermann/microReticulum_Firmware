@@ -1,6 +1,49 @@
 import time
 import hashlib
 import shutil
+import platform as platformlib
+
+#
+# Helpier functions
+#
+
+def get_target():
+
+    # Detect the operating system
+    platform_system = platformlib.system().lower()
+    #print("System:", platform_system)
+    if "linux" in platform_system:
+        os_name = "linux"
+    elif "darwin" in platform_system:
+        os_name = "darwin"
+    else:
+        os_name = "unknown"
+
+    # Get OS release details
+    try:
+        platform_os_info = platformlib.freedesktop_os_release()
+        #print("OS Release:", platform_os_info)
+        if platform_os_info.get('VERSION_CODENAME'):
+            distro_name = platform_os_info.get('ID') + "-" + platform_os_info.get('VERSION_CODENAME')
+        else:
+            distro_name = platform_os_info.get('ID')
+        os_name += "-" + distro_name
+    except Exception:
+        pass
+
+    # Detect the architecture
+    platform_machine = platformlib.machine().lower()
+    #print("Machine:", platform_machine)
+    if platform_machine == "x86_64":
+        arch_name = "amd64"
+    elif "aarch" in platform_machine or "arm64" in platform_machine:
+        arch_name = "arm64"
+    elif "arm" in platform_machine:
+        arch_name = "armhf"
+    else:
+        arch_name = "unknown"
+
+    return os_name + "-" + arch_name
 
 #
 # Custom targets
@@ -11,6 +54,9 @@ def target_package(target, source, env):
     print("Platform:", env.GetProjectOption("platform"))
     print("Board:", env.GetProjectOption("board"))
     print("Variant:", env.GetProjectOption("custom_variant"))
+    if env.GetProjectOption("custom_variant").endswith('_local'):
+        print("*** Skipping target_package for local build")
+        return
     # do some actions
     platform = env.GetProjectOption("platform")
     board = env.GetProjectOption("board")
@@ -36,14 +82,17 @@ def post_upload(source, target, env):
     if ("espressif32" in platform):
         time.sleep(10)
         # device provisioning is incomplete and only currently appropriate for 915MHz T-Beam
+        #device_wipe(env)
         device_provision(env)
         firmware_hash(source, env)
         # firmware pacakaging is incomplete due to missing console image
         #firmware_package(env)
     elif ("nordicnrf52" in platform):
-        time.sleep(5)
+        time.sleep(10)
         # device provisioning is incomplete and only currently appropriate for 915MHz RAK4631
+        #device_wipe(env)
         device_provision(env)
+        time.sleep(5)
         firmware_hash(source, env)
         # firmware pacakaging is incomplete due to missing console image
         #firmware_package(env)
@@ -89,6 +138,8 @@ def device_provision(env):
             env.Execute("rnodeconf --product c3 --model c8 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "rak4631" | "rak4631_local":
             env.Execute("rnodeconf --product 10 --model 12 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
+        case "techo" | "techo_local":
+            env.Execute("rnodeconf --product 15 --model 17 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "heltec_t114" | "heltec_t114_local":
             env.Execute("rnodeconf --product c2 --model c7 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case _:
@@ -169,7 +220,17 @@ def firmware_package(env):
         env.Execute(zip_cmd)
     elif (platform == "nordicnrf52"):
         env.Execute("cp " + build_dir + "/" + env.subst("$PROGNAME") + ".zip " + project_dir + "/Release/.")
-    env.Execute("python " + project_dir + "/release_hashes.py > " + project_dir + "/Release/release.json")
+    else:
+        env.Execute("cp " + build_dir + "/" + env.subst("$PROGNAME") + " " + build_dir + "/rnoded")
+        env.Execute("rm -f " + project_dir + "/Release/rnoded-" + get_target() + ".zip")
+        zip_cmd = "zip --junk-paths "
+        zip_cmd += project_dir + "/Release/rnoded-" + get_target() + ".zip "
+        zip_cmd += build_dir + "/rnoded "
+        zip_cmd += project_dir + "/rnoded.example.conf "
+        zip_cmd += project_dir + "/rnoded.example.service "
+        env.Execute(zip_cmd)
+        get_target()
+    env.Execute("python3 " + project_dir + "/release_hashes.py > " + project_dir + "/Release/release.json")
 
 #
 # Main script
@@ -215,6 +276,16 @@ elif (platform == "nordicnrf52"):
         ],
         title="Package",
         description="Package nrf52 firmware for delivery"
+    )
+else:
+    env.AddCustomTarget(
+        name="package",
+        dependencies="$BUILD_DIR/${PROGNAME}",
+        actions=[
+            target_package
+        ],
+        title="Package",
+        description="Package native daemon for delivery"
     )
 
 # Register actions

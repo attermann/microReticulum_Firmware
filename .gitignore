@@ -9,3 +9,9 @@ Console/build
 build/*
 .pio/*
 .vscode/*
+Debug*
+rnoded.conf
+eeprom
+state/*
+docker/workspace/*
+!docker/workspace/build

@@ -1,0 +1,26 @@
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    git \
+    build-essential \
+    libgpiod-dev \
+    gpiod \
+    libusb-1.0-0-dev \
+    libyaml-cpp-dev \
+    libuv1-dev \
+    libi2c-dev \
+    i2c-tools\
+    zip\
+    vim\
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install platformio
+
+WORKDIR /workspace
+
+CMD ["/bin/bash"]
+
