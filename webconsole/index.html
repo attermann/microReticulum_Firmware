@@ -861,58 +861,79 @@ class WebSocketTransport {
   }
 }
 
-// ===== RNS-over-MeshChatX transport =====
-// Bridges the upper-layer KISS-framed Provisioning protocol to MeshChatX's
-// generic rns.link.* WebSocket API, which terminates on an RNS Link to the
-// remote node. CMD_PROVISION_REQ frames are unwrapped to rns.link.request
-// payloads; the request body comes back, gets re-wrapped as CMD_PROVISION_RSP,
-// and is pushed to onBytes so ProvisioningClient sees the exchange unchanged.
+// ===== RNS-over-rnsapid transport =====
+// Bridges the upper-layer KISS-framed Provisioning protocol to rnsapid's
+// generic link.* WebSocket API, which terminates on an RNS Link to the
+// remote node. CMD_PROVISION_REQ frames are unwrapped to link.request
+// payloads; the async link.request.response event supplies the body, gets
+// re-wrapped as CMD_PROVISION_RSP, and is pushed to onBytes so
+// ProvisioningClient sees the exchange unchanged.
+//
+// Protocol notes:
+// - rnsapid's WS is fully async: link.open replies with an immediate ack
+//   carrying the computed link_id, then fires session-scoped
+//   link.open.phase events, then a terminal link.established (success) or
+//   link.open.failed (failure). We correlate everything by a client-
+//   generated integer `id`.
+// - link.request is likewise async: immediate link.request.result ack
+//   (ignored here) + later link.request.response / link.request.failed
+//   events, correlated by echoed id.
+// - The microReticulum provisioning surface is always
+//   `rnstransport.remote.management`, so we hard-code
+//   app_name="rnstransport", aspects=["remote","management"] and only
+//   surface destination_hash to the user.
+// - Targets anonymous-session rnsapid deployments only (auth disabled).
 class RnsTransport {
   constructor(){
     this.ws = null;
-    this.params = null;          // { meshchatxUrl, destinationHash, aspect, autoIdentify }
+    this.params = null;          // { rnsapidUrl, destinationHash, autoIdentify }
     this.onBytes = () => {};
     this.onStatus = () => {};
     this._userClosing = false;
-    // True once an involuntary close (RNS link_closed broadcast, no_active_link
-    // reply, etc.) has fired _handleInvoluntaryClose — keeps the teardown
-    // path idempotent under racing signals.
+    // True once an involuntary close (link.closed broadcast, link.request
+    // failed with a link-is-dead reason, ws.onclose, etc.) has fired
+    // _handleInvoluntaryClose — keeps teardown idempotent under racing
+    // signals.
     this._involuntaryClosed = false;
     this._reqIdCounter = 1;
-    this._waiters = new Map();   // request_id → { onSuccess(body), onFailure(reason), onPhase?, onProgress? }
-    this._pingWaiter = null;     // { resolve, reject, timerId } — for ws-verify ping/pong
+    this._sessionId = null;
+    this._linkId = null;         // 32-hex, populated by link.open.result ack
+    this._authWaiter = null;     // { resolve, reject, timerId } — connect stage 2
+    this._openWaiter = null;     // { id, onAck, onPhase, onEstablished, onFailed, onError } — connect stage 3
+    this._waiters = new Map();   // id → { onSuccess, onFailure } — one-shot targeted replies
+    this._pendingRequests = new Map(); // id → { onResponse, onFailed, timerId } — async link.request completion
     this._kissOut = new KissDecoder((cmd, payload) => this._onOutgoingKissFrame(cmd, payload));
-    this._unloadHandler = null;  // bound page-unload listener (attached during connect)
-    // Advertised default for ProvisioningClient.request timeouts when this
-    // transport is in use. LoRa Resource transfers commonly take 10-30s for
-    // schemas; the snappy 5s default used on Serial/BLE/WebSocket times out
-    // before the response can land. ProvisioningClient picks this up via
-    // duck-typing if the property is set on the transport.
+    this._unloadHandler = null;
+    // Advertised default for ProvisioningClient.request timeouts. LoRa
+    // Resource transfers commonly take 10-30s for schemas; ProvisioningClient
+    // picks this up via duck-typing.
     this.defaultRequestTimeoutMs = 30000;
     // Bytes are expensive on LoRa — request heatshrink-compressed responses
     // for bulky ops (schema, state). ProvisioningClient inspects this flag.
     this.compressionPreferred = true;
   }
 
-  // Server phase strings → user-friendly status labels.
+  // rnsapid phase strings → user-friendly status labels.
   static PHASE_LABELS = {
     finding_path: 'Finding path',
     establishing_link: 'Establishing link',
     identifying: 'Authenticating',
   };
 
-  // Server failure_reason strings → human-friendly error messages.
+  // rnsapid reason codes / internal error strings → human-friendly messages.
   static FAILURE_LABELS = {
-    no_path_to_destination: 'No path to destination (no announce received yet?)',
-    link_establishment_timeout: 'Link establishment timed out',
-    no_identity_for_destination: 'Identity not recalled for destination',
-    no_local_identity: 'No local identity available on MeshChatX',
+    no_known_identity: 'Identity not recalled for destination (no announce received yet?)',
+    link_establishment_timed_out: 'Link establishment timed out',
+    identify_failed: 'Authentication failed',
+    invalid_request: 'Invalid request',
+    internal: 'Internal server error',
+    unknown_link: 'Link is not active',
     no_active_link: 'Link is not active',
     ws_closed: 'WebSocket disconnected',
-    timeout: 'Operation timed out',
-    ws_verify_timeout: 'MeshChatX did not respond to ping',
-    missing_destination_or_aspect: 'Missing destination hash or aspect',
-    invalid_destination_hash: 'Destination hash is not valid hex',
+    auth_timeout: 'rnsapid did not attach the session in time',
+    not_anonymous: 'rnsapid requires authentication (not supported here)',
+    link_closed: 'Link closed',
+    link_open_timeout: 'Link open timed out (no progress from rnsapid)',
   };
   static _friendlyFailure(reason){
     if (!reason) return 'failure';
@@ -938,36 +959,42 @@ class RnsTransport {
   async connect(params){
     this.params = params;
     this._involuntaryClosed = false;
-    const { meshchatxUrl, destinationHash, aspect, autoIdentify } = params;
-    if (!meshchatxUrl) throw new Error('missing MeshChatX URL');
+    this._linkId = null;
+    this._sessionId = null;
+    const { rnsapidUrl, destinationHash, autoIdentify } = params;
+    if (!rnsapidUrl) throw new Error('missing rnsapid URL');
     if (!destinationHash || !/^[0-9a-fA-F]{32}$/.test(destinationHash))
       throw new Error('destination hash must be 32 hex characters');
-    if (!aspect) throw new Error('missing aspect');
 
-    // Stage 1: open the WebSocket to MeshChatX.
+    // Stage 1: open the WebSocket to rnsapid.
     this.onStatus({state:'connecting', info: 'WS connecting'});
     await new Promise((resolve, reject) => {
       try {
-        this.ws = new WebSocket(meshchatxUrl);
+        this.ws = new WebSocket(rnsapidUrl);
         let opened = false;
         this.ws.onopen = () => {
           opened = true;
-          // Attach unload handlers immediately on WS open. From this point on,
-          // a page refresh / tab close can race with an in-flight rns.link.open,
-          // and we want a synchronous best-effort teardown to ride along.
           this._attachUnloadHandlers();
           resolve();
         };
         this.ws.onmessage = (e) => this._onWsMessage(e);
         this.ws.onerror = () => { if (!opened) reject(new Error('WebSocket connect failed (check URL / TLS / firewall)')); };
         this.ws.onclose = () => {
-          // Fail any in-flight waiters so callers don't hang.
           for (const w of this._waiters.values()) { try { w.onFailure && w.onFailure('ws_closed'); } catch(_) {} }
           this._waiters.clear();
-          if (this._pingWaiter) {
-            const w = this._pingWaiter; this._pingWaiter = null;
+          for (const p of this._pendingRequests.values()) {
+            try { clearTimeout(p.timerId); } catch(_) {}
+            try { p.onFailed && p.onFailed('ws_closed'); } catch(_) {}
+          }
+          this._pendingRequests.clear();
+          if (this._authWaiter) {
+            const w = this._authWaiter; this._authWaiter = null;
             try { clearTimeout(w.timerId); } catch(_) {}
             try { w.reject(new Error('ws_closed')); } catch(_) {}
+          }
+          if (this._openWaiter) {
+            const w = this._openWaiter; this._openWaiter = null;
+            try { w.onError('ws_closed'); } catch(_) {}
           }
           this._detachUnloadHandlers();
           this.onStatus({state: this._userClosing ? 'idle' : 'closed'});
@@ -975,41 +1002,37 @@ class RnsTransport {
       } catch (e) { this.onStatus({state:'error', info: e.message}); reject(e); }
     });
 
-    // Stage 2: verify the WS is actually a working MeshChatX endpoint
-    // (and not, say, a different server that happens to accept WS upgrades)
-    // by sending a ping and waiting for a pong. Confirms bidirectional
-    // message flow before we commit to the slow Link setup.
-    this.onStatus({state:'connecting', info: 'WS verifying'});
+    // Stage 2: wait for rnsapid's auth.session.attached first frame. With
+    // [auth] enabled = false it arrives immediately after WS open with
+    // is_anonymous:true — that's the confirmation that we're talking to
+    // rnsapid and not, say, some other server that accepts WS upgrades.
+    this.onStatus({state:'connecting', info: 'Attaching session'});
     try {
-      await this._pingServer(5000);
+      const attach = await this._waitAuthAttach(5000);
+      this._sessionId = attach.session_id || null;
+      if (attach.is_anonymous !== true) {
+        try { this.ws && this.ws.close(); } catch(_) {}
+        throw new Error('not_anonymous');
+      }
     } catch (e) {
-      const reason = e && e.message === 'timeout' ? 'ws_verify_timeout' : (e.message || 'ws_verify_failed');
+      const reason = e && e.message === 'timeout' ? 'auth_timeout' : (e.message || 'auth_failed');
       this.onStatus({state:'error', info: RnsTransport._friendlyFailure(reason)});
       try { this.ws && this.ws.close(); } catch(_) {}
       throw new Error(reason);
     }
 
-    // Stage 3: open the Link (and optionally identify) via the MeshChatX backend.
-    // The server emits 'phase' events as it makes progress through path discovery,
-    // link establishment, and identification — surface them as their friendly labels.
-    this.onStatus({state:'connecting', info: 'Link connecting'});
+    // Stage 3: open the Link via rnsapid's async link.open flow. Immediate
+    // link.open.result ack populates this._linkId; link.open.phase events
+    // reset the idle timer as progress is made; terminal link.established
+    // resolves, link.open.failed rejects with a stable reason code.
+    this.onStatus({state:'connecting', info: 'Opening link'});
     try {
-      const result = await this._sendAndWait('rns.link.open', {
+      await this._openLink({
         destination_hash: destinationHash.toLowerCase(),
-        aspect,
         auto_identify: !!autoIdentify,
-      }, {
-        // Idle-timer resets on each phase event (finding_path →
-        // establishing_link → identifying), so a server making progress won't
-        // trip this even on slow LoRa.
-        timeoutMs: 30000,
-        onPhase: (phase) => {
-          const label = RnsTransport.PHASE_LABELS[phase] || phase;
-          this.onStatus({state:'connecting', info: label});
-        },
       });
-      const ident = result && result.identified ? ' (identified)' : '';
-      this.onStatus({state:'connected', info: aspect + ' @ ' + destinationHash.slice(0,8) + ident});
+      const ident = autoIdentify ? ' (identified)' : '';
+      this.onStatus({state:'connected', info: destinationHash.slice(0,8) + ident});
     } catch (e) {
       const reason = (e && e.message) || 'failure';
       this.onStatus({state:'error', info: RnsTransport._friendlyFailure(reason)});
@@ -1018,28 +1041,20 @@ class RnsTransport {
     }
   }
 
-  // Best-effort synchronous teardown when the page is being unloaded
-  // (reload, tab close, navigation). Without this, the server keeps polling
-  // path-discovery / link-establishment for an in-flight rns.link.open, may
-  // cache a half-finished link, and emits broadcast events to a renderer
-  // that's already torn down. We can't await here — the page is dying — but
-  // browsers do flush queued WebSocket frames before the connection terminates,
-  // so a fire-and-forget rns.link.close + a clean WebSocket.close(1000) gets the
-  // message to the server in practice.
+  // Best-effort synchronous teardown when the page is being unloaded.
+  // Browsers flush queued WebSocket frames before the connection terminates,
+  // so a fire-and-forget link.close + a clean WebSocket.close(1000) reaches
+  // the server in practice.
   _attachUnloadHandlers(){
     if (this._unloadHandler) return;
     this._unloadHandler = () => {
       try {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN && this.params) {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN && this._linkId) {
           this.ws.send(JSON.stringify({
-            type: 'rns.link.close',
-            request_id: this._nextReqId(),
-            destination_hash: this.params.destinationHash.toLowerCase(),
-            aspect: this.params.aspect,
+            type: 'link.close',
+            id: this._nextReqId(),
+            link_id: this._linkId,
           }));
-          // Status 1000 = normal closure. Without this the browser may emit
-          // an abnormal-close (1006) which the server can't distinguish from a
-          // network error.
           this.ws.close(1000, 'page-unload');
         }
       } catch (_) { /* page is dying; nothing useful to do */ }
@@ -1055,24 +1070,69 @@ class RnsTransport {
     this._unloadHandler = null;
   }
 
-  // Send a {type:"ping"} JSON frame and wait for the matching {type:"pong"}.
-  // MeshChatX's main /ws bus has supported this since the WebSocket API was
-  // documented (meshchatx_api.md §2.1).
-  _pingServer(timeoutMs){
+  _waitAuthAttach(timeoutMs){
     return new Promise((resolve, reject) => {
       const timerId = setTimeout(() => {
-        if (this._pingWaiter && this._pingWaiter.timerId === timerId) {
-          this._pingWaiter = null;
+        if (this._authWaiter && this._authWaiter.timerId === timerId) {
+          this._authWaiter = null;
           reject(new Error('timeout'));
         }
       }, timeoutMs);
-      this._pingWaiter = { resolve, reject, timerId };
-      try { this.ws.send(JSON.stringify({type:'ping'})); }
-      catch (e) {
-        clearTimeout(timerId);
-        this._pingWaiter = null;
-        reject(e);
-      }
+      this._authWaiter = { resolve, reject, timerId };
+    });
+  }
+
+  _openLink({destination_hash, auto_identify}){
+    return new Promise((resolve, reject) => {
+      const id = this._nextReqId();
+      // Overall idle-timer: resets on ack + each phase event. A server
+      // making progress won't trip this even on slow LoRa; a dead server
+      // will.
+      const OPEN_IDLE_TIMEOUT_MS = 45000;
+      let timerId;
+      const armTimer = () => {
+        if (timerId !== undefined) clearTimeout(timerId);
+        timerId = setTimeout(() => {
+          if (this._openWaiter && this._openWaiter.id === id) {
+            this._openWaiter = null;
+            reject(new Error('link_open_timeout'));
+          }
+        }, OPEN_IDLE_TIMEOUT_MS);
+      };
+      const done = () => {
+        if (timerId !== undefined) clearTimeout(timerId);
+        if (this._openWaiter && this._openWaiter.id === id) this._openWaiter = null;
+      };
+      this._openWaiter = {
+        id,
+        onAck: (msg) => {
+          armTimer();
+          this._linkId = msg.link_id || null;
+          // Cached ACTIVE link: no phase events or link.established will
+          // fire, so resolve on the ack.
+          if (msg.reused === true) { done(); resolve(msg); }
+        },
+        onPhase: (phase) => {
+          armTimer();
+          const label = RnsTransport.PHASE_LABELS[phase] || phase;
+          this.onStatus({state:'connecting', info: label});
+        },
+        onEstablished: (msg) => { done(); resolve(msg); },
+        onFailed: (reason /*, detail */) => { done(); reject(new Error(reason || 'failure')); },
+        onError: (err) => { done(); reject(new Error(err || 'error')); },
+      };
+      const frame = {
+        type: 'link.open',
+        id,
+        destination_hash,
+        app_name: 'rnstransport',
+        aspects: ['remote', 'management'],
+        auto_identify,
+        establishment_timeout: 25.0,
+        path_lookup_timeout: 25.0,
+      };
+      try { this.ws.send(JSON.stringify(frame)); armTimer(); }
+      catch (e) { done(); reject(e); }
     });
   }
 
@@ -1082,51 +1142,60 @@ class RnsTransport {
     await this.connect(this.params);
   }
 
-  // The upper layer hands us KISS bytes. Decode the frame; if it's a
-  // PROVISION_REQ, unwrap it onto rns.link.request. Other opcodes are silently
-  // dropped (legacy KISS / CMD_RESET / etc are not transported over this link).
+  // The upper layer hands us KISS bytes. Decode; if PROVISION_REQ, unwrap
+  // onto link.request. Other opcodes are silently dropped (legacy KISS /
+  // CMD_RESET / etc are not transported over this link).
   async send(bytes){
     this._kissOut.feed(bytes);
   }
 
   _onOutgoingKissFrame(cmd, payload){
     if (cmd !== CMD_PROVISION_REQ) return;
-    const { destinationHash, aspect } = this.params;
-    this._sendAndWait('rns.link.request', {
-      destination_hash: destinationHash.toLowerCase(),
-      aspect,
-      path: '/provision',
-      data_b64: RnsTransport._b64Encode(payload),
-    }, {
-      onSuccess: (body) => {
-        const respPayload = RnsTransport._b64Decode(body.body_b64 || '');
-        const frame = kissEncode(CMD_PROVISION_RSP, respPayload);
-        try { this.onBytes(frame); } catch(_) {}
+    if (!this._linkId) return; // no link — nothing to send on
+    const id = this._nextReqId();
+    // ProvisioningClient enforces its own request timeout; this is a
+    // belt-and-suspenders per-entry timer so a lost async event can't leak
+    // a pending entry indefinitely.
+    const timerId = setTimeout(() => { this._pendingRequests.delete(id); }, this.defaultRequestTimeoutMs + 5000);
+    this._pendingRequests.set(id, {
+      timerId,
+      onResponse: (payloadBytes) => {
+        this._pendingRequests.delete(id);
+        clearTimeout(timerId);
+        try { this.onBytes(kissEncode(CMD_PROVISION_RSP, payloadBytes)); } catch(_) {}
       },
-      // Generic failures (timeout, etc.) drop — ProvisioningClient's own
-      // request timeout rejects the caller cleanly. But 'no_active_link' is
-      // MeshChatX's authoritative "this link is gone" reply: fast-path the
-      // transport into the involuntary-close teardown so we surface the drop
-      // and (if autoReconnect is on) kick startReconnect right away, rather
-      // than waiting for the broadcast / per-request UI timeout. 'ws_closed'
-      // is belt-and-suspenders against ws.onclose racing with an in-flight
-      // waiter — _handleInvoluntaryClose is idempotent.
-      onFailure: (reason) => {
-        if (reason === 'no_active_link' || reason === 'ws_closed') {
+      onFailed: (reason) => {
+        this._pendingRequests.delete(id);
+        clearTimeout(timerId);
+        // If rnsapid says the link is dead, fast-path the transport into
+        // involuntary-close teardown so autoReconnect (if on) engages now
+        // rather than waiting for the broadcast / UI timeout.
+        // _handleInvoluntaryClose is idempotent under racing signals.
+        if (reason === 'unknown_link' || reason === 'no_active_link' || reason === 'ws_closed') {
           this._handleInvoluntaryClose(reason);
         }
       },
     });
+    try {
+      this.ws.send(JSON.stringify({
+        type: 'link.request',
+        id,
+        link_id: this._linkId,
+        path: '/provision',
+        data_b64: RnsTransport._b64Encode(payload),
+        timeout: 30,
+      }));
+    } catch (_) {
+      this._pendingRequests.delete(id);
+      clearTimeout(timerId);
+    }
   }
 
   async disconnect(){
     this._userClosing = true;
-    if (this.ws && this.ws.readyState === WebSocket.OPEN && this.params) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN && this._linkId) {
       try {
-        await this._sendAndWait('rns.link.close', {
-          destination_hash: this.params.destinationHash.toLowerCase(),
-          aspect: this.params.aspect,
-        }, {});
+        await this._sendAndWait('link.close', { link_id: this._linkId });
       } catch(_) {}
     }
     try { if (this.ws) this.ws.close(); } catch(_) {}
@@ -1135,35 +1204,29 @@ class RnsTransport {
 
   async forceClose(){
     this._userClosing = false;
-    // Evict MeshChatX's cached link for our (aspect, destination_hash) before
-    // tearing down the WS. MeshChatX caches by remote, not by client, and
-    // reuses the cache on the next rns.link.open until its own keepalive
-    // expires — so after a remote Reboot the rebuilt session would otherwise
-    // inherit a stale link that's already dead on the RNS side. Fire-and-
-    // forget: browsers flush queued WS frames before close (same pattern as
-    // the page-unload handler above), so the close request reaches MeshChatX
-    // and we don't have to block on a reply we don't need.
-    if (this.ws && this.ws.readyState === WebSocket.OPEN && this.params) {
+    // Fire-and-forget link.close so rnsapid tears down its side before we
+    // drop the WS — otherwise the daemon's cached Link would outlive the
+    // remote reboot and the next connect() would inherit a stale link.
+    if (this.ws && this.ws.readyState === WebSocket.OPEN && this._linkId) {
       try {
         this.ws.send(JSON.stringify({
-          type: 'rns.link.close',
-          request_id: this._nextReqId(),
-          destination_hash: this.params.destinationHash.toLowerCase(),
-          aspect: this.params.aspect,
+          type: 'link.close',
+          id: this._nextReqId(),
+          link_id: this._linkId,
         }));
       } catch(_) {}
     }
     try { if (this.ws) this.ws.close(); } catch(_) {}
   }
 
-  // Fired when the RNS Link or the underlying WS goes down without us asking
-  // (MeshChatX link_closed broadcast, no_active_link reply on a request, etc).
-  // Fails in-flight waiters immediately so callers don't sit on a 30s
-  // ProvisioningClient timeout, then closes the WS — ws.onclose is what
-  // actually emits 'closed' onStatus (since _userClosing stays false), which
-  // routes through onTransportStatus to startReconnect when autoReconnect is
-  // on. Idempotent so concurrent signals (broadcast + request failure +
-  // ws.onclose racing during a remote reboot) collapse to one teardown.
+  // Fired when the RNS Link or the underlying WS goes down without us
+  // asking (link.closed broadcast, link.request.failed with dead-link
+  // reason, ws.onclose racing). Fails in-flight waiters immediately so
+  // callers don't sit on a 30s ProvisioningClient timeout, then closes the
+  // WS — ws.onclose emits 'closed' onStatus (since _userClosing stays
+  // false), routing through onTransportStatus to startReconnect when
+  // autoReconnect is on. Idempotent so concurrent signals collapse to one
+  // teardown.
   _handleInvoluntaryClose(reason){
     if (this._involuntaryClosed) return;
     this._involuntaryClosed = true;
@@ -1171,36 +1234,34 @@ class RnsTransport {
       try { w.onFailure && w.onFailure(reason); } catch(_) {}
     }
     this._waiters.clear();
+    for (const p of this._pendingRequests.values()) {
+      try { clearTimeout(p.timerId); } catch(_) {}
+      try { p.onFailed && p.onFailed(reason); } catch(_) {}
+    }
+    this._pendingRequests.clear();
     try { if (this.ws) this.ws.close(); } catch(_) {}
   }
 
-  // Send a JSON command and return a promise that resolves on the matching
-  // {status:"success"} frame and rejects on {status:"failure"} or after
-  // timeoutMs of idle (phase/progress events count as activity and reset the
-  // idle timer). Optional onPhase/onProgress callbacks consume intermediate
-  // frames.
-  _sendAndWait(type, body, { onPhase, onProgress, onSuccess, onFailure, timeoutMs = 15000 } = {}){
-    const request_id = this._nextReqId();
-    const frame = Object.assign({ type, request_id }, body);
+  // Send a one-shot targeted command (link.close, link.status, link.list,
+  // link.identify) with a client-generated `id`; resolve on the matching
+  // `<msg-type>.result` frame or reject on `{type: "error", id, error}`.
+  // The async link.open and link.request flows have their own tracking.
+  _sendAndWait(type, body, { timeoutMs = 15000 } = {}){
+    const id = this._nextReqId();
+    const frame = Object.assign({ type, id }, body);
     return new Promise((resolve, reject) => {
-      let timerId = null;
-      const armTimer = () => {
-        if (timerId !== null) clearTimeout(timerId);
-        timerId = setTimeout(() => {
-          if (!this._waiters.has(request_id)) return;
-          this._waiters.delete(request_id);
-          try { onFailure && onFailure('timeout'); } catch(_) {}
+      const timerId = setTimeout(() => {
+        if (this._waiters.has(id)) {
+          this._waiters.delete(id);
           reject(new Error(type + ' timeout after ' + timeoutMs + 'ms'));
-        }, timeoutMs);
-      };
-      this._waiters.set(request_id, {
-        onPhase: (p) => { armTimer(); if (onPhase) try { onPhase(p); } catch(_) {} },
-        onProgress: (pr) => { armTimer(); if (onProgress) try { onProgress(pr); } catch(_) {} },
-        onSuccess: (msg) => { if (timerId !== null) clearTimeout(timerId); if (onSuccess) try { onSuccess(msg); } catch(_) {} resolve(msg); },
-        onFailure: (reason) => { if (timerId !== null) clearTimeout(timerId); if (onFailure) try { onFailure(reason); } catch(_) {} reject(new Error(reason || 'failure')); },
+        }
+      }, timeoutMs);
+      this._waiters.set(id, {
+        onSuccess: (msg) => { clearTimeout(timerId); resolve(msg); },
+        onFailure: (reason) => { clearTimeout(timerId); reject(new Error(reason || 'failure')); },
       });
-      try { this.ws.send(JSON.stringify(frame)); armTimer(); }
-      catch (e) { if (timerId !== null) clearTimeout(timerId); this._waiters.delete(request_id); reject(e); }
+      try { this.ws.send(JSON.stringify(frame)); }
+      catch (e) { clearTimeout(timerId); this._waiters.delete(id); reject(e); }
     });
   }
 
@@ -1210,45 +1271,73 @@ class RnsTransport {
     catch (_) { return; }
     if (!msg || typeof msg.type !== 'string') return;
 
-    // ws-verify ping/pong (used during connect() stage 2).
-    if (msg.type === 'pong') {
-      const w = this._pingWaiter;
-      if (w) { this._pingWaiter = null; try { clearTimeout(w.timerId); } catch(_) {} w.resolve(msg); }
-      return;
-    }
-    if (!msg.type.startsWith('rns.link.')) return; // ignore other broadcasts (config, announce, …)
-
-    // Async server-pushed events (no request_id correlation). MeshChatX fires
-    // rns.link.event { event: 'link_closed' } from RNS's link_closed_callback —
-    // so it covers remote teardowns, RNS-detected link timeouts (e.g. after a
-    // remote reboot), and our own teardown alike. (packet_received variants
-    // are out of scope — Provisioning is request/response, so unsolicited
-    // packets have no consumer yet.)
-    if (msg.type === 'rns.link.event') {
-      if (msg.event !== 'link_closed') return;
-      // The broadcast bus is per-MeshChatX-instance: events for other links
-      // (different destination_hash / aspect) share it, so filter to ours.
-      const dh = (msg.destination_hash || '').toLowerCase();
-      const wantDh = (this.params && this.params.destinationHash || '').toLowerCase();
-      if (!wantDh || dh !== wantDh) return;
-      if (this.params && msg.aspect !== this.params.aspect) return;
-      // Suppress for our own disconnect() — link_closed fires for our
-      // outbound rns.link.close too, and we don't want auto-reconnect to
-      // engage after the user clicked Disconnect.
-      if (this._userClosing) return;
-      this._handleInvoluntaryClose('link_closed');
+    // Stage-2 session attach.
+    if (msg.type === 'auth.session.attached') {
+      const w = this._authWaiter;
+      if (w) {
+        this._authWaiter = null;
+        try { clearTimeout(w.timerId); } catch(_) {}
+        w.resolve(msg);
+      }
       return;
     }
 
-    const w = this._waiters.get(msg.request_id);
-    if (!w) return;
-    const status = msg.status;
-    if (status === 'phase') { if (w.onPhase) try { w.onPhase(msg.phase); } catch(_) {} return; }
-    if (status === 'progress') { if (w.onProgress) try { w.onProgress(msg.progress); } catch(_) {} return; }
-    // Terminal frame — drop the waiter.
-    this._waiters.delete(msg.request_id);
-    if (status === 'success') { w.onSuccess(msg); }
-    else { w.onFailure(msg.failure_reason || 'failure'); }
+    // Stage-3 async link.open flow: ack + phases + terminal event.
+    if (this._openWaiter && msg.id != null && msg.id === this._openWaiter.id) {
+      const w = this._openWaiter;
+      if (msg.type === 'link.open.result') { w.onAck(msg); return; }
+      if (msg.type === 'link.open.phase') { w.onPhase(msg.phase); return; }
+      if (msg.type === 'link.established') { w.onEstablished(msg); return; }
+      if (msg.type === 'link.open.failed') { w.onFailed(msg.reason, msg.detail); return; }
+      if (msg.type === 'error') { w.onError(msg.error); return; }
+      // fall through — some other id-carrying frame (shouldn't happen)
+    }
+
+    // Async link.request completion events (id echoed from the originating
+    // link.request; rnsapid's U2 change).
+    if (msg.type === 'link.request.response') {
+      const p = this._pendingRequests.get(msg.id);
+      if (p) {
+        const payload = RnsTransport._b64Decode(msg.response_b64 || '');
+        p.onResponse(payload);
+      }
+      return;
+    }
+    if (msg.type === 'link.request.failed') {
+      const p = this._pendingRequests.get(msg.id);
+      if (p) p.onFailed(msg.reason || 'failed');
+      return;
+    }
+    // link.request.result is just the "queued" ack — the real response
+    // arrives via link.request.response. Ignore.
+    if (msg.type === 'link.request.result') return;
+
+    // Session-scoped link.closed for our link → involuntary close, unless
+    // the user initiated it via disconnect() (rnsapid emits link.closed
+    // for locally-initiated closes too, and auto-reconnect shouldn't
+    // engage after Disconnect).
+    if (msg.type === 'link.closed') {
+      const linkId = (msg.link_id || '').toLowerCase();
+      if (this._linkId && linkId === this._linkId.toLowerCase()) {
+        if (!this._userClosing) this._handleInvoluntaryClose('link_closed');
+      }
+      return;
+    }
+
+    // Targeted one-shot replies (link.close.result, link.identify.result,
+    // link.status.result, link.list.result) and their error twin.
+    if (msg.id != null) {
+      const w = this._waiters.get(msg.id);
+      if (w) {
+        this._waiters.delete(msg.id);
+        if (msg.type === 'error') w.onFailure(msg.error || 'error');
+        else w.onSuccess(msg);
+        return;
+      }
+    }
+
+    // Ignore everything else (link.data.received, link.remote_identified,
+    // unsolicited link.data.sent, etc.).
   }
 }
 
@@ -1964,9 +2053,8 @@ function el(tag, attrs, children){
 const state = {
   transportName: observable('serial'),
   wsUrl: observable('ws://localhost:8080'),
-  rnsUrl: observable('wss://127.0.0.1:9337/ws'),
+  rnsUrl: observable('ws://localhost:8000/ws'),
   rnsDestHash: observable(''),
-  rnsAspect: observable('rnstransport.remote.management'),
   rnsAutoIdentify: observable(true),
   conn: observable({ state: 'idle' }),
   info: observable(null),
@@ -2114,9 +2202,8 @@ async function doConnect(){
     wireClient(client);
     if (name === 'ws') await transport.connect(state.wsUrl.get());
     else if (name === 'rns') await transport.connect({
-      meshchatxUrl: state.rnsUrl.get(),
+      rnsapidUrl: state.rnsUrl.get(),
       destinationHash: state.rnsDestHash.get(),
-      aspect: state.rnsAspect.get(),
       autoIdentify: state.rnsAutoIdentify.get(),
     });
     else await transport.connect();
@@ -2199,15 +2286,14 @@ async function startReconnect(){
         wireClient(client);
         await transport.connect(state.wsUrl.get());
       } else if (lastTransportName === 'rns') {
-        // MeshChatX WS is gone; rebuild and re-open the Link.
+        // rnsapid WS is gone; rebuild and re-open the Link.
         transport = new RnsTransport();
         transport.onStatus = onTransportStatus;
         client = new ProvisioningClient(transport);
         wireClient(client);
         await transport.connect({
-          meshchatxUrl: state.rnsUrl.get(),
+          rnsapidUrl: state.rnsUrl.get(),
           destinationHash: state.rnsDestHash.get(),
-          aspect: state.rnsAspect.get(),
           autoIdentify: state.rnsAutoIdentify.get(),
         });
       } else {
@@ -2607,7 +2693,7 @@ async function reboot(){
     // the host's serial connection survives the ESP32 reset — without it, the
     // read loop never observes a disconnect, 'closed' never fires, startReconnect
     // never runs, and the UI is stuck in "Reconnecting…" forever. On RNS it
-    // also fires rns.link.close so MeshChatX evicts its cached Link.
+    // also fires link.close so rnsapid evicts its cached Link.
     if (auto) state.reconnecting.set(true);
     showToast(auto
       ? 'Reboot command sent — reconnecting…'
@@ -2707,24 +2793,22 @@ function buildTopBar(){
   // Mount once; toggle visibility in update() so typing doesn't detach the
   // focused input (which would drop focus on every keystroke).
   wsHost.appendChild(wsInput);
-  // RNS-over-MeshChatX config: WS URL + destination hash + aspect + auto-identify.
+  // RNS-over-rnsapid config: WS URL + destination hash + auto-identify. The
+  // provisioning aspect is fixed (rnstransport.remote.management) and
+  // hard-coded inside RnsTransport, so it's not surfaced in the UI.
   const rnsHost = el('span', { style: { display: 'inline-flex', gap: '4px', alignItems: 'center' } });
-  const rnsUrlInput = el('input', { type: 'text', placeholder: 'ws://host:port/ws', style: { width: '200px' }, title: 'MeshChatX WebSocket URL' });
+  const rnsUrlInput = el('input', { type: 'text', placeholder: 'ws://host:port/ws', style: { width: '200px' }, title: 'rnsapid WebSocket URL (anonymous session; auth disabled)' });
   rnsUrlInput.value = state.rnsUrl.get();
   rnsUrlInput.oninput = (e) => state.rnsUrl.set(e.target.value);
   const rnsHashInput = el('input', { type: 'text', placeholder: 'destination hash (32 hex)', style: { width: '260px', fontFamily: 'monospace' }, maxlength: '32', title: 'Remote node destination hash (32 hex chars)' });
   rnsHashInput.value = state.rnsDestHash.get();
   rnsHashInput.oninput = (e) => state.rnsDestHash.set(e.target.value.trim());
-  const rnsAspectInput = el('input', { type: 'text', placeholder: 'aspect', style: { width: '220px' }, title: 'RNS destination aspect (dot-separated)' });
-  rnsAspectInput.value = state.rnsAspect.get();
-  rnsAspectInput.oninput = (e) => state.rnsAspect.set(e.target.value);
   const rnsIdentCb = el('input', { type: 'checkbox' });
   rnsIdentCb.checked = state.rnsAutoIdentify.get();
   rnsIdentCb.onchange = (e) => state.rnsAutoIdentify.set(e.target.checked);
   const rnsIdentLabel = el('label', { style: { display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--muted)' }, title: 'Send local identity on link establishment (required by /provision ALLOW_LIST)' }, [rnsIdentCb, 'authenticate']);
   rnsHost.appendChild(rnsUrlInput);
   rnsHost.appendChild(rnsHashInput);
-  rnsHost.appendChild(rnsAspectInput);
   rnsHost.appendChild(rnsIdentLabel);
   const connectBtn = el('button');
   const disconnectBtn = el('button', null, 'Disconnect');
@@ -2733,7 +2817,7 @@ function buildTopBar(){
   autoCheckbox.onchange = (e) => state.autoReconnect.set(e.target.checked);
   const autoLabel = el('label', { style: { display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--muted)' }, title: 'Reconnect automatically after a reboot to capture early boot logs' }, [autoCheckbox, 'auto-reconnect']);
   const pill = el('span', { class: 'pill' });
-  const opts = [['serial','Serial'], ['ble','Bluetooth'], ['ws','WebSocket'], ['rns','RNS (via MeshChatX)']];
+  const opts = [['serial','Serial'], ['ble','Bluetooth'], ['ws','WebSocket'], ['rns','RNS (via rnsapid)']];
   for (const [v, lbl] of opts) sel.appendChild(el('option', { value: v }, lbl));
   sel.value = state.transportName.get();
   sel.onchange = (e) => state.transportName.set(e.target.value);
@@ -2775,11 +2859,9 @@ function buildTopBar(){
     if (showRns) {
       if (document.activeElement !== rnsUrlInput && rnsUrlInput.value !== state.rnsUrl.get()) rnsUrlInput.value = state.rnsUrl.get();
       if (document.activeElement !== rnsHashInput && rnsHashInput.value !== state.rnsDestHash.get()) rnsHashInput.value = state.rnsDestHash.get();
-      if (document.activeElement !== rnsAspectInput && rnsAspectInput.value !== state.rnsAspect.get()) rnsAspectInput.value = state.rnsAspect.get();
       if (rnsIdentCb.checked !== state.rnsAutoIdentify.get()) rnsIdentCb.checked = state.rnsAutoIdentify.get();
       rnsUrlInput.disabled = connecting || connected || reconnecting;
       rnsHashInput.disabled = connecting || connected || reconnecting;
-      rnsAspectInput.disabled = connecting || connected || reconnecting;
       rnsIdentCb.disabled = connecting || connected || reconnecting;
     }
     connectBtn.disabled = connecting || connected || reconnecting;
@@ -2816,7 +2898,6 @@ function buildTopBar(){
   state.wsUrl.subscribe(update);
   state.rnsUrl.subscribe(update);
   state.rnsDestHash.subscribe(update);
-  state.rnsAspect.subscribe(update);
   state.rnsAutoIdentify.subscribe(update);
 
   state.autoReconnect.subscribe(update);
