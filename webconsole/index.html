@@ -2053,7 +2053,7 @@ function el(tag, attrs, children){
 const state = {
   transportName: observable('serial'),
   wsUrl: observable('ws://localhost:8080'),
-  rnsUrl: observable('ws://localhost:8000/ws'),
+  rnsUrl: observable('wss://localhost:8000/ws'),
   rnsDestHash: observable(''),
   rnsAutoIdentify: observable(true),
   conn: observable({ state: 'idle' }),
