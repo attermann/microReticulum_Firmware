@@ -30,6 +30,9 @@
 #ifdef HAS_GPIO
 #include "GPIO.h"
 #endif
+#ifdef HAS_BME
+#include "BME680.h"
+#endif
 
 #include <Arduino.h>
 #include <SPI.h>
@@ -494,6 +497,10 @@ void setup() {
 #ifdef HAS_GPIO
   GPIO::init();
   INFO("GPIO control initialized");
+#endif
+
+#ifdef HAS_BME
+  BME680::init();
 #endif
 
   // Configure WDT
@@ -1082,6 +1089,11 @@ TRACEF("op_mode: %U", op_mode);
         //nomadnet_destination.register_request_handler("/page/stack.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
         nomadnet_destination.register_request_handler("/page/device.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
         //nomadnet_destination.register_request_handler("/page/device.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
+#ifdef HAS_BME
+        if (BME680::bme_installed) {
+          nomadnet_destination.register_request_handler("/page/telemetry.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
+        }
+#endif
 
         // Announce once at startup so a client that's already listening can
         // discover us immediately. The node name is sent as the announce

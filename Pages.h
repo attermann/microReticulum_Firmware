@@ -23,6 +23,9 @@
 #include <microReticulum/Identity.h>
 #include <microReticulum/Utilities/OS.h>
 #include <microReticulum/Bytes.h>
+#ifdef HAS_BME
+#include "BME680.h"
+#endif
 // CBA NOTE Thge following <MsgPack.h> include *MUST* precede the "Utilities.h" include
 #include <MsgPack.h>
 
@@ -125,6 +128,11 @@ RNS::Bytes serve_page(
       content << ">> Device\n";
       content << "`!`[• General`:/page/device.mu`c=general]`\n";
       content << "`!`[• Interface`:/page/device.mu`c=interfaces]`\n";
+#ifdef HAS_BME
+      if (BME680::bme_installed) {
+        content << "`!`[• Telemetry`:/page/telemetry.mu]`\n";
+      }
+#endif
       if (remote_identity) content << "\n🛡️ Verified identity: " << remote_identity.hash().toHex() << "\n";
       else content << "\n⚠️ Unknown identity. Identity must be provided for access to this site.\n";
     }
@@ -290,6 +298,19 @@ RNS::Bytes serve_page(
         content = "CATEGORY NOT FOUND\n";
       }
     }
+#ifdef HAS_BME
+    else if (path == "/page/telemetry.mu") {
+      if (!BME680::bme.performReading()) {
+        content = "> Telemetry\n\n`!`❌ Failed to perform BME680 reading.`\n";
+      } else {
+        content = "> Environmental Telemetry\n\n";
+        content << "🌡️ Temperature: " << std::to_string((float)BME680::bme.temperature) << " °C\n";
+        content << "💧 Humidity: " << std::to_string((float)BME680::bme.humidity) << " %\n";
+        content << "⏲️ Pressure: " << std::to_string((float)(BME680::bme.pressure / 100.0)) << " hPa\n";
+        content << "💨 Gas Resistance: " << std::to_string((float)(BME680::bme.gas_resistance / 1000.0)) << " KOhms\n";
+      }
+    }
+#endif
     else {
       content = "PATH NOT FOUND\n";
     }
