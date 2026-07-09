@@ -1070,7 +1070,7 @@ TRACEF("op_mode: %U", op_mode);
 #ifdef URTN_STATS_PAGES
       if (nomadnet_enabled) {
         // Create an IN/SINGLE destination on the NomadNet aspect, so
-        // clients (this example, or a Python NomadNet browser) can find
+        // clients (like a Python NomadNet browser) can find
         // us by aspect/announce and open a Link.
         nomadnet_destination = RNS::Destination(
           RNS::Transport::identity(),
@@ -1086,9 +1086,7 @@ TRACEF("op_mode: %U", op_mode);
         //nomadnet_destination.register_request_handler("/page/index.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
         nomadnet_destination.register_request_handler("/page/index.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
         nomadnet_destination.register_request_handler("/page/stack.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
-        //nomadnet_destination.register_request_handler("/page/stack.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
         nomadnet_destination.register_request_handler("/page/device.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
-        //nomadnet_destination.register_request_handler("/page/device.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
 #ifdef HAS_BME
         if (BME680::bme_installed) {
           nomadnet_destination.register_request_handler("/page/telemetry.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);

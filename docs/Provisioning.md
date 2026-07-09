@@ -14,7 +14,7 @@ This guide walks through using the **RNode Console** (the single-page web app sh
   - [Serial (USB)](#serial-usb)
   - [Bluetooth (BLE)](#bluetooth-ble)
   - [WebSocket (WiFi)](#websocket-wifi)
-  - [RNS via MeshChatX](#rns-via-meshchatx)
+  - [RNS via ReticulumAPI](#rns-via-ReticulumAPI)
 - [Console tabs in detail](#console-tabs-in-detail)
 - [Caveats and pitfalls](#caveats-and-pitfalls)
   - [RNS over LoRa](#rns-over-lora)
@@ -35,9 +35,9 @@ A node's identity in the RNS sense is a long-lived Ed25519 keypair generated on 
 
 ## Opening the Console
 
-The Console is a static HTML file. Open `Release/console.html` from disk (drag-and-drop into Chrome / Edge), serve it from any static web server, or — when the device is in console mode — load it directly from the node's HTTP endpoint at `http://10.0.0.1/`.
+The Console is a static HTML file. Open `Release/console.html` from disk (drag-and-drop into Chrome / Edge / latest Firefox), serve it from any static web server, or — when the device is in console mode — load it directly from the node's HTTP endpoint at `http://10.0.0.1/`.
 
-The Console only depends on the browser's Web Serial, Web Bluetooth, and WebSocket APIs. Chrome and Chromium-derived Edge are the supported browsers; Firefox and Safari lack Web Serial / Web Bluetooth and can only use the WebSocket and RNS transports.
+The Console only depends on the browser's Web Serial, Web Bluetooth, and WebSocket APIs. Chrome and Chromium-derived Edge and the latest versions of Firefox are the supported browsers; Safari and older Firefox versions lack Web Serial / Web Bluetooth and can only use the WebSocket and RNS transports.
 
 > NOTE: Chrome's "Local Network Access Checks" feature may need to be temporarily disabled at `chrome://flags/#local-network-access-check` to connect to a node on the LAN, depending on your Chrome version.
 
@@ -46,7 +46,7 @@ The Console only depends on the browser's Web Serial, Web Bluetooth, and WebSock
 "Local" means you have a direct wire / radio link to the node: USB, BLE, or the same LAN. The recommended bring-up sequence for a fresh node:
 
 1. **Connect over Serial** (USB cable to the node).
-2. In the topbar, select `Transport: Serial` and click **Connect**. Pick the port for the device when Chrome prompts.
+2. In the topbar, select `Transport: Serial` and click **Connect**. Pick the port for the device when your browser prompts.
 3. Open the **Node Config** tab.
    - **Device Info** sub-tab: confirm board, platform, MCU, and firmware version.
    - **Radio** sub-tab: set frequency, bandwidth, spreading factor, coding rate, TX power. These are committed to EEPROM and only take effect on the *next* reboot when the device is in boot-into-TNC mode.
@@ -70,21 +70,21 @@ The same Provisioning protocol travels over a Reticulum Link, so any node reacha
 
 The firmware registers a destination on the aspect `rnstransport.remote.management`. When `RNS::Reticulum::remote_management_enabled(true)` is set (the default on this firmware), incoming Links to that destination route Provisioning frames into the Provisioner, and replies come back over the same Link. The microReticulum stack handles path discovery, Link establishment, and identification.
 
-The RNode Console does **not** itself speak RNS — your browser can't open a Reticulum Link directly. Instead it tunnels Provisioning frames through a **MeshChatX** instance running on your workstation, which acts as the RNS endpoint.
+The RNode Console does **not** itself speak RNS — your browser can't open a Reticulum Link directly. Instead it tunnels Provisioning frames through a **ReticulumAPI** instance running on your workstation, which acts as the RNS endpoint.
 
 ### Setup
 
-1. Install and run [MeshChatX](https://meshtastic.org/) on your workstation. Make sure it has at least one RNS interface configured that can reach the target node (typically a `TCPClientInterface` to your local rnsd, plus whatever LoRa / packet-radio interfaces sit between you and the node).
-2. MeshChatX exposes a WebSocket bus (default `ws://localhost:8000/ws` — confirm the path in your MeshChatX install) with a generic `rns.link.*` API. The Console uses this bus to ask MeshChatX to open a Link, send frames over it, and receive replies.
+1. Install and run [ReticulumAPI](https://github.com/attermann/ReticulumAPI) on your workstation. Make sure it has at least one RNS interface configured that can reach the target node (typically a `TCPClientInterface` to your local rnsd, plus whatever LoRa / packet-radio interfaces sit between you and the node).
+2. ReticulumAPI exposes a WebSocket bus (default `wss://localhost:8000/ws` — confirm the path in your ReticulumAPI install) with a generic `link.*` API. The Console uses this bus to ask ReticulumAPI to open a Link, send frames over it, and receive replies.
 3. **Obtain the destination hash of the remote node.** When a node announces, its `rnstransport.remote.management` destination shows up in Reticulum's path table. Grab the 16-byte hex hash with `rnsd` / `rnpath` / `rnstatus`, or read it off the local Console's **Transport Config → Metrics → Destinations → mgmt_destination** field.
-4. In the Console topbar, select `Transport: RNS (via MeshChatX)`. Fill in:
-   - **WebSocket URL** — your local MeshChatX endpoint (e.g. `ws://localhost:8000/ws`).
+4. In the Console topbar, select `Transport: RNS (via ReticulumAPI)`. Fill in:
+   - **WebSocket URL** — your local ReticulumAPI endpoint (e.g. `ws://localhost:8000/ws`).
    - **Destination hash** — the 32-hex-character hash from step 3.
    - **Aspect** — usually `rnstransport.remote.management` (default).
-   - **authenticate** — check this to identify on the Link with MeshChatX's local identity. Required if the node restricts management to an allow-list.
+   - **authenticate** — check this to identify on the Link with ReticulumAPI's local identity. Required if the node restricts management to an allow-list.
 5. Click **Connect**. The status pill walks through the phases: *WS connecting → WS verifying → Link connecting → Finding path → Establishing link → Identifying → Connected*. This commonly takes 10–30 seconds over LoRa, much longer than the snappy Serial / BLE / WebSocket paths — the Console raises the per-request timeout when the RNS transport is in use to accommodate Resource transfers.
 
-> **Note on MeshChatX.** MeshChatX is used here as a thin RNS-to-WebSocket bridge: it gives the browser something to talk to that knows how to open Reticulum Links. Any future tool implementing the same `rns.link.*` WebSocket protocol could be substituted. The Console caches its Link in MeshChatX, but a clean disconnect (`Disconnect` button, tab close, refresh) tells MeshChatX to evict the cache so the next session opens a fresh Link.
+> **Note on ReticulumAPI.** ReticulumAPI is used here as a thin RNS-to-WebSocket bridge: it gives the browser something to talk to that knows how to open Reticulum Links. Any future tool implementing the same `link.*` WebSocket protocol could be substituted. The Console caches its Link in ReticulumAPI, but a clean disconnect (`Disconnect` button, tab close, refresh) tells ReticulumAPI to evict the cache so the next session opens a fresh Link.
 
 ### Operating a remote node
 
@@ -104,14 +104,14 @@ Things that *don't* work over RNS:
 ### Serial (USB)
 
 - **Wire format:** standard RNode KISS over a USB CDC virtual serial port (`/dev/ttyACM*` on Linux/macOS, `COMx` on Windows).
-- **Browser API:** Web Serial. Chrome will prompt for permission the first time.
+- **Browser API:** Web Serial. Your browser might will prompt for permission the first time.
 - **Latency:** sub-millisecond. Best transport for first-boot provisioning and EEPROM work.
-- **Caveat:** after a physical USB disconnect/reconnect, Chrome can leave the `SerialPort` JS object in a half-bound state; the Console works around this but you may see "Failed to open serial port" once — clicking **Connect** again resolves it.
+- **Caveat:** after a physical USB disconnect/reconnect, your browser can leave the `SerialPort` JS object in a half-bound state; the Console works around this but you may see "Failed to open serial port" once — clicking **Connect** again resolves it.
 
 ### Bluetooth (BLE)
 
 - **Wire format:** KISS framed as binary writes to a Nordic-UART-like characteristic on the BLE GATT service exposed by the firmware.
-- **Browser API:** Web Bluetooth. Chrome's permission UI asks you to pick the device.
+- **Browser API:** Web Bluetooth. Your browser's permission UI asks you to pick the device.
 - **Use:** ESP32 boards with the BLE stack enabled, or nRF52 boards (T-Echo, T114, RAK4631). Set a BLE PIN under Node Config → Bluetooth for paired access.
 - **Caveat:** BLE links drop more often than Serial. The Console exposes "auto-reconnect" in the topbar to handle this transparently.
 
@@ -139,9 +139,9 @@ Things that *don't* work over RNS:
 
   **Security note.** Disabling this check loosens a browser-wide protection against cross-site attacks against private network devices (a malicious public website asking your browser to reconfigure your router, etc.). Only disable it when you actually need it, and re-enable it afterwards.
 
-### RNS via MeshChatX
+### RNS via ReticulumAPI
 
-- **Wire format:** Provisioning frames carried over a Reticulum Link to the node's `rnstransport.remote.management` destination, brokered by a MeshChatX instance reachable from the browser by WebSocket.
+- **Wire format:** Provisioning frames carried over a Reticulum Link to the node's `rnstransport.remote.management` destination, brokered by a ReticulumAPI instance reachable from the browser by WebSocket.
 - **Use:** any node reachable through your RNS mesh (LoRa, packet radio, TCP, UDP, … all transparent at the Link layer).
 - **Latency:** depends on the underlying RNS path. On a multi-hop LoRa mesh, expect 5–30 seconds per request and tens of seconds for schema / EEPROM reads. The Console adjusts timeouts automatically.
 
@@ -188,10 +188,10 @@ This is by far the highest-leverage feature — and the easiest to underestimate
 - **Bandwidth.** A typical LoRa configuration (`SF8 BW125`) gives you on the order of a few kbps shared across the entire mesh. A schema fetch from a fresh connection can transfer several KB; over LoRa, that means **tens of seconds**. The Console handles this by raising per-request timeouts on the RNS transport, but plan for it.
 - **Per-Link establishment cost.** Opening a Link to a node you haven't talked to recently kicks off path discovery and a Link handshake. Both are several packet exchanges, and on a busy / congested channel each exchange may itself need retries. Allow 10–30 seconds for `Establishing link`; a few minutes is not unusual on long, lossy paths.
 - **No streaming.** Logs are not delivered over the RNS transport — only Provisioning request/response frames. If you need to debug a node's boot sequence, use Serial.
-- **MeshChatX caches Links.** MeshChatX keeps the Link open across requests so subsequent calls don't pay the establishment cost again. The Console asks MeshChatX to evict that cache on `Disconnect`, page unload, and on `link_closed` events from RNS, but a stale cache can occasionally hand you a dead Link — the symptom is a fast "no_active_link" error on the first request after reconnecting. Disconnect and reconnect to force a fresh Link.
+- **ReticulumAPI caches Links.** ReticulumAPI keeps the Link open across requests so subsequent calls don't pay the establishment cost again. The Console asks ReticulumAPI to evict that cache on `Disconnect`, page unload, and on `link_closed` events from RNS, but a stale cache can occasionally hand you a dead Link — the symptom is a fast "no_active_link" error on the first request after reconnecting. Disconnect and reconnect to force a fresh Link.
 - **Don't commit radio params over RNS.** Frequency / bandwidth / SF / CR / TXP are `REBOOT_REQUIRED`. The reboot happens immediately and the new params will be in effect — but if you got the parameters wrong, the node is now on a channel you can't reach. **Never** change radio params on a remote node you can't physically recover.
 - **Same warning applies to WiFi and interface mode changes.** Putting an embedded node's only reachable LoRa interface into `gateway` mode when you expected `full` can render the node unreachable. Use `point-to-point` interface modes with care.
-- **Allow-list enforcement.** The firmware can be configured to only accept Provisioning requests from identified peers on an allow-list. If you set this up, make sure the local identity used by your MeshChatX instance is on that list before you disconnect — otherwise you've locked yourself out.
+- **Allow-list enforcement.** The firmware can be configured to only accept Provisioning requests from identified peers on an allow-list. If you set this up, make sure the local identity used by your ReticulumAPI instance is on that list before you disconnect — otherwise you've locked yourself out.
 
 ### Security and exposure
 
@@ -221,4 +221,4 @@ Click **Reboot now** to apply. If "auto-reconnect" is checked in the topbar, the
 - **"Send rejected: ReadOnly"** when committing. The field is marked `READ_ONLY` (a metric, not a setting). The Console should not have let you draft it — this usually indicates a schema/firmware mismatch. Reconnect to refetch the schema.
 - **Reboot banner won't clear.** A reboot-required commit landed but the device didn't actually reboot. Click **Reboot now**, or use Node Status → Danger zone → Reboot.
 - **Console works over Serial but not WebSocket.** Confirm the device is on WiFi (Node Config → WiFi → mode), check that you can ping the node's IP, and verify Chrome's Local Network Access flag (see [Opening the Console](#opening-the-console)).
-- **RNS transport disconnects immediately.** MeshChatX may not be running, or its WebSocket URL is wrong. Open a browser tab to MeshChatX's web UI to confirm it's up, and check the path component of the WebSocket URL.
+- **RNS transport disconnects immediately.** ReticulumAPI may not be running, or its WebSocket URL is wrong. Open a browser tab to ReticulumAPI's web UI to confirm it's up, and check the path component of the WebSocket URL.

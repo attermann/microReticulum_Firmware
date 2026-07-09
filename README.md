@@ -136,8 +136,8 @@ The RNode Console is a single-page web app (sources in `webconsole/index.html`, 
 
 | Transport | Use case | Requires |
 |-----------|----------|----------|
-| **Serial** | Direct USB connection (sitting at the node) | Chrome / Edge with Web Serial |
-| **Bluetooth** | BLE-equipped boards in range | Chrome / Edge with Web Bluetooth |
+| **Serial** | Direct USB connection (sitting at the node) | Chrome / Edge / latest Firefox with Web Serial |
+| **Bluetooth** | BLE-equipped boards in range | Chrome / Edge / latest Firefox with Web Bluetooth |
 | **WebSocket** | Node on the LAN over WiFi | Node in WiFi STA/AP mode and reachable on port 81 (embedded) / 8080 (native) |
 | **RNS (via rnsapid)** | Remote node anywhere on the Reticulum mesh | A locally running [ReticulumAPI](https://github.com/attermann/ReticulumAPI) instance exposing the `link.*` WebSocket API |
 
