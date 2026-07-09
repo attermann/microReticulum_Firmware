@@ -54,9 +54,9 @@ def target_package(target, source, env):
     print("Platform:", env.GetProjectOption("platform"))
     print("Board:", env.GetProjectOption("board"))
     print("Variant:", env.GetProjectOption("custom_variant"))
-    if env.GetProjectOption("custom_variant").endswith('_local'):
-        print("*** Skipping target_package for local build")
-        return
+    #if env.GetProjectOption("custom_variant").endswith('_local'):
+    #    print("*** Skipping target_package for local build")
+    #    return
     # do some actions
     platform = env.GetProjectOption("platform")
     board = env.GetProjectOption("board")

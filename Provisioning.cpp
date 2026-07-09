@@ -16,6 +16,10 @@
 
 //#include "Config.h"
 
+#ifdef HAS_GPIO
+#include "GPIO.h"
+#endif
+
 #include <microReticulum/Log.h>
 
 // KISS framing constants. We don't include "Framing.h" because it defines
@@ -54,7 +58,6 @@ extern uint8_t implicit_l;
 extern int noise_floor;
 extern int current_rssi;
 extern int last_rssi;
-extern uint8_t last_rssi_raw;
 extern uint8_t last_snr_raw;
 extern float st_airtime_limit;
 extern float lt_airtime_limit;
@@ -128,6 +131,61 @@ static void register_provisioning_namespaces() {
       .field_string("NomadNet Name", PROV_GENERAL_NOMADNET_NAME, FF_REBOOT_REQUIRED, nomadnet_name, sizeof(nomadnet_name)-1,
         [](const Value& v) { strncpy(nomadnet_name, v.as_string().c_str(), sizeof(nomadnet_name)); return true; },
         []() { return nomadnet_name; });
+#endif
+
+#ifdef HAS_GPIO
+    general
+/*
+      .field_bool("Relay Enabled", PROV_GENERAL_GPIO0, FF_LIVE_APPLY, false,
+        [](const Value& v) { v.as_bool() ? GPIO::setState(GPIO::GPIO0, GPIO::STATE_HIGH) : GPIO::setState(GPIO::GPIO0, GPIO::STATE_LOW); return true; },
+        []() { return GPIO::isHigh(GPIO::GPIO0); })
+      .metric_bool("Device Ready", PROV_GENERAL_GPIO1,
+        []() { return GPIO::isHigh(GPIO::GPIO1); });
+*/
+      .field_enum("GPIO0", PROV_GENERAL_GPIO0, FF_LIVE_APPLY, GPIO::DISP_INPUT,
+          {
+            GPIO::DISP_INPUT,
+            GPIO::DISP_INPUT_LOW,
+            GPIO::DISP_INPUT_HIGH,
+            GPIO::DISP_OUTPUT_LOW,
+            GPIO::DISP_OUTPUT_HIGH,
+          },
+          {
+            "INPUT",
+            "INPUT_LOW",
+            "INPUT_HIGH",
+            "OUTPUT_LOW",
+            "OUTPUT_HIGH",
+          },
+          [](const Value& v) {
+            GPIO::setDisposition(GPIO::GPIO0, static_cast<GPIO::Disposition>(v.as_int())); return true;
+          },
+          []() {
+            return static_cast<fint_t>(GPIO::getDisposition(GPIO::GPIO0));
+          }
+        )
+      .field_enum("GPIO1", PROV_GENERAL_GPIO1, FF_LIVE_APPLY, GPIO::DISP_INPUT,
+          {
+            GPIO::DISP_INPUT,
+            GPIO::DISP_INPUT_LOW,
+            GPIO::DISP_INPUT_HIGH,
+            GPIO::DISP_OUTPUT_LOW,
+            GPIO::DISP_OUTPUT_HIGH,
+          },
+          {
+            "INPUT",
+            "INPUT_LOW",
+            "INPUT_HIGH",
+            "OUTPUT_LOW",
+            "OUTPUT_HIGH",
+          },
+          [](const Value& v) {
+            GPIO::setDisposition(GPIO::GPIO1, static_cast<GPIO::Disposition>(v.as_int())); return true;
+          },
+          []() {
+            return static_cast<fint_t>(GPIO::getDisposition(GPIO::GPIO1));
+          }
+        );
 #endif
 
 #if defined(LORA_TRANSPORT)
@@ -244,7 +302,7 @@ static void register_provisioning_namespaces() {
         //.metric_int("Current RSSI", PROV_METRICS_LORA_CRSSI, []() { return last_rssi+rssi_offset; })
         .metric_int("Current RSSI", PROV_METRICS_LORA_CRSSI, []() { return current_rssi; })
         .metric_int("Noise Floor", PROV_METRICS_LORA_NF, []() { return noise_floor; })
-        .metric_int("Last RSSI", PROV_METRICS_LORA_LRSSI, []() { return last_rssi+157; })
+        .metric_int("Last RSSI", PROV_METRICS_LORA_LRSSI, []() { return last_rssi; })
         .metric_int("Last SNR", PROV_METRICS_LORA_LSNR, []() { return last_snr_raw; })
         .metric_float("ST Airtime Limit", PROV_METRICS_LORA_STAL, []() { return st_airtime_limit; })
         .metric_float("LT Airtime Limit", PROV_METRICS_LORA_LTAL, []() { return lt_airtime_limit; })

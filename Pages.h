@@ -267,8 +267,10 @@ RNS::Bytes serve_page(
         content << "    \"tx_power\": " << std::to_string(lora_txp) << ",\n";
         content << "    \"spreading_factor\": " << std::to_string(lora_sf) << ",\n";
         content << "    \"coding_rate\": " << std::to_string(lora_cr) << ",\n";
-        content << "    \"current_rssi\": " << std::to_string(last_rssi+rssi_offset) << ",\n";
-        content << "    \"current_snr\": " << std::to_string(last_snr_raw) << ",\n";
+        content << "    \"current_rssi\": " << std::to_string(current_rssi) << ",\n";
+        content << "    \"noise_floor\": " << std::to_string(noise_floor) << ",\n";
+        content << "    \"last_rssi\": " << std::to_string(last_rssi) << ",\n";
+        content << "    \"last_snr\": " << std::to_string(last_snr_raw) << ",\n";
         add_interface_details(content, lora_interface);
       	content << "  },\n";
 #endif

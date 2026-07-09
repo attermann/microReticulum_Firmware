@@ -50,7 +50,7 @@ public:
 protected:
 	virtual void handle_incoming(const RNS::Bytes& data) {
     TRACEF("LoRaInterface.handle_incoming: (%u bytes) data: %s", data.size(), data.toHex().c_str());
-    TRACE("LoRaInterface.handle_incoming: sending packet to rns...");
+    //TRACE("LoRaInterface.handle_incoming: sending packet to rns...");
     try {
       InterfaceImpl::handle_incoming(data);
     }
@@ -65,7 +65,7 @@ protected:
     // CBA NOTE header will be addded later by transmit function
     TRACEF("LoRaInterface.send_outgoing: (%u bytes) data: %s", data.size(), data.toHex().c_str());
     try {
-      TRACE("LoRaInterface.send_outgoing: adding packet to outgoing queue...");
+      //TRACE("LoRaInterface.send_outgoing: adding packet to outgoing queue...");
       for (size_t i = 0; i < data.size(); i++) {
           if (queue_height < CONFIG_QUEUE_MAX_LENGTH && queued_bytes < CONFIG_QUEUE_SIZE) {
               queued_bytes++;

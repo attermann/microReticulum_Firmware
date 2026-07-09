@@ -2149,3 +2149,15 @@ void host_disconnected() {
 	last_rssi_raw = 0x00;
 	last_snr_raw  = 0x80;
 }
+
+inline float get_quality() {
+	signed char t_snr = (signed int)last_snr_raw;
+	int snr_int = (int)t_snr;
+	float snr_min = Q_SNR_MIN_BASE-(int)lora_sf*Q_SNR_STEP;
+	float snr_span = (Q_SNR_MAX-snr_min);
+	float snr = ((int)snr_int) * 0.25;
+	float quality = ((snr-snr_min)/(snr_span))*100;
+	if (quality > 100.0) quality = 100.0;
+	if (quality < 0.0) quality = 0.0;
+	return quality;
+}

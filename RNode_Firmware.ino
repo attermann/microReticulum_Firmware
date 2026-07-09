@@ -27,6 +27,9 @@
 #include "Pages.h"
 #endif
 #endif // HAS_RNS
+#ifdef HAS_GPIO
+#include "GPIO.h"
+#endif
 
 #include <Arduino.h>
 #include <SPI.h>
@@ -347,8 +350,72 @@ void on_transmit_packet(const RNS::Bytes& raw, const RNS::Interface& interface) 
 #endif
 }
 
-// CBA For printf
-int _write(int file, char *ptr, int len) {
+// For redirecting stdout to KISS framed logs
+#if MCU_VARIANT == MCU_ESP32
+
+#include <esp_vfs.h>
+#include <sys/errno.h>
+
+static ssize_t kiss_vfs_write(int fd, const void* data, size_t size) {
+  if (kiss_framed_logs) {
+    kiss_indicate_log((const char*)data, size);
+  } else {
+    Serial.write((const uint8_t*)data, size);
+    Serial.flush();
+  }
+  return (ssize_t)size;
+}
+
+static int kiss_vfs_open(const char* path, int flags, int mode) { return 0; }
+static int kiss_vfs_close(int fd) { return 0; }
+static int kiss_vfs_fstat(int fd, struct stat* st) {
+  memset(st, 0, sizeof(*st));
+  st->st_mode = S_IFCHR;
+  return 0;
+}
+
+static void install_kiss_stdout(void) {
+  static const esp_vfs_t kiss_vfs = {
+    .flags = ESP_VFS_FLAG_DEFAULT,
+    .write = &kiss_vfs_write,
+    .open  = &kiss_vfs_open,
+    .close = &kiss_vfs_close,
+    .fstat = &kiss_vfs_fstat,
+  };
+  if (esp_vfs_register("/dev/kiss", &kiss_vfs, NULL) != ESP_OK) return;
+  FILE* f = fopen("/dev/kiss/0", "w");
+  if (!f) return;
+  setvbuf(f, NULL, _IONBF, 0);   // no buffering — one printf → one KISS frame
+  stdout = f;
+  // Optional: also redirect stderr and any ESP_LOG* output.
+  stderr = f;
+  esp_log_set_vprintf(&vprintf);  // ensures ESP_LOG* also goes through stdout
+}
+
+#elif MCU_VARIANT == MCU_NRF52
+
+// The Adafruit nRF52 core ships its own strong `_write` in main.cpp (retargets
+// newlib's printf() to Serial). Defining a second strong `_write` here would
+// produce a "multiple definition" link error, so instead we ask the linker to
+// wrap every reference to `_write` and route it at __wrap__write below.
+// Requires `-Wl,--wrap=_write` in the link flags (set in platformio.ini for
+// nRF52 envs).
+extern "C" int __wrap__write(int file, const void *ptr, size_t len) {
+  (void)file;
+  if (kiss_framed_logs) {
+    kiss_indicate_log((const char*)ptr, len);
+    return (int)len;
+  }
+  int n = Serial.write((const uint8_t*)ptr, len);
+  Serial.flush();
+  return n;
+}
+
+static void install_kiss_stdout(void) {}
+
+#else
+
+extern "C" int _write(int file, char *ptr, int len) {
   size_t wrote = 0;
   if (kiss_framed_logs) {
     kiss_indicate_log(ptr, len);
@@ -360,6 +427,10 @@ int _write(int file, char *ptr, int len) {
   }
   return wrote;
 }
+
+static void install_kiss_stdout(void) {}
+
+#endif
 
 #if defined(RNS_USE_FS)
 void dump_filesystem(const char* basepath, uint8_t level = 0) {
@@ -395,6 +466,9 @@ void setup() {
 
   Serial.begin(serial_baudrate);
 
+  // Redirect stdout to KISS framed logs
+  install_kiss_stdout();
+
   // CBA Safely wait for serial initialization
   while (!Serial) {
     if (millis() > 2000) {
@@ -416,6 +490,11 @@ void setup() {
 
   device_uid_init();
   INFOF("Device UID:  %s", device_uid_str);
+
+#ifdef HAS_GPIO
+  GPIO::init();
+  INFO("GPIO control initialized");
+#endif
 
   // Configure WDT
   #if MCU_VARIANT == MCU_ESP32
@@ -747,6 +826,11 @@ void setup() {
     #endif
   #endif
 
+  // Support force-disable of interference avoidance
+#ifdef DISABLE_IA
+  avoid_interference = false;
+#endif
+
   // Validate board health, EEPROM and config
   validate_status();
 
@@ -945,7 +1029,12 @@ void setup() {
       HEAD("Creating Reticulum instance...", RNS::LOG_TRACE);
       reticulum = RNS::Reticulum();
       // CBA NOTE: `transport_enabled` needs to always be overridden to false when op_mode is not MODE_TNC
-      if (op_mode != MODE_TNC) reticulum.transport_enabled(false);
+TRACEF("hw_ready: %u", hw_ready);
+TRACEF("op_mode: %U", op_mode);
+      if (op_mode != MODE_TNC) {
+        INFO("Not in TNC mode, transport will be disabled");
+        reticulum.transport_enabled(false);
+      }
       reticulum.start();
 
       // Set loop callback only after the Reticulum instance is started
@@ -1048,9 +1137,12 @@ inline void kiss_write_packet() {
 
 #if defined(HAS_RNS) && defined(LORA_TRANSPORT)
   if (host_write_len > 0) {
-    TRACEF("Received %d byte packet", host_write_len);
+    TRACEF("[radio] Received %d byte packet", host_write_len);
     // CBA send packet received over LoRa to RNS in addition to connected client
     RNS::Bytes data(pbuf, host_write_len);
+    lora_interface.r_stat_rssi(last_rssi);
+    lora_interface.r_stat_snr(last_snr_raw);
+    lora_interface.r_stat_q(get_quality());
     lora_interface.handle_incoming(data);
   }
 #endif
@@ -1547,6 +1639,7 @@ void transmit(uint16_t size) {
       }
 
       add_airtime(written);
+      TRACEF("[radio] Sent %d byte packet", written);
 
     } else {
       led_tx_on(); uint16_t written = 0;
@@ -1555,6 +1648,7 @@ void transmit(uint16_t size) {
       else           { LoRa->beginPacket(size); }
       for (uint16_t i=0; i < size; i++) { LoRa->write(tbuf[i]); written++; }
       LoRa->endPacket(); add_airtime(written);
+      TRACEF("[radio] Sent %d byte packet", written);
     }
 
   } else { kiss_indicate_error(ERROR_TXFAILED); led_indicate_error(5); }

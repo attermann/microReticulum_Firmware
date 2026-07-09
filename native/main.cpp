@@ -10,7 +10,7 @@
 //   argp_parse(...)         -> --fsroot etc.
 //   mkdir($fsroot)          -> VFS root directory
 //   portduinoVFS->mountpoint(fsroot)
-//   gpioInit()
+//   GPIO::init()
 //   portduinoSetup()        <- this file
 //   setup()                 <- Arduino sketch (RNode_Firmware.ino)
 //   while (1) loop();

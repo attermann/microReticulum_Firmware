@@ -2637,6 +2637,7 @@ async function refreshNamespace(nsId){
 }
 async function commitAll(){
   if (!client) return;
+  if (!confirm('Commit all pending changes to the device?')) return;
   try {
     const r = await client.commit(null);
     state.nsServerErrors.set({});
@@ -2806,7 +2807,7 @@ function buildTopBar(){
   const rnsIdentCb = el('input', { type: 'checkbox' });
   rnsIdentCb.checked = state.rnsAutoIdentify.get();
   rnsIdentCb.onchange = (e) => state.rnsAutoIdentify.set(e.target.checked);
-  const rnsIdentLabel = el('label', { style: { display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--muted)' }, title: 'Send local identity on link establishment (required by /provision ALLOW_LIST)' }, [rnsIdentCb, 'authenticate']);
+  const rnsIdentLabel = el('label', { style: { display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--muted)' }, title: 'Send local identity on link establishment (auto_identify=true; required by /provision ALLOW_LIST)' }, [rnsIdentCb, 'identify']);
   rnsHost.appendChild(rnsUrlInput);
   rnsHost.appendChild(rnsHashInput);
   rnsHost.appendChild(rnsIdentLabel);
