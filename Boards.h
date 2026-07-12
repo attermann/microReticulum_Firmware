@@ -964,7 +964,11 @@
       #define BOARD_MODEL BOARD_NATIVE_LINUX
     #endif
 
+    // CBA WiFi support expects v2.0+ but Portduino only supports v1.2.7
+    //#define HAS_WIFI true
+
   #endif
+
 
   #ifndef DISPLAY_SCALE
     #define DISPLAY_SCALE 1

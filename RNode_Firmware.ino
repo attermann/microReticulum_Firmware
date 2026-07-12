@@ -436,7 +436,8 @@ static void install_kiss_stdout(void) {}
 #endif
 
 #if defined(RNS_USE_FS)
-void dump_filesystem(const char* basepath, uint8_t level = 0) {
+void dump_filesystem(const char* basepath, uint8_t level = 0, uint8_t max_level = 0) {
+  if (max_level > 0 && level > max_level) return;
   char prefix[17] = "";
   for (uint8_t index = 0; index < level && index < 8; index++) {
     prefix[index*2] = ' ';
@@ -446,13 +447,15 @@ void dump_filesystem(const char* basepath, uint8_t level = 0) {
   filesystem.listDirectory(basepath, [&](const char* name) -> void {
     // Adapter callbacks receive bare basenames — join with basepath before
     // re-querying or recursing, and avoid emitting "//" when basepath is "/".
+    // Skip "." and ".." directories
+    if (name[0] == '.') return;
     char fullpath[96];
     const bool root = (basepath[0] == '/' && basepath[1] == '\0');
     if (root) snprintf(fullpath, sizeof(fullpath), "/%s", name);
     else snprintf(fullpath, sizeof(fullpath), "%s/%s", basepath, name);
     if (filesystem.isDirectory(fullpath)) {
       TRACEF("%s%s:", prefix, name);
-      dump_filesystem(fullpath, level + 1);
+      dump_filesystem(fullpath, level + 1, max_level);
     }
     else {
       TRACEF("%s%s", prefix, name);
@@ -965,7 +968,7 @@ void setup() {
 #endif
 #if 1
     TRACE("Listing filesystem...");
-    dump_filesystem("./", 1);
+    dump_filesystem("./", 1, 2);
 #endif
 #endif // !NDEBUG && RNS_USE_FS
 

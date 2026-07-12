@@ -2174,6 +2174,9 @@ void host_disconnected() {
 	last_snr_raw  = 0x80;
 }
 
+#define Q_SNR_STEP 2.0
+#define Q_SNR_MIN_BASE -9.0
+#define Q_SNR_MAX 6.0
 inline float get_quality() {
 	signed char t_snr = (signed int)last_snr_raw;
 	int snr_int = (int)t_snr;

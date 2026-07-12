@@ -41,6 +41,7 @@ from RNS._version import __version__
 
 RNODE_BAUDRATE = 115200
 DEFAULT_TCP_PORT = 7633
+RECONNECT_WAIT = 5
 
 
 class KISS:
@@ -90,21 +91,28 @@ class SerialTransport(Transport):
             write_timeout = None,
             dsrdtr = False,
         )
+        self._open = True
 
     def read(self, n=1):
         try:
             waiting = self.serial.in_waiting
         except Exception:
-            waiting = 0
+            self._open = False
+            return b""
         if not waiting:
             sleep(0.08)
             return b""
-        return self.serial.read(min(n, waiting))
+        try:
+            return self.serial.read(min(n, waiting))
+        except Exception:
+            self._open = False
+            return b""
 
     def write(self, data):
         return self.serial.write(data)
 
     def close(self):
+        self._open = False
         try:
             self.serial.close()
         except Exception:
@@ -112,7 +120,10 @@ class SerialTransport(Transport):
 
     @property
     def is_open(self):
-        return self.serial.is_open
+        try:
+            return self._open and self.serial.is_open
+        except Exception:
+            return False
 
 
 class TcpTransport(Transport):
@@ -203,6 +214,17 @@ class RNodeLogReader:
             sys.stdout.flush()
 
 
+def open_transport(args, device_path):
+    if args.host:
+        return TcpTransport(args.host, args.tcp_port), args.host + ":" + str(args.tcp_port)
+    return SerialTransport(device_path), device_path
+
+
+def status(message):
+    sys.stdout.write(message + "\n")
+    sys.stdout.flush()
+
+
 def select_serial_port_interactively():
     from serial.tools import list_ports
     ports = list_ports.comports()
@@ -237,6 +259,7 @@ def main():
     parser.add_argument("port", nargs="?", default=None, help="serial port where RNode is attached")
     parser.add_argument("-H", "--host", action="store", default=None, metavar="host", help="hostname or IP of a TCP-connected RNode")
     parser.add_argument("-p", "--port", dest="tcp_port", action="store", type=int, default=DEFAULT_TCP_PORT, metavar="port", help="TCP port (default: " + str(DEFAULT_TCP_PORT) + ")")
+    parser.add_argument("-r", "--reconnect", action="store_true", help="automatically reconnect if the connection drops")
     parser.add_argument("-v", "--version", action="version", version="rnodelogs {version}".format(version=__version__))
     args = parser.parse_args()
 
@@ -244,47 +267,78 @@ def main():
         print("Error: specify either a serial port or a --host, not both.")
         sys.exit(2)
 
-    try:
-        if args.host:
-            print("Connecting to " + args.host + ":" + str(args.tcp_port) + " ...")
+    device_path = None
+    if not args.host:
+        device_path = args.port
+        if device_path is None:
             try:
-                transport = TcpTransport(args.host, args.tcp_port)
-            except OSError as e:
-                print("Could not connect: " + str(e))
-                sys.exit(1)
-        else:
-            device_path = args.port
-            if device_path is None:
-                try:
-                    from serial.tools import list_ports  # noqa: F401
-                except ImportError:
-                    print("rnodelogs needs pyserial to work.")
-                    print("You can install it with: pip3 install pyserial")
-                    sys.exit(1)
-                device_path = select_serial_port_interactively()
-
-            try:
-                transport = SerialTransport(device_path)
+                from serial.tools import list_ports  # noqa: F401
             except ImportError:
                 print("rnodelogs needs pyserial to work.")
                 print("You can install it with: pip3 install pyserial")
                 sys.exit(1)
-            except Exception as e:
-                print("Could not open serial port " + str(device_path) + ": " + str(e))
-                sys.exit(1)
+            device_path = select_serial_port_interactively()
 
-        reader = RNodeLogReader(transport)
-        thread = threading.Thread(target=reader.read_loop, daemon=True)
-        thread.start()
+    if args.host:
+        print("Connecting to " + args.host + ":" + str(args.tcp_port) + " ...")
 
-        while thread.is_alive():
-            thread.join(timeout=0.5)
+    transport = None
+    target = None
+    reader = None
+    first_connect = True
+    try:
+        while True:
+            while True:
+                try:
+                    transport, target = open_transport(args, device_path)
+                    break
+                except ImportError:
+                    print("rnodelogs needs pyserial to work.")
+                    print("You can install it with: pip3 install pyserial")
+                    sys.exit(1)
+                except Exception as e:
+                    if not args.reconnect:
+                        if isinstance(e, OSError):
+                            print("Could not connect: " + str(e))
+                        else:
+                            print("Could not open " + str(device_path) + ": " + str(e))
+                        sys.exit(1)
+                    sleep(RECONNECT_WAIT)
+
+            if first_connect:
+                status("Connected to " + target)
+                first_connect = False
+            else:
+                status("Reconnected to " + target)
+
+            reader = RNodeLogReader(transport)
+            thread = threading.Thread(target=reader.read_loop, daemon=True)
+            thread.start()
+
+            while thread.is_alive():
+                thread.join(timeout=0.5)
+
+            if reader._stop:
+                break
+
+            status("Connection to " + target + " dropped")
+            try:
+                transport.close()
+            except Exception:
+                pass
+
+            if not args.reconnect:
+                break
+
+            sleep(RECONNECT_WAIT)
 
     except KeyboardInterrupt:
         print("")
         try:
-            reader.stop()
-            transport.close()
+            if reader is not None:
+                reader.stop()
+            if transport is not None:
+                transport.close()
         except Exception:
             pass
         sys.exit(0)

@@ -657,20 +657,11 @@ void draw_battery_bars(int px, int py) {
   }
 }
 
-#define Q_SNR_STEP 2.0
-#define Q_SNR_MIN_BASE -9.0
-#define Q_SNR_MAX 6.0
+extern float get_quality();
 void draw_quality_bars(int px, int py) {
   stat_area.fillRect(px, py, 13, 7, SSD1306_BLACK);
   if (radio_online) {
-    signed char t_snr = (signed int)last_snr_raw;
-    int snr_int = (int)t_snr;
-    float snr_min = Q_SNR_MIN_BASE-(int)lora_sf*Q_SNR_STEP;
-    float snr_span = (Q_SNR_MAX-snr_min);
-    float snr = ((int)snr_int) * 0.25;
-    float quality = ((snr-snr_min)/(snr_span))*100;
-    if (quality > 100.0) quality = 100.0;
-    if (quality < 0.0) quality = 0.0;
+    float quality = get_quality();
 
     // Serial.printf("Last SNR: %.2f\n, quality: %.2f\n", snr, quality);
     if (quality > 0)  stat_area.drawLine(px+0*2, py+7, px+0*2, py+6, SSD1306_WHITE);

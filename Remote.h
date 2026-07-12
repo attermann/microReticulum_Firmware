@@ -66,7 +66,8 @@ char wr_psk[33];
 extern uint16_t udp_port;
 extern void host_disconnected();
 
-void wifi_dbg(String msg) { Serial.print("[WiFi] "); Serial.println(msg); }
+//void wifi_dbg(String msg) { Serial.print("[WiFi] "); Serial.println(msg); }
+void wifi_dbg(const char* msg) { printf("[WiFi] %s\n", msg); }
 
 uint8_t wifi_remote_mode() { return wifi_mode; }
 
@@ -112,14 +113,12 @@ void wifi_remote_start_sta() {
 #endif
 
   //WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
-  //  Serial.printf("[WiFi] event=%d\n", event);
+  //  printf("[WiFi] event=%d\n", event);
   //});
 
   delay(100);
-  Serial.print("[WiFi] ssid: ");
-  Serial.println(wr_ssid);
-  //Serial.print("[WiFi] psk: ");
-  //Serial.println(wr_psk);
+  printf("[WiFi] ssid: %s\n", wr_ssid);
+  //printf("[WiFi] psk: %s\n", wr_psk);
   if (wr_ssid[0] != 0x00) {
     if (wr_psk[0] != 0x00) { WiFi.begin(wr_ssid, wr_psk); }
     else                   { WiFi.begin(wr_ssid); }
@@ -128,10 +127,8 @@ void wifi_remote_start_sta() {
   delay(500);
   //delay(10000);
   wr_wifi_status = WiFi.status(); 
-  //Serial.print("[WiFi] status: ");
-  //Serial.println(wr_wifi_status);
-	//Serial.print("[WiFi] ip: ");
-	//Serial.println(WiFi.localIP());
+  printf("[WiFi] status: %d\n", wr_wifi_status);
+	//printf("[WiFi] ip: %s\n", WiFi.localIP());
   wifi_initialized = true;
   wr_last_connect_try = millis();
 }
@@ -165,7 +162,7 @@ void wifi_remote_start() {
 }
 
 void wifi_remote_init() {
-  //Serial.print("Initializing WiFi...\n");
+  printf("Initializing WiFi...\n");
   memcpy(wr_hostname, bt_devname, 5);
   memcpy(wr_hostname+5, bt_devname+6, 4);
   wr_hostname[9] = 0x00;
@@ -238,12 +235,10 @@ void wifi_remote_write(uint8_t byte) { if (connection) { connection.write(byte);
 
 void wifi_update_status() {
   wr_wifi_status = WiFi.status();
-  //Serial.print("[WiFi] status: ");
-  //Serial.println(wr_wifi_status);
+  printf("[WiFi] status: %d\n", wr_wifi_status);
   if (wr_wifi_status == WL_CONNECTED) {
     wr_device_ip = WiFi.localIP();
-    //Serial.print("[WiFi] ip: ");
-    //Serial.println(WiFi.localIP());
+    //printf("[WiFi] ip: %s\n", WiFi.localIP());
   }
   if (wifi_mode == WR_WIFI_AP && wifi_initialized) { wr_device_ip = WiFi.softAPIP(); wr_wifi_status = WL_CONNECTED; }
   if (wifi_init_ran && wifi_mode == WR_WIFI_STA && wr_wifi_status != WL_CONNECTED) {
