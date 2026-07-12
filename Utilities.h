@@ -63,6 +63,7 @@ sx128x *LoRa = &sx128x_modem;
 #include "ROM.h"
 #include "Framing.h"
 #include "MD5.h"
+#include "WebSocketConsole.h"
 
 #if !HAS_EEPROM && MCU_VARIANT == MCU_NRF52
 uint8_t eeprom_read(uint32_t mapped_addr);
@@ -447,11 +448,13 @@ void led_indicate_error(int cycles) {
 		bool forever = (cycles == 0) ? true : false;
 		cycles = forever ? 1 : cycles;
 		while(cycles > 0) {
-	        digitalWrite(pin_led_rx, HIGH);
-	        digitalWrite(pin_led_tx, LOW);
+	        // Go through the guarded helpers so a board with no physical
+	        // LEDs configured (pin_led_rx / pin_led_tx == -1, e.g. native
+	        // builds) doesn't pass 255 to digitalWrite() and trip
+	        // Portduino's pin-range assert.
+	        led_rx_on();  led_tx_off();
 	        delay(100);
-	        digitalWrite(pin_led_rx, LOW);
-	        digitalWrite(pin_led_tx, HIGH);
+	        led_rx_off(); led_tx_on();
 	        delay(100);
 	        if (!forever) cycles--;
 	    }
@@ -501,7 +504,10 @@ void led_indicate_warning(int cycles) {
 	#else
 		bool forever = (cycles == 0) ? true : false;
 		cycles = forever ? 1 : cycles;
-		digitalWrite(pin_led_tx, HIGH);
+		// Use the guarded helper instead of raw digitalWrite so unset
+		// LED pins (-1, native builds) don't trip Portduino's pin-range
+		// assert. The first led_tx_on() below has the same effect.
+		led_tx_on();
 		while(cycles > 0) {
       led_tx_off();
       delay(100);
@@ -867,6 +873,14 @@ void serial_write(uint8_t byte) {
 		}
 	#else
 		Serial.write(byte);
+	#endif
+
+	// WebSocket fan-out: every outbound KISS byte is also offered to the
+	// WS console. The WS bridge buffers between FEND markers and emits
+	// one binary WS frame per complete KISS frame. No-op when the WS
+	// console isn't compiled in or no client is attached.
+	#if defined(ENABLE_WEBSOCKETS) && __has_include(<WiFi.h>)
+		ws_console::on_serial_write(byte);
 	#endif
 }
 
@@ -1857,10 +1871,18 @@ void bt_conf_save(bool is_enabled) {
 
 void di_conf_save(uint8_t dint) {
 	eeprom_update(eeprom_addr(ADDR_CONF_DINT), dint);
+  #if !HAS_EEPROM && MCU_VARIANT == MCU_NRF52
+	// have to do a flush because we're only writing 1 byte and it syncs after 8
+    eeprom_flush();
+  #endif
 }
 
 void da_conf_save(uint8_t dadr) {
 	eeprom_update(eeprom_addr(ADDR_CONF_DADR), dadr);
+  #if !HAS_EEPROM && MCU_VARIANT == MCU_NRF52
+	// have to do a flush because we're only writing 1 byte and it syncs after 8
+    eeprom_flush();
+  #endif
 }
 
 void db_conf_save(uint8_t val) {
@@ -1873,6 +1895,10 @@ void db_conf_save(uint8_t val) {
 		}
 		eeprom_update(eeprom_addr(ADDR_CONF_BSET), CONF_OK_BYTE);
 		eeprom_update(eeprom_addr(ADDR_CONF_DBLK), val);
+    #if !HAS_EEPROM && MCU_VARIANT == MCU_NRF52
+	  	// have to do a flush because we're only writing 2 bytes and it syncs after 8
+      	eeprom_flush();
+    #endif
 	#endif
 }
 
@@ -1880,6 +1906,10 @@ void drot_conf_save(uint8_t val) {
 	#if HAS_DISPLAY
 		if (val >= 0x00 and val <= 0x03) {
 			eeprom_update(eeprom_addr(ADDR_CONF_DROT), val);
+    	#if !HAS_EEPROM && MCU_VARIANT == MCU_NRF52
+			// have to do a flush because we're only writing 1 byte and it syncs after 8
+        	eeprom_flush();
+    	#endif
 			hard_reset();
 		}
 	#endif
@@ -1888,12 +1918,20 @@ void drot_conf_save(uint8_t val) {
 void dia_conf_save(uint8_t val) {
 	if (val > 0x00)  { eeprom_update(eeprom_addr(ADDR_CONF_DIA), 0x01); }
 	else             { eeprom_update(eeprom_addr(ADDR_CONF_DIA), 0x00); }
+  #if !HAS_EEPROM && MCU_VARIANT == MCU_NRF52
+    // have to do a flush because we're only writing 2 bytes and it syncs after 8
+    eeprom_flush();
+  #endif
 	hard_reset();
 }
 
 void np_int_conf_save(uint8_t p_int) {
 	eeprom_update(eeprom_addr(ADDR_CONF_PSET), CONF_OK_BYTE);
 	eeprom_update(eeprom_addr(ADDR_CONF_PINT), p_int);
+  #if !HAS_EEPROM && MCU_VARIANT == MCU_NRF52
+	// have to do a flush because we're only writing 2 bytes and it syncs after 8
+    eeprom_flush();
+  #endif
 }
 
 
@@ -2145,4 +2183,19 @@ void host_disconnected() {
 	last_rssi     = -292;
 	last_rssi_raw = 0x00;
 	last_snr_raw  = 0x80;
+}
+
+#define Q_SNR_STEP 2.0
+#define Q_SNR_MIN_BASE -9.0
+#define Q_SNR_MAX 6.0
+inline float get_quality() {
+	signed char t_snr = (signed int)last_snr_raw;
+	int snr_int = (int)t_snr;
+	float snr_min = Q_SNR_MIN_BASE-(int)lora_sf*Q_SNR_STEP;
+	float snr_span = (Q_SNR_MAX-snr_min);
+	float snr = ((int)snr_int) * 0.25;
+	float quality = ((snr-snr_min)/(snr_span))*100;
+	if (quality > 100.0) quality = 100.0;
+	if (quality < 0.0) quality = 0.0;
+	return quality;
 }

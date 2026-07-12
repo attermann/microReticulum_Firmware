@@ -1031,7 +1031,11 @@
       #define BOARD_MODEL BOARD_NATIVE_LINUX
     #endif
 
+    // CBA WiFi support expects v2.0+ but Portduino only supports v1.2.7
+    //#define HAS_WIFI true
+
   #endif
+
 
   #ifndef DISPLAY_SCALE
     #define DISPLAY_SCALE 1
@@ -1066,6 +1070,23 @@
 
   #ifndef NP_M
     #define NP_M 0.15
+  #endif
+
+  // Enable forcing features via preprocessor directive
+  #ifdef DISABLE_CONSOLE
+    #define HAS_CONSOLE false
+  #endif
+  #ifdef DISABLE_WIFI
+    #define HAS_WIFI false
+  #endif
+  #ifdef DISABLE_DISPLAY
+    #define HAS_DISPLAY false
+  #endif
+  #ifdef DISABLE_BLUETOOTH
+    #define HAS_BLUETOOTH false
+  #endif
+  #ifdef DISABLE_BLE
+    #define HAS_BLE false
   #endif
 
 #endif

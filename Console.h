@@ -192,6 +192,7 @@ void console_start() {
 
   console_register_pages();
   server.begin();
+
   led_indicate_console();
 }
 

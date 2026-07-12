@@ -54,9 +54,9 @@ def target_package(target, source, env):
     print("Platform:", env.GetProjectOption("platform"))
     print("Board:", env.GetProjectOption("board"))
     print("Variant:", env.GetProjectOption("custom_variant"))
-    if env.GetProjectOption("custom_variant").endswith('_local'):
-        print("*** Skipping target_package for local build")
-        return
+    #if env.GetProjectOption("custom_variant").endswith('_local'):
+    #    print("*** Skipping target_package for local build")
+    #    return
     # do some actions
     platform = env.GetProjectOption("platform")
     board = env.GetProjectOption("board")
@@ -82,6 +82,7 @@ def post_upload(source, target, env):
     if ("espressif32" in platform):
         time.sleep(10)
         # device provisioning is incomplete and only currently appropriate for 915MHz T-Beam
+        #device_wipe(env)
         device_provision(env)
         firmware_hash(source, env)
         # firmware pacakaging is incomplete due to missing console image
@@ -89,6 +90,7 @@ def post_upload(source, target, env):
     elif ("nordicnrf52" in platform):
         time.sleep(10)
         # device provisioning is incomplete and only currently appropriate for 915MHz RAK4631
+        #device_wipe(env)
         device_provision(env)
         time.sleep(5)
         firmware_hash(source, env)

@@ -107,6 +107,10 @@ button.primary { background: var(--accent); color: var(--accent-ink); border-col
 .logs { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 8px 12px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--panel); }
 .log-line { white-space: pre-wrap; word-break: break-all; }
 .follow-pill { position: absolute; bottom: 14px; right: 18px; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--accent); color: var(--accent-ink); cursor: pointer; font: inherit; box-shadow: 0 1px 4px rgba(0,0,0,0.2); }
+<!-- LOGFILTER-BEGIN — stripped by webconsole/package.sh when --strip-logfilter is given -->
+.logs-filter { font: inherit; padding: 3px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--ink); min-width: 140px; }
+.logs-level { font: inherit; padding: 3px 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--ink); }
+<!-- LOGFILTER-END -->
 .notice { padding: 8px 12px; background: rgba(180,131,9,0.12); color: var(--warn); border-radius: 4px; margin-bottom: 12px; }
 .toasts { position: fixed; top: 56px; right: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 1000; pointer-events: none; }
 .toast { padding: 10px 14px; background: var(--panel); border: 1px solid var(--border); border-left-width: 3px; border-radius: 4px; box-shadow: 0 2px 12px rgba(0,0,0,0.18); min-width: 220px; max-width: 360px; opacity: 0; transform: translateY(-8px); transition: opacity 0.2s, transform 0.2s; pointer-events: auto; }
@@ -174,7 +178,15 @@ const CMD_LOG=0x80, CMD_PROVISION_REQ=0x86, CMD_PROVISION_RSP=0x87;
 const CMD_RESET=0x55, CMD_RESET_BYTE=0xF8;
 const STAT_CMD_RANGE = [0x21, 0x29];
 
-const OP = { GetSchema:1, GetInfo:2, GetCapabilities:3, GetState:4, SetState:5, Commit:6, Discard:7, FactoryReset:8, Ack:100, Error:101 };
+// Optional schema baked in at packaging time. When BUNDLED_SCHEMA is non-null
+// and its hash/version match the device's GetInfo response, the web console
+// uses it directly and skips the GetSchema round-trip entirely — important
+// on LoRa where a full schema fetch is ~3 KB of airtime. The placeholder is
+// replaced by webconsole/package.sh from a build-time schema dump. Shape:
+//   { version: <int>, hash: <uint32>, schemaJson: "<serialised schema>" }
+const BUNDLED_SCHEMA = null;
+
+const OP = { GetSchema:1, GetInfo:2, GetCapabilities:3, GetState:4, SetState:5, Commit:6, Discard:7, FactoryReset:8, Reboot:9, Ack:100, Error:101 };
 const FT = { None:0, Bool:1, Int:2, Float:3, String:4, Bytes:5, Enum:6, BytesList:7, Void:8 };
 // Provisioning field flags (Field.h FF_*). Mutually exclusive uses:
 //  - READ_ONLY:  info-only field (e.g. metrics). Server has a getter; client
@@ -186,7 +198,21 @@ const FT = { None:0, Bool:1, Int:2, Float:3, String:4, Bytes:5, Enum:6, BytesLis
 const FF = { LIVE_APPLY:1, REBOOT_REQUIRED:2, READ_ONLY:4, SECRET:8, WRITE_ONLY:16 };
 const ERR_NAMES = { 0:'Ok', 1:'BadRequest', 2:'UnknownOp', 3:'UnknownNs', 4:'UnknownField', 5:'InvalidValue', 6:'Constraint', 7:'ReadOnly', 8:'StorageError', 9:'NotInitialized', 99:'Internal' };
 const FK = { Id:1, Name:2, Type:3, Flags:4, MinI:5, MaxI:6, MinF:7, MaxF:8, MaxLen:9, EnumValues:10, EnumLabels:11, Default:12, ElementSize:13, MaxCount:14 };
-const IK = { FirmwareVersion:1, SchemaVersion:2, NeedsReboot:3 };
+const IK = { FirmwareVersion:1, SchemaVersion:2, NeedsReboot:3, SchemaHash:4 };
+// Wire-level transport keys (request-payload and response-sentinel). Reserved
+// at 100+ to avoid collision with low-numbered field/ns identifiers.
+const WK = { ReqCompress:100, CompressedPayload:101 };
+// heatshrink decoder config — MUST match the firmware build flags in microReticulum heatshrink_config.h.
+const HS_WINDOW_BITS    = 9;
+const HS_LOOKAHEAD_BITS = 4;
+// Ops where a ReqCompress flag is safe to inject in the request payload.
+// SetState / Commit / Discard use different payload shapes (map keyed by
+// ns-id, or array) where injecting a flag would conflict; their responses
+// are also small and don't benefit from compression.
+const COMPRESSIBLE_OPS = new Set([
+  OP.GetSchema, OP.GetInfo, OP.GetCapabilities, OP.GetState,
+  OP.FactoryReset, OP.Reboot,
+]);
 const GK = { NamespaceFilter:1, Pending:2 };
 const SK = { Applied:1, DraftHasReboot:2, FieldErrors:3 };
 const CK = { Applied:1, NeedsReboot:2 };
@@ -835,6 +861,600 @@ class WebSocketTransport {
   }
 }
 
+// ===== RNS-over-rnsapid transport =====
+// Bridges the upper-layer KISS-framed Provisioning protocol to rnsapid's
+// generic link.* WebSocket API, which terminates on an RNS Link to the
+// remote node. CMD_PROVISION_REQ frames are unwrapped to link.request
+// payloads; the async link.request.response event supplies the body, gets
+// re-wrapped as CMD_PROVISION_RSP, and is pushed to onBytes so
+// ProvisioningClient sees the exchange unchanged.
+//
+// Protocol notes:
+// - rnsapid's WS is fully async: link.open replies with an immediate ack
+//   carrying the computed link_id, then fires session-scoped
+//   link.open.phase events, then a terminal link.established (success) or
+//   link.open.failed (failure). We correlate everything by a client-
+//   generated integer `id`.
+// - link.request is likewise async: immediate link.request.result ack
+//   (ignored here) + later link.request.response / link.request.failed
+//   events, correlated by echoed id.
+// - The microReticulum provisioning surface is always
+//   `rnstransport.remote.management`, so we hard-code
+//   app_name="rnstransport", aspects=["remote","management"] and only
+//   surface destination_hash to the user.
+// - Targets anonymous-session rnsapid deployments only (auth disabled).
+class RnsTransport {
+  constructor(){
+    this.ws = null;
+    this.params = null;          // { rnsapidUrl, destinationHash, autoIdentify }
+    this.onBytes = () => {};
+    this.onStatus = () => {};
+    this._userClosing = false;
+    // True once an involuntary close (link.closed broadcast, link.request
+    // failed with a link-is-dead reason, ws.onclose, etc.) has fired
+    // _handleInvoluntaryClose — keeps teardown idempotent under racing
+    // signals.
+    this._involuntaryClosed = false;
+    this._reqIdCounter = 1;
+    this._sessionId = null;
+    this._linkId = null;         // 32-hex, populated by link.open.result ack
+    this._authWaiter = null;     // { resolve, reject, timerId } — connect stage 2
+    this._openWaiter = null;     // { id, onAck, onPhase, onEstablished, onFailed, onError } — connect stage 3
+    this._waiters = new Map();   // id → { onSuccess, onFailure } — one-shot targeted replies
+    this._pendingRequests = new Map(); // id → { onResponse, onFailed, timerId } — async link.request completion
+    this._kissOut = new KissDecoder((cmd, payload) => this._onOutgoingKissFrame(cmd, payload));
+    this._unloadHandler = null;
+    // Advertised default for ProvisioningClient.request timeouts. LoRa
+    // Resource transfers commonly take 10-30s for schemas; ProvisioningClient
+    // picks this up via duck-typing.
+    this.defaultRequestTimeoutMs = 30000;
+    // Bytes are expensive on LoRa — request heatshrink-compressed responses
+    // for bulky ops (schema, state). ProvisioningClient inspects this flag.
+    this.compressionPreferred = true;
+  }
+
+  // rnsapid phase strings → user-friendly status labels.
+  static PHASE_LABELS = {
+    finding_path: 'Finding path',
+    establishing_link: 'Establishing link',
+    identifying: 'Authenticating',
+  };
+
+  // rnsapid reason codes / internal error strings → human-friendly messages.
+  static FAILURE_LABELS = {
+    no_known_identity: 'Identity not recalled for destination (no announce received yet?)',
+    link_establishment_timed_out: 'Link establishment timed out',
+    identify_failed: 'Authentication failed',
+    invalid_request: 'Invalid request',
+    internal: 'Internal server error',
+    unknown_link: 'Link is not active',
+    no_active_link: 'Link is not active',
+    ws_closed: 'WebSocket disconnected',
+    auth_timeout: 'rnsapid did not attach the session in time',
+    not_anonymous: 'rnsapid requires authentication (not supported here)',
+    link_closed: 'Link closed',
+    link_open_timeout: 'Link open timed out (no progress from rnsapid)',
+  };
+  static _friendlyFailure(reason){
+    if (!reason) return 'failure';
+    return RnsTransport.FAILURE_LABELS[reason] || reason;
+  }
+  static available(){ return true; }
+
+  _nextReqId(){ return this._reqIdCounter++; }
+
+  static _b64Encode(bytes){
+    let s = '';
+    for (let i = 0; i < bytes.length; ++i) s += String.fromCharCode(bytes[i]);
+    return btoa(s);
+  }
+  static _b64Decode(b64){
+    if (!b64) return new Uint8Array(0);
+    const s = atob(b64);
+    const out = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; ++i) out[i] = s.charCodeAt(i);
+    return out;
+  }
+
+  async connect(params){
+    this.params = params;
+    this._involuntaryClosed = false;
+    this._linkId = null;
+    this._sessionId = null;
+    const { rnsapidUrl, destinationHash, autoIdentify } = params;
+    if (!rnsapidUrl) throw new Error('missing rnsapid URL');
+    if (!destinationHash || !/^[0-9a-fA-F]{32}$/.test(destinationHash))
+      throw new Error('destination hash must be 32 hex characters');
+
+    // Stage 1: open the WebSocket to rnsapid.
+    this.onStatus({state:'connecting', info: 'WS connecting'});
+    await new Promise((resolve, reject) => {
+      try {
+        this.ws = new WebSocket(rnsapidUrl);
+        let opened = false;
+        this.ws.onopen = () => {
+          opened = true;
+          this._attachUnloadHandlers();
+          resolve();
+        };
+        this.ws.onmessage = (e) => this._onWsMessage(e);
+        this.ws.onerror = () => { if (!opened) reject(new Error('WebSocket connect failed (check URL / TLS / firewall)')); };
+        this.ws.onclose = () => {
+          for (const w of this._waiters.values()) { try { w.onFailure && w.onFailure('ws_closed'); } catch(_) {} }
+          this._waiters.clear();
+          for (const p of this._pendingRequests.values()) {
+            try { clearTimeout(p.timerId); } catch(_) {}
+            try { p.onFailed && p.onFailed('ws_closed'); } catch(_) {}
+          }
+          this._pendingRequests.clear();
+          if (this._authWaiter) {
+            const w = this._authWaiter; this._authWaiter = null;
+            try { clearTimeout(w.timerId); } catch(_) {}
+            try { w.reject(new Error('ws_closed')); } catch(_) {}
+          }
+          if (this._openWaiter) {
+            const w = this._openWaiter; this._openWaiter = null;
+            try { w.onError('ws_closed'); } catch(_) {}
+          }
+          this._detachUnloadHandlers();
+          this.onStatus({state: this._userClosing ? 'idle' : 'closed'});
+        };
+      } catch (e) { this.onStatus({state:'error', info: e.message}); reject(e); }
+    });
+
+    // Stage 2: wait for rnsapid's auth.session.attached first frame. With
+    // [auth] enabled = false it arrives immediately after WS open with
+    // is_anonymous:true — that's the confirmation that we're talking to
+    // rnsapid and not, say, some other server that accepts WS upgrades.
+    this.onStatus({state:'connecting', info: 'Attaching session'});
+    try {
+      const attach = await this._waitAuthAttach(5000);
+      this._sessionId = attach.session_id || null;
+      if (attach.is_anonymous !== true) {
+        try { this.ws && this.ws.close(); } catch(_) {}
+        throw new Error('not_anonymous');
+      }
+    } catch (e) {
+      const reason = e && e.message === 'timeout' ? 'auth_timeout' : (e.message || 'auth_failed');
+      this.onStatus({state:'error', info: RnsTransport._friendlyFailure(reason)});
+      try { this.ws && this.ws.close(); } catch(_) {}
+      throw new Error(reason);
+    }
+
+    // Stage 3: open the Link via rnsapid's async link.open flow. Immediate
+    // link.open.result ack populates this._linkId; link.open.phase events
+    // reset the idle timer as progress is made; terminal link.established
+    // resolves, link.open.failed rejects with a stable reason code.
+    this.onStatus({state:'connecting', info: 'Opening link'});
+    try {
+      await this._openLink({
+        destination_hash: destinationHash.toLowerCase(),
+        auto_identify: !!autoIdentify,
+      });
+      const ident = autoIdentify ? ' (identified)' : '';
+      this.onStatus({state:'connected', info: destinationHash.slice(0,8) + ident});
+    } catch (e) {
+      const reason = (e && e.message) || 'failure';
+      this.onStatus({state:'error', info: RnsTransport._friendlyFailure(reason)});
+      try { this.ws && this.ws.close(); } catch(_) {}
+      throw e;
+    }
+  }
+
+  // Best-effort synchronous teardown when the page is being unloaded.
+  // Browsers flush queued WebSocket frames before the connection terminates,
+  // so a fire-and-forget link.close + a clean WebSocket.close(1000) reaches
+  // the server in practice.
+  _attachUnloadHandlers(){
+    if (this._unloadHandler) return;
+    this._unloadHandler = () => {
+      try {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN && this._linkId) {
+          this.ws.send(JSON.stringify({
+            type: 'link.close',
+            id: this._nextReqId(),
+            link_id: this._linkId,
+          }));
+          this.ws.close(1000, 'page-unload');
+        }
+      } catch (_) { /* page is dying; nothing useful to do */ }
+    };
+    window.addEventListener('beforeunload', this._unloadHandler);
+    window.addEventListener('pagehide', this._unloadHandler);
+  }
+
+  _detachUnloadHandlers(){
+    if (!this._unloadHandler) return;
+    window.removeEventListener('beforeunload', this._unloadHandler);
+    window.removeEventListener('pagehide', this._unloadHandler);
+    this._unloadHandler = null;
+  }
+
+  _waitAuthAttach(timeoutMs){
+    return new Promise((resolve, reject) => {
+      const timerId = setTimeout(() => {
+        if (this._authWaiter && this._authWaiter.timerId === timerId) {
+          this._authWaiter = null;
+          reject(new Error('timeout'));
+        }
+      }, timeoutMs);
+      this._authWaiter = { resolve, reject, timerId };
+    });
+  }
+
+  _openLink({destination_hash, auto_identify}){
+    return new Promise((resolve, reject) => {
+      const id = this._nextReqId();
+      // Overall idle-timer: resets on ack + each phase event. A server
+      // making progress won't trip this even on slow LoRa; a dead server
+      // will.
+      const OPEN_IDLE_TIMEOUT_MS = 45000;
+      let timerId;
+      const armTimer = () => {
+        if (timerId !== undefined) clearTimeout(timerId);
+        timerId = setTimeout(() => {
+          if (this._openWaiter && this._openWaiter.id === id) {
+            this._openWaiter = null;
+            reject(new Error('link_open_timeout'));
+          }
+        }, OPEN_IDLE_TIMEOUT_MS);
+      };
+      const done = () => {
+        if (timerId !== undefined) clearTimeout(timerId);
+        if (this._openWaiter && this._openWaiter.id === id) this._openWaiter = null;
+      };
+      this._openWaiter = {
+        id,
+        onAck: (msg) => {
+          armTimer();
+          this._linkId = msg.link_id || null;
+          // Cached ACTIVE link: no phase events or link.established will
+          // fire, so resolve on the ack.
+          if (msg.reused === true) { done(); resolve(msg); }
+        },
+        onPhase: (phase) => {
+          armTimer();
+          const label = RnsTransport.PHASE_LABELS[phase] || phase;
+          this.onStatus({state:'connecting', info: label});
+        },
+        onEstablished: (msg) => { done(); resolve(msg); },
+        onFailed: (reason /*, detail */) => { done(); reject(new Error(reason || 'failure')); },
+        onError: (err) => { done(); reject(new Error(err || 'error')); },
+      };
+      const frame = {
+        type: 'link.open',
+        id,
+        destination_hash,
+        app_name: 'rnstransport',
+        aspects: ['remote', 'management'],
+        auto_identify,
+        establishment_timeout: 25.0,
+        path_lookup_timeout: 25.0,
+      };
+      try { this.ws.send(JSON.stringify(frame)); armTimer(); }
+      catch (e) { done(); reject(e); }
+    });
+  }
+
+  async reconnect(){
+    if (!this.params) throw new Error('no params to reconnect');
+    this._userClosing = false;
+    await this.connect(this.params);
+  }
+
+  // The upper layer hands us KISS bytes. Decode; if PROVISION_REQ, unwrap
+  // onto link.request. Other opcodes are silently dropped (legacy KISS /
+  // CMD_RESET / etc are not transported over this link).
+  async send(bytes){
+    this._kissOut.feed(bytes);
+  }
+
+  _onOutgoingKissFrame(cmd, payload){
+    if (cmd !== CMD_PROVISION_REQ) return;
+    if (!this._linkId) return; // no link — nothing to send on
+    const id = this._nextReqId();
+    // ProvisioningClient enforces its own request timeout; this is a
+    // belt-and-suspenders per-entry timer so a lost async event can't leak
+    // a pending entry indefinitely.
+    const timerId = setTimeout(() => { this._pendingRequests.delete(id); }, this.defaultRequestTimeoutMs + 5000);
+    this._pendingRequests.set(id, {
+      timerId,
+      onResponse: (payloadBytes) => {
+        this._pendingRequests.delete(id);
+        clearTimeout(timerId);
+        try { this.onBytes(kissEncode(CMD_PROVISION_RSP, payloadBytes)); } catch(_) {}
+      },
+      onFailed: (reason) => {
+        this._pendingRequests.delete(id);
+        clearTimeout(timerId);
+        // If rnsapid says the link is dead, fast-path the transport into
+        // involuntary-close teardown so autoReconnect (if on) engages now
+        // rather than waiting for the broadcast / UI timeout.
+        // _handleInvoluntaryClose is idempotent under racing signals.
+        if (reason === 'unknown_link' || reason === 'no_active_link' || reason === 'ws_closed') {
+          this._handleInvoluntaryClose(reason);
+        }
+      },
+    });
+    try {
+      this.ws.send(JSON.stringify({
+        type: 'link.request',
+        id,
+        link_id: this._linkId,
+        path: '/provision',
+        data_b64: RnsTransport._b64Encode(payload),
+        timeout: 30,
+      }));
+    } catch (_) {
+      this._pendingRequests.delete(id);
+      clearTimeout(timerId);
+    }
+  }
+
+  async disconnect(){
+    this._userClosing = true;
+    if (this.ws && this.ws.readyState === WebSocket.OPEN && this._linkId) {
+      try {
+        await this._sendAndWait('link.close', { link_id: this._linkId });
+      } catch(_) {}
+    }
+    try { if (this.ws) this.ws.close(); } catch(_) {}
+    this.ws = null;
+  }
+
+  async forceClose(){
+    this._userClosing = false;
+    // Fire-and-forget link.close so rnsapid tears down its side before we
+    // drop the WS — otherwise the daemon's cached Link would outlive the
+    // remote reboot and the next connect() would inherit a stale link.
+    if (this.ws && this.ws.readyState === WebSocket.OPEN && this._linkId) {
+      try {
+        this.ws.send(JSON.stringify({
+          type: 'link.close',
+          id: this._nextReqId(),
+          link_id: this._linkId,
+        }));
+      } catch(_) {}
+    }
+    try { if (this.ws) this.ws.close(); } catch(_) {}
+  }
+
+  // Fired when the RNS Link or the underlying WS goes down without us
+  // asking (link.closed broadcast, link.request.failed with dead-link
+  // reason, ws.onclose racing). Fails in-flight waiters immediately so
+  // callers don't sit on a 30s ProvisioningClient timeout, then closes the
+  // WS — ws.onclose emits 'closed' onStatus (since _userClosing stays
+  // false), routing through onTransportStatus to startReconnect when
+  // autoReconnect is on. Idempotent so concurrent signals collapse to one
+  // teardown.
+  _handleInvoluntaryClose(reason){
+    if (this._involuntaryClosed) return;
+    this._involuntaryClosed = true;
+    for (const w of this._waiters.values()) {
+      try { w.onFailure && w.onFailure(reason); } catch(_) {}
+    }
+    this._waiters.clear();
+    for (const p of this._pendingRequests.values()) {
+      try { clearTimeout(p.timerId); } catch(_) {}
+      try { p.onFailed && p.onFailed(reason); } catch(_) {}
+    }
+    this._pendingRequests.clear();
+    try { if (this.ws) this.ws.close(); } catch(_) {}
+  }
+
+  // Send a one-shot targeted command (link.close, link.status, link.list,
+  // link.identify) with a client-generated `id`; resolve on the matching
+  // `<msg-type>.result` frame or reject on `{type: "error", id, error}`.
+  // The async link.open and link.request flows have their own tracking.
+  _sendAndWait(type, body, { timeoutMs = 15000 } = {}){
+    const id = this._nextReqId();
+    const frame = Object.assign({ type, id }, body);
+    return new Promise((resolve, reject) => {
+      const timerId = setTimeout(() => {
+        if (this._waiters.has(id)) {
+          this._waiters.delete(id);
+          reject(new Error(type + ' timeout after ' + timeoutMs + 'ms'));
+        }
+      }, timeoutMs);
+      this._waiters.set(id, {
+        onSuccess: (msg) => { clearTimeout(timerId); resolve(msg); },
+        onFailure: (reason) => { clearTimeout(timerId); reject(new Error(reason || 'failure')); },
+      });
+      try { this.ws.send(JSON.stringify(frame)); }
+      catch (e) { clearTimeout(timerId); this._waiters.delete(id); reject(e); }
+    });
+  }
+
+  _onWsMessage(e){
+    let msg;
+    try { msg = JSON.parse(typeof e.data === 'string' ? e.data : new TextDecoder().decode(e.data)); }
+    catch (_) { return; }
+    if (!msg || typeof msg.type !== 'string') return;
+
+    // Stage-2 session attach.
+    if (msg.type === 'auth.session.attached') {
+      const w = this._authWaiter;
+      if (w) {
+        this._authWaiter = null;
+        try { clearTimeout(w.timerId); } catch(_) {}
+        w.resolve(msg);
+      }
+      return;
+    }
+
+    // Stage-3 async link.open flow: ack + phases + terminal event.
+    if (this._openWaiter && msg.id != null && msg.id === this._openWaiter.id) {
+      const w = this._openWaiter;
+      if (msg.type === 'link.open.result') { w.onAck(msg); return; }
+      if (msg.type === 'link.open.phase') { w.onPhase(msg.phase); return; }
+      if (msg.type === 'link.established') { w.onEstablished(msg); return; }
+      if (msg.type === 'link.open.failed') { w.onFailed(msg.reason, msg.detail); return; }
+      if (msg.type === 'error') { w.onError(msg.error); return; }
+      // fall through — some other id-carrying frame (shouldn't happen)
+    }
+
+    // Async link.request completion events (id echoed from the originating
+    // link.request; rnsapid's U2 change).
+    if (msg.type === 'link.request.response') {
+      const p = this._pendingRequests.get(msg.id);
+      if (p) {
+        const payload = RnsTransport._b64Decode(msg.response_b64 || '');
+        p.onResponse(payload);
+      }
+      return;
+    }
+    if (msg.type === 'link.request.failed') {
+      const p = this._pendingRequests.get(msg.id);
+      if (p) p.onFailed(msg.reason || 'failed');
+      return;
+    }
+    // link.request.result is just the "queued" ack — the real response
+    // arrives via link.request.response. Ignore.
+    if (msg.type === 'link.request.result') return;
+
+    // Session-scoped link.closed for our link → involuntary close, unless
+    // the user initiated it via disconnect() (rnsapid emits link.closed
+    // for locally-initiated closes too, and auto-reconnect shouldn't
+    // engage after Disconnect).
+    if (msg.type === 'link.closed') {
+      const linkId = (msg.link_id || '').toLowerCase();
+      if (this._linkId && linkId === this._linkId.toLowerCase()) {
+        if (!this._userClosing) this._handleInvoluntaryClose('link_closed');
+      }
+      return;
+    }
+
+    // Targeted one-shot replies (link.close.result, link.identify.result,
+    // link.status.result, link.list.result) and their error twin.
+    if (msg.id != null) {
+      const w = this._waiters.get(msg.id);
+      if (w) {
+        this._waiters.delete(msg.id);
+        if (msg.type === 'error') w.onFailure(msg.error || 'error');
+        else w.onSuccess(msg);
+        return;
+      }
+    }
+
+    // Ignore everything else (link.data.received, link.remote_identified,
+    // unsolicited link.data.sent, etc.).
+  }
+}
+
+// ===== Schema cache helpers =====
+// Schemas are content-addressed by the firmware's CRC32 hash (info.schemaHash),
+// so two devices reporting the same hash share the same cached entry. We cap
+// the total number of cached schemas at SCHEMA_CACHE_MAX to bound storage
+// growth as a user connects to many devices over time.
+const SCHEMA_CACHE_PREFIX = 'mrf_schema_v';
+const SCHEMA_CACHE_MAX    = 5;
+
+// Convert Uint8Array (bytes-typed defaults) to a JSON-safe tagged form. Most
+// schema fields are plain primitives, so this is rarely needed in practice.
+function _schemaJsonReplacer(_k, v){
+  if (v && v.constructor === Uint8Array) {
+    let s = '';
+    for (let i = 0; i < v.length; i++) s += String.fromCharCode(v[i]);
+    return { __u8: btoa(s) };
+  }
+  return v;
+}
+function _schemaJsonReviver(_k, v){
+  if (v && typeof v === 'object' && typeof v.__u8 === 'string' && Object.keys(v).length === 1) {
+    const s = atob(v.__u8);
+    const out = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i) & 0xff;
+    return out;
+  }
+  return v;
+}
+function _schemaSerialize(schema){
+  return JSON.stringify(schema, _schemaJsonReplacer);
+}
+function _schemaDeserialize(str){
+  return JSON.parse(str, _schemaJsonReviver);
+}
+// Evict the oldest entries to keep cache size bounded. Called before writing
+// a new key; the `keepKey` arg ensures we don't evict the entry we're about
+// to write if it already exists (LRU-bump semantics).
+function _schemaCachePrune(keepKey){
+  if (!window.localStorage) return;
+  const keys = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith(SCHEMA_CACHE_PREFIX) && k !== keepKey) keys.push(k);
+  }
+  // localStorage doesn't expose write order, so eviction is approximate —
+  // we drop in iteration order until under the cap. Good enough for an
+  // O(<=5) cache that's only churned when a user touches many devices.
+  while (keys.length >= SCHEMA_CACHE_MAX) {
+    const victim = keys.shift();
+    try { localStorage.removeItem(victim); } catch(_) {}
+  }
+}
+
+// ===== heatshrink decoder =====
+// Minimal LZSS decoder matching the firmware's heatshrink_encoder output.
+// Static config must agree with the build flags in platformio.ini —
+// changing HS_WINDOW_BITS / HS_LOOKAHEAD_BITS here without matching the
+// firmware will silently corrupt every decode.
+//
+// Token layout (MSB-first within each byte):
+//   1 tag bit:
+//     '1' followed by 8 bits → literal byte
+//     '0' followed by (window_bits + lookahead_bits) → backref { offset+1, length+2 }
+// EOF detection: stop when we can't read the next tag bit (out of input).
+function heatshrinkDecode(input){
+  const out = [];
+  let bitPos = 0;
+  const totalBits = input.length * 8;
+  function readBits(n){
+    if (bitPos + n > totalBits) return -1;
+    let v = 0;
+    for (let i = 0; i < n; i++) {
+      const byteIdx = bitPos >> 3;
+      const bitInByte = 7 - (bitPos & 7);
+      v = (v << 1) | ((input[byteIdx] >> bitInByte) & 1);
+      bitPos++;
+    }
+    return v;
+  }
+  while (bitPos < totalBits) {
+    const tag = readBits(1);
+    if (tag < 0) break;
+    if (tag === 1) {
+      const b = readBits(8);
+      if (b < 0) break;
+      out.push(b);
+    } else {
+      const offRaw = readBits(HS_WINDOW_BITS);
+      if (offRaw < 0) break;
+      const lenRaw = readBits(HS_LOOKAHEAD_BITS);
+      if (lenRaw < 0) break;
+      // heatshrink encodes offset and length as (real-value - 1) on the
+      // wire — see heatshrink_decoder.c HSDS_BACKREF_INDEX_LSB /
+      // HSDS_BACKREF_COUNT_LSB states. Minimum match length is 2 (a
+      // 1-byte match would cost more bits than a literal), so wire_length
+      // ranges 1..(2^lookahead_bits - 1) → real_length 2..(2^lb).
+      const offset = offRaw + 1;
+      const length = lenRaw + 1;
+      // The C encoder/decoder both pre-zero a (1<<HS_WINDOW_BITS) byte
+      // sliding window (memset in heatshrink_{en,de}coder.c::reset), and
+      // the encoder is allowed to emit backrefs that point into that
+      // zero region — i.e., "before" any byte has actually been emitted.
+      // Treat negative indices as that virtual zero source rather than
+      // bailing; bailing silently truncates every stream that compresses
+      // an early zero run (common for msgpack float64 metrics).
+      const start = out.length - offset;
+      for (let i = 0; i < length; i++) {
+        const idx = start + i;
+        out.push(idx < 0 ? 0 : out[idx]);
+      }
+    }
+  }
+  return new Uint8Array(out);
+}
+
 // ===== Provisioning client =====
 class ProvisioningClient {
   constructor(transport){
@@ -848,6 +1468,11 @@ class ProvisioningClient {
     this.onLegacyFrame = () => {};
     this.decoder = new KissDecoder((cmd, payload) => this._onFrame(cmd, payload));
     this.t.onBytes = (b) => this.decoder.feed(b);
+    // Whether to ask the server for compressed responses on bulky ops.
+    // Picked up by duck-typing from the transport (LoRa-backed transports
+    // set `compressionPreferred = true`). Local Serial / WebSocket leave
+    // it false: bytes are cheap there and decompression adds latency.
+    this.compressionEnabled = !!(transport && transport.compressionPreferred);
   }
   _onFrame(cmd, payload){
     if (cmd === CMD_PROVISION_RSP) this._onResponse(payload);
@@ -862,18 +1487,50 @@ class ProvisioningClient {
     if (!Array.isArray(env) || env.length < 2) return;
     const op = Number(env[0]);
     const seq = Number(env[1]);
-    const body = env.length >= 3 ? env[2] : null;
+    let body = env.length >= 3 ? env[2] : null;
     const w = this.waiters.get(seq);
     if (!w) return;
     this.waiters.delete(seq);
     clearTimeout(w.timeoutId);
+    // Compressed-payload sentinel: a single-key map { CompressedPayload: <bin> }
+    // whose value decompresses to the original MsgPack-encoded payload.
+    // Transparent to the dispatch below — once decoded, body looks identical
+    // to what an uncompressed response would have produced.
+    if (body instanceof Map && body.size === 1 && body.has(WK.CompressedPayload)) {
+      const bin = body.get(WK.CompressedPayload);
+      if (bin instanceof Uint8Array) {
+        try {
+          const raw = heatshrinkDecode(bin);
+          body = new Unpacker(raw).next();
+        } catch (e) {
+          console.error('compressed payload decode failed:', e);
+          w.reject(new Error('failed to decompress response: ' + (e && e.message)));
+          return;
+        }
+      }
+    }
     if (op === OP.Error) {
-      const m = body instanceof Map ? body : new Map();
-      const err = new Error(m.get(EK.Message) || 'Provisioning error');
-      err.code = m.get(EK.Code) ?? 99;
-      err.codeName = ERR_NAMES[err.code] || 'Unknown';
-      err.ns = m.get(EK.Namespace);
-      err.field = m.get(EK.Field);
+      // Defensive against decoders that hand us a plain Object instead of a
+      // Map for int-keyed msgpack maps. Some JS msgpack libs surface int keys
+      // as Map entries, others coerce to string-keyed Object — handle both.
+      const getF = (key) => {
+        if (body instanceof Map) return body.get(key);
+        if (body && typeof body === 'object') {
+          if (key in body) return body[key];
+          const skey = String(key);
+          if (skey in body) return body[skey];
+        }
+        return undefined;
+      };
+      const msg = getF(EK.Message) || 'Provisioning error';
+      const code = getF(EK.Code) ?? 99;
+      const codeName = ERR_NAMES[code] || 'Unknown';
+      const err = new Error(`${msg} (code ${code} ${codeName})`);
+      err.code = code;
+      err.codeName = codeName;
+      err.message_raw = msg;
+      err.ns = getF(EK.Namespace);
+      err.field = getF(EK.Field);
       w.reject(err);
     } else {
       w.resolve({ op, body });
@@ -882,13 +1539,33 @@ class ProvisioningClient {
   async _request(opId, packPayload, timeoutMs){
     const seq = this.seq++;
     const p = new Packer();
-    const has = !!packPayload;
+    // Compression negotiation: for ops whose payload either is currently nil
+    // (no map) or already a map of "options" with known keys, optionally
+    // inject the ReqCompress flag. SetState/Commit/Discard are excluded
+    // because their payload shapes (nsId-keyed map / array of nsIds) would
+    // collide with the flag's uint16 key and break the server-side parser.
+    const wantsCompress = this.compressionEnabled && COMPRESSIBLE_OPS.has(opId);
+    const has = !!packPayload || wantsCompress;
     p.arr(has ? 3 : 2);
     p.int(opId);
     p.int(seq);
-    if (has) packPayload(p);
+    if (packPayload) {
+      // Caller-driven payload. Pass wantsCompress through ctx so the
+      // caller (e.g. getState) can fold ReqCompress into its own map.
+      packPayload(p, { wantsCompress });
+    } else if (wantsCompress) {
+      // No caller payload — emit a single-entry map carrying just the flag.
+      p.map(1);
+      p.int(WK.ReqCompress);
+      p.bool(true);
+    }
     const frame = kissEncode(CMD_PROVISION_REQ, p.result());
-    const timeout = (timeoutMs != null) ? timeoutMs : 5000;
+    // Per-call timeout wins; otherwise the transport's advertised default
+    // (RnsTransport publishes a longer one because LoRa Resource transfers
+    // can take 30+ seconds); final fallback is the snappy 5s default suited
+    // to Serial / BLE / WebSocket.
+    const transportDefault = (this.t && typeof this.t.defaultRequestTimeoutMs === 'number') ? this.t.defaultRequestTimeoutMs : null;
+    const timeout = (timeoutMs != null) ? timeoutMs : (transportDefault != null ? transportDefault : 5000);
     return new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         this.waiters.delete(seq);
@@ -904,7 +1581,15 @@ class ProvisioningClient {
   async getInfo(timeoutMs){
     const { body } = await this._request(OP.GetInfo, null, timeoutMs);
     const m = body instanceof Map ? body : new Map();
-    return { firmwareVersion: m.get(IK.FirmwareVersion), schemaVersion: m.get(IK.SchemaVersion), needsReboot: !!m.get(IK.NeedsReboot) };
+    // schemaHash is a uint32 CRC32 over the GetSchema response bytes. Older
+    // firmware that doesn't include it returns undefined here, which the
+    // schema cache layer treats as "uncacheable" and falls back to fetch.
+    return {
+      firmwareVersion: m.get(IK.FirmwareVersion),
+      schemaVersion: m.get(IK.SchemaVersion),
+      needsReboot: !!m.get(IK.NeedsReboot),
+      schemaHash: m.get(IK.SchemaHash),
+    };
   }
   async getSchema(){
     const { body } = await this._request(OP.GetSchema);
@@ -945,14 +1630,53 @@ class ProvisioningClient {
     }
     return { namespaces };
   }
+  // Resolve the device's schema, preferring (1) a build-time bundled schema
+  // whose hash matches the device, then (2) a localStorage cache entry keyed
+  // by (schemaVersion, schemaHash), then (3) a network GetSchema fetch. The
+  // hash is the CRC32 the firmware computes over the GetSchema response
+  // bytes at boot and reports in GetInfo; identical hashes imply identical
+  // schemas, so no per-device key is needed.
+  //
+  // Firmware that predates SchemaHash returns info.schemaHash === undefined,
+  // in which case we bypass cache and bundle and just fetch as before.
+  async resolveSchema(info){
+    const hash = info && info.schemaHash;
+    const ver  = info && info.schemaVersion;
+    if (hash == null || ver == null) return await this.getSchema();
+    const hashHex = (Number(hash) >>> 0).toString(16).padStart(8, '0');
+    const cacheKey = `mrf_schema_v${Number(ver)}_${hashHex}`;
+    // 1) Bundled (zero network).
+    if (BUNDLED_SCHEMA &&
+        Number(BUNDLED_SCHEMA.version) === Number(ver) &&
+        (Number(BUNDLED_SCHEMA.hash) >>> 0) === (Number(hash) >>> 0) &&
+        typeof BUNDLED_SCHEMA.schemaJson === 'string') {
+      try { return _schemaDeserialize(BUNDLED_SCHEMA.schemaJson); } catch(_) {}
+    }
+    // 2) localStorage cache.
+    try {
+      const raw = window.localStorage && localStorage.getItem(cacheKey);
+      if (raw) return _schemaDeserialize(raw);
+    } catch(_) {}
+    // 3) Fetch + persist.
+    const schema = await this.getSchema();
+    try {
+      if (window.localStorage) {
+        _schemaCachePrune(cacheKey);
+        localStorage.setItem(cacheKey, _schemaSerialize(schema));
+      }
+    } catch(_) { /* quota/disabled — non-fatal */ }
+    return schema;
+  }
   async getState(nsIds, pending){
-    const { body } = await this._request(OP.GetState, (p) => {
+    const { body } = await this._request(OP.GetState, (p, ctx) => {
       const hasFilter = Array.isArray(nsIds) && nsIds.length > 0;
-      const entries = (hasFilter ? 1 : 0) + (pending ? 1 : 0);
+      const compress = !!(ctx && ctx.wantsCompress);
+      const entries = (hasFilter ? 1 : 0) + (pending ? 1 : 0) + (compress ? 1 : 0);
       if (entries === 0) { p.nil(); return; }
       p.map(entries);
       if (hasFilter) { p.int(GK.NamespaceFilter); p.arr(nsIds.length); for (const n of nsIds) p.int(n); }
       if (pending) { p.int(GK.Pending); p.bool(true); }
+      if (compress) { p.int(WK.ReqCompress); p.bool(true); }
     });
     const out = {};
     if (body instanceof Map) {
@@ -1004,9 +1728,27 @@ class ProvisioningClient {
     const m = body instanceof Map ? body : new Map();
     return { needsReboot: !!m.get(CK.NeedsReboot) };
   }
+  // First-class Provisioning reboot — the library sends an Ack before
+  // invoking the registered reboot callback, so a healthy device responds.
+  // The Ack can still race with the actual reset (especially over slow RNS
+  // links), so we use a short per-call timeout and treat *timeout* as
+  // success: the request was emitted, the device almost certainly acted on
+  // it. The only hard failure we surface is UnknownOp (code 2) — a device
+  // too old to know about OP.Reboot — so callers can fall back cleanly to
+  // the legacy KISS reset path.
+  async requestReboot(){
+    try {
+      await this._request(OP.Reboot, null, 3000);
+    } catch (e) {
+      if (e && Number(e.code) === 2) throw e;   // UnknownOp — propagate
+      // timeout / connection-lost / link teardown mid-request — assume
+      // the reboot fired and let the caller proceed with teardown.
+    }
+  }
   // Fire-and-forget reset via the legacy RNode KISS reset frame
   // (FEND CMD_RESET CMD_RESET_BYTE FEND). The device reboots immediately,
-  // so there is no response — we just send the bytes.
+  // so there is no response — we just send the bytes. Used as the fallback
+  // for legacy RNodes that don't implement OP.Reboot.
   async reboot(){
     await this.t.send(kissEncode(CMD_RESET, new Uint8Array([CMD_RESET_BYTE])));
   }
@@ -1311,6 +2053,9 @@ function el(tag, attrs, children){
 const state = {
   transportName: observable('serial'),
   wsUrl: observable('ws://localhost:8080'),
+  rnsUrl: observable('wss://localhost:8000/ws'),
+  rnsDestHash: observable(''),
+  rnsAutoIdentify: observable(true),
   conn: observable({ state: 'idle' }),
   info: observable(null),
   schema: observable(null),
@@ -1327,15 +2072,6 @@ const state = {
   // Commit have anything to apply. Discard all also operates on the firmware
   // draft, so both buttons gate on this flag, not on local-only edits.
   firmwareHasDraft: observable(false),
-  // Per-namespace, per-field snapshot of values committed for FF_REBOOT_REQUIRED
-  // fields. The firmware accepts these on commit but defers calling the setter
-  // until reboot, so a subsequent getState returns the stale runtime value via
-  // the field's getter. Overlaying this map onto `committed` in
-  // fetchNamespaceIfNeeded keeps the UI showing what the user actually
-  // committed. Auto-trims per field once the device-reported value catches up,
-  // and clears on disconnect / discardAll / factoryReset / post-reboot.
-  // Shape: { [nsId]: { [fid]: value } }
-  pendingRebootOverlay: observable({}),
   autoReconnect: observable(true),
   reconnecting: observable(false),
   // Node Config tab — parallel observables to nsState/etc but for legacy-opcode
@@ -1383,6 +2119,7 @@ function createTransport(name){
   if (name === 'serial') return new SerialTransport();
   if (name === 'ble') return new BLETransport();
   if (name === 'ws') return new WebSocketTransport();
+  if (name === 'rns') return new RnsTransport();
   throw new Error('unknown transport ' + name);
 }
 
@@ -1397,7 +2134,6 @@ function clearSessionState(){
   state.nodeStatus.set({});
   state.hasDraft.set(false);
   state.firmwareHasDraft.set(false);
-  state.pendingRebootOverlay.set({});
   // Node Config side
   state.nodeCfgState.set({});
   state.nodeCfgLoaded.set({});
@@ -1409,17 +2145,6 @@ function clearSessionState(){
   state.nodeCfgNeedsReboot.set(false);
   state.legacySupported.set(null);
 }
-
-// Clear the pending-reboot overlay once the device reports needsReboot=false.
-// That transition only happens after the device has booted (apply_loaded_to_runtime
-// fires the deferred setters) and we've fetched fresh info — at that point the
-// getter returns the new value, so the overlay is no longer needed.
-let _lastNeedsReboot = false;
-state.info.subscribe((info) => {
-  const nowNeeds = !!(info && info.needsReboot);
-  if (_lastNeedsReboot && !nowNeeds) state.pendingRebootOverlay.set({});
-  _lastNeedsReboot = nowNeeds;
-});
 
 // Toggle a body class while the auto-reconnect loop is active so CSS can dim
 // and disable panel-body controls. The tab-strip already disables tab buttons
@@ -1476,6 +2201,11 @@ async function doConnect(){
     client = new ProvisioningClient(transport);
     wireClient(client);
     if (name === 'ws') await transport.connect(state.wsUrl.get());
+    else if (name === 'rns') await transport.connect({
+      rnsapidUrl: state.rnsUrl.get(),
+      destinationHash: state.rnsDestHash.get(),
+      autoIdentify: state.rnsAutoIdentify.get(),
+    });
     else await transport.connect();
     await afterConnect();
   } catch (e) {
@@ -1486,7 +2216,7 @@ async function doConnect(){
 async function afterConnect(){
   try { state.info.set(await client.getInfo()); } catch (e) { console.error('getInfo:', e); showToast('Failed to fetch device info: ' + e.message, 'err'); }
   try {
-    const schema = await client.getSchema();
+    const schema = await client.resolveSchema(state.info.get());
     state.schema.set(schema);
     if (schema.namespaces.length > 0 && state.activeNsTab.get() == null) {
       // Default to the first ROOT namespace (parentId == 0) — children render
@@ -1555,6 +2285,17 @@ async function startReconnect(){
         client = new ProvisioningClient(transport);
         wireClient(client);
         await transport.connect(state.wsUrl.get());
+      } else if (lastTransportName === 'rns') {
+        // rnsapid WS is gone; rebuild and re-open the Link.
+        transport = new RnsTransport();
+        transport.onStatus = onTransportStatus;
+        client = new ProvisioningClient(transport);
+        wireClient(client);
+        await transport.connect({
+          rnsapidUrl: state.rnsUrl.get(),
+          destinationHash: state.rnsDestHash.get(),
+          autoIdentify: state.rnsAutoIdentify.get(),
+        });
       } else {
         await transport.reconnect();
         // Serial/BLE reuse the same client instance — clear stale waiters and
@@ -1584,9 +2325,12 @@ async function startReconnect(){
       state.reconnecting.set(false);
       showToast('Reconnected', 'ok');
 
-      // Refresh schema (usually stable across reboot, but cheap to re-fetch).
+      // Refresh schema. resolveSchema short-circuits via the in-memory cache /
+      // bundled schema if the device's hash is unchanged across the reboot —
+      // and only falls back to a real GetSchema fetch when the schema actually
+      // changed (e.g. firmware upgrade).
       try {
-        const schema = await client.getSchema();
+        const schema = await client.resolveSchema(info);
         state.schema.set(schema);
         if (schema.namespaces.length > 0 && state.activeNsTab.get() == null) {
           const firstRoot = schema.namespaces.find(n => !Number(n.parentId || 0)) || schema.namespaces[0];
@@ -1641,29 +2385,10 @@ async function fetchNamespaceIfNeeded(nsId){
     const committedAll = await client.getState(todo, false);
     const mergedAll    = await client.getState(todo, true);
     let firmwareDraftAny = false;
-    const overlayCleanups = [];   // deferred mutations to pendingRebootOverlay
     state.nsState.update(s => {
       for (const id of todo) {
         const committed = committedAll[id] || {};
         const merged    = mergedAll[id]    || {};
-        // Pending-reboot overlay: the firmware's getter still returns the
-        // pre-commit runtime value for FF_REBOOT_REQUIRED fields (the setter
-        // doesn't fire until apply_loaded_to_runtime on next boot). Substitute
-        // the value we committed so the UI shows what the user actually
-        // changed. Entries auto-clean once the device-reported value matches
-        // the overlay (post-reboot the getter returns the new value).
-        const overlay = state.pendingRebootOverlay.get()[id] || {};
-        const overlayRemaining = {};
-        for (const fidStr in overlay) {
-          const fid = Number(fidStr);
-          if (valuesEqual(committed[fid], overlay[fid])) continue;   // device caught up
-          overlayRemaining[fid] = overlay[fid];
-          committed[fid] = overlay[fid];
-          if (fid in merged) merged[fid] = overlay[fid];             // keep diff zero
-        }
-        if (Object.keys(overlayRemaining).length !== Object.keys(overlay).length) {
-          overlayCleanups.push({ id, remaining: overlayRemaining });
-        }
         // FF_READ_ONLY fields (metrics/instrumentation) report live runtime
         // values via their getter. Two consecutive GetState calls — one for
         // committed, one for merged — can sample slightly different values
@@ -1690,14 +2415,6 @@ async function fetchNamespaceIfNeeded(nsId){
         if (firmwareDraftFids.size > 0) firmwareDraftAny = true;
       }
     });
-    if (overlayCleanups.length > 0) {
-      state.pendingRebootOverlay.update(s => {
-        for (const c of overlayCleanups) {
-          if (Object.keys(c.remaining).length === 0) delete s[c.id];
-          else s[c.id] = c.remaining;
-        }
-      });
-    }
     state.nsLoaded.update(s => { for (const id of todo) s[id] = true; });
     if (firmwareDraftAny) state.firmwareHasDraft.set(true);
     recomputeHasDraft();
@@ -1849,35 +2566,6 @@ function showToast(text, kind){
 }
 
 // ===== Operations =====
-// Collect drafted FF_REBOOT_REQUIRED field values across the given namespace
-// ids so commitAll can stash them into the pending-reboot overlay before the
-// firmware accepts them (and starts returning stale runtime values via the
-// getter on subsequent reads). Excludes WRITE_ONLY (not echoed) and READ_ONLY
-// (no setter, never drafted) flags.
-// Returns: { [nsId]: { [fid]: value } }
-function snapshotPendingRebootValues(treeIds){
-  const schema = state.schema.get();
-  const stateMap = state.nsState.get();
-  const out = {};
-  if (!schema) return out;
-  for (const id of treeIds) {
-    const nsObj = stateMap[id]; if (!nsObj || !nsObj.draft) continue;
-    const ns = getNsById(schema, id); if (!ns || !Array.isArray(ns.fields)) continue;
-    const slice = {};
-    for (const fidStr in nsObj.draft) {
-      const fid = Number(fidStr);
-      const f = ns.fields.find(ff => ff.id === fid);
-      if (!f) continue;
-      const flags = f.flags|0;
-      if (!(flags & FF.REBOOT_REQUIRED)) continue;
-      if (flags & (FF.WRITE_ONLY | FF.READ_ONLY)) continue;
-      slice[fid] = nsObj.draft[fid];
-    }
-    if (Object.keys(slice).length > 0) out[id] = slice;
-  }
-  return out;
-}
-
 async function saveNamespace(nsId){
   // Save the namespace AND all its descendants in a single SetState request.
   // Drafts from any sub-section in the tree contribute to the payload.
@@ -1949,22 +2637,9 @@ async function refreshNamespace(nsId){
 }
 async function commitAll(){
   if (!client) return;
+  if (!confirm('Commit all pending changes to the device?')) return;
   try {
-    // Snapshot drafted FF_REBOOT_REQUIRED values before commit clears the local
-    // state. After commit, the firmware accepts these but won't apply them to
-    // the runtime until reboot — without this overlay, the subsequent getState
-    // would read back the stale runtime value and the UI would appear to revert.
-    const nsStateNow = state.nsState.get();
-    const allDraftNsIds = Object.keys(nsStateNow)
-      .filter(id => Object.keys((nsStateNow[id] || {}).draft || {}).length > 0)
-      .map(Number);
-    const snap = snapshotPendingRebootValues(allDraftNsIds);
     const r = await client.commit(null);
-    if (Object.keys(snap).length > 0) {
-      state.pendingRebootOverlay.update(s => {
-        for (const nsId in snap) s[nsId] = Object.assign(s[nsId] || {}, snap[nsId]);
-      });
-    }
     state.nsServerErrors.set({});
     state.nsLoaded.set({});
     state.nsState.set({});
@@ -1989,7 +2664,6 @@ async function discardAll(){
     state.nsState.set({});
     recomputeHasDraft();
     state.firmwareHasDraft.set(false);
-    state.pendingRebootOverlay.set({});
     const cur = state.activeNsTab.get();
     if (cur != null) await fetchNamespaceIfNeeded(cur);
     showToast(`Discarded ${r.applied} pending change${r.applied !== 1 ? 's' : ''}`, 'ok');
@@ -2005,12 +2679,22 @@ async function reboot(){
     : 'Reboot the device now? You will be disconnected.';
   if (!confirm(msg)) return;
   try {
-    await client.reboot();
+    // Prefer the first-class Provisioning OP.Reboot — works over any
+    // transport, including RNS where legacy KISS CMD_RESET is filtered.
+    // UnknownOp (code 2) means the device's microReticulum is older than
+    // OP.Reboot; fall back to the legacy KISS path.
+    try {
+      await client.requestReboot();
+    } catch (e) {
+      if (e && Number(e.code) === 2) await client.reboot();
+      else throw e;
+    }
     // Reflect the imminent disconnect immediately, AND force-close the transport.
     // The force-close matters on UART-to-USB bridges (CP2102, CH340, etc) where
     // the host's serial connection survives the ESP32 reset — without it, the
     // read loop never observes a disconnect, 'closed' never fires, startReconnect
-    // never runs, and the UI is stuck in "Reconnecting…" forever.
+    // never runs, and the UI is stuck in "Reconnecting…" forever. On RNS it
+    // also fires link.close so rnsapid evicts its cached Link.
     if (auto) state.reconnecting.set(true);
     showToast(auto
       ? 'Reboot command sent — reconnecting…'
@@ -2032,7 +2716,6 @@ async function factoryReset(){
     state.nsServerErrors.set({});
     recomputeHasDraft();
     state.firmwareHasDraft.set(false);
-    state.pendingRebootOverlay.set({});
     // Banner is derived from state.info.needsReboot; refresh to pick up the change.
     try { state.info.set(await client.getInfo()); } catch(_) {}
     showToast('Factory reset complete' + (r.needsReboot ? ' — reboot recommended' : ''), r.needsReboot ? 'warn' : 'ok');
@@ -2108,6 +2791,26 @@ function buildTopBar(){
   const wsInput = el('input', { type: 'text', placeholder: 'ws://host:port', style: { width: '220px' } });
   wsInput.value = state.wsUrl.get();
   wsInput.oninput = (e) => state.wsUrl.set(e.target.value);
+  // Mount once; toggle visibility in update() so typing doesn't detach the
+  // focused input (which would drop focus on every keystroke).
+  wsHost.appendChild(wsInput);
+  // RNS-over-rnsapid config: WS URL + destination hash + auto-identify. The
+  // provisioning aspect is fixed (rnstransport.remote.management) and
+  // hard-coded inside RnsTransport, so it's not surfaced in the UI.
+  const rnsHost = el('span', { style: { display: 'inline-flex', gap: '4px', alignItems: 'center' } });
+  const rnsUrlInput = el('input', { type: 'text', placeholder: 'ws://host:port/ws', style: { width: '200px' }, title: 'rnsapid WebSocket URL (anonymous session; auth disabled)' });
+  rnsUrlInput.value = state.rnsUrl.get();
+  rnsUrlInput.oninput = (e) => state.rnsUrl.set(e.target.value);
+  const rnsHashInput = el('input', { type: 'text', placeholder: 'destination hash (32 hex)', style: { width: '260px', fontFamily: 'monospace' }, maxlength: '32', title: 'Remote node destination hash (32 hex chars)' });
+  rnsHashInput.value = state.rnsDestHash.get();
+  rnsHashInput.oninput = (e) => state.rnsDestHash.set(e.target.value.trim());
+  const rnsIdentCb = el('input', { type: 'checkbox' });
+  rnsIdentCb.checked = state.rnsAutoIdentify.get();
+  rnsIdentCb.onchange = (e) => state.rnsAutoIdentify.set(e.target.checked);
+  const rnsIdentLabel = el('label', { style: { display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--muted)' }, title: 'Send local identity on link establishment (auto_identify=true; required by /provision ALLOW_LIST)' }, [rnsIdentCb, 'identify']);
+  rnsHost.appendChild(rnsUrlInput);
+  rnsHost.appendChild(rnsHashInput);
+  rnsHost.appendChild(rnsIdentLabel);
   const connectBtn = el('button');
   const disconnectBtn = el('button', null, 'Disconnect');
   const autoCheckbox = el('input', { type: 'checkbox' });
@@ -2115,7 +2818,7 @@ function buildTopBar(){
   autoCheckbox.onchange = (e) => state.autoReconnect.set(e.target.checked);
   const autoLabel = el('label', { style: { display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--muted)' }, title: 'Reconnect automatically after a reboot to capture early boot logs' }, [autoCheckbox, 'auto-reconnect']);
   const pill = el('span', { class: 'pill' });
-  const opts = [['serial','Serial'], ['ble','Bluetooth'], ['ws','WebSocket']];
+  const opts = [['serial','Serial'], ['ble','Bluetooth'], ['ws','WebSocket'], ['rns','RNS (via rnsapid)']];
   for (const [v, lbl] of opts) sel.appendChild(el('option', { value: v }, lbl));
   sel.value = state.transportName.get();
   sel.onchange = (e) => state.transportName.set(e.target.value);
@@ -2127,12 +2830,17 @@ function buildTopBar(){
   root.appendChild(el('label', null, 'Transport: '));
   root.appendChild(sel);
   root.appendChild(wsHost);
+  root.appendChild(rnsHost);
   root.appendChild(connectBtn);
   root.appendChild(disconnectBtn);
   root.appendChild(autoLabel);
   root.appendChild(el('span', { class: 'spacer' }));
   root.appendChild(pill);
 
+  // Elapsed-time ticker state for the connecting badge. Declared outside
+  // update() so it survives across calls (it's the same closure each time).
+  let connectingStartedAt = null;
+  let elapsedTimer = null;
   function update(){
     const conn = state.conn.get();
     const tname = state.transportName.get();
@@ -2141,11 +2849,21 @@ function buildTopBar(){
     const connected = conn.state === 'connected';
     sel.disabled = connecting || connected || reconnecting;
     if (sel.value !== tname) sel.value = tname;
-    wsHost.innerHTML = '';
-    if (tname === 'ws') {
-      wsHost.appendChild(wsInput);
+    const showWs = (tname === 'ws');
+    wsInput.style.display = showWs ? '' : 'none';
+    if (showWs) {
       if (document.activeElement !== wsInput && wsInput.value !== state.wsUrl.get()) wsInput.value = state.wsUrl.get();
       wsInput.disabled = connecting || connected || reconnecting;
+    }
+    const showRns = (tname === 'rns');
+    rnsHost.style.display = showRns ? '' : 'none';
+    if (showRns) {
+      if (document.activeElement !== rnsUrlInput && rnsUrlInput.value !== state.rnsUrl.get()) rnsUrlInput.value = state.rnsUrl.get();
+      if (document.activeElement !== rnsHashInput && rnsHashInput.value !== state.rnsDestHash.get()) rnsHashInput.value = state.rnsDestHash.get();
+      if (rnsIdentCb.checked !== state.rnsAutoIdentify.get()) rnsIdentCb.checked = state.rnsAutoIdentify.get();
+      rnsUrlInput.disabled = connecting || connected || reconnecting;
+      rnsHashInput.disabled = connecting || connected || reconnecting;
+      rnsIdentCb.disabled = connecting || connected || reconnecting;
     }
     connectBtn.disabled = connecting || connected || reconnecting;
     connectBtn.textContent = connecting ? 'Connecting…' : 'Connect';
@@ -2154,9 +2872,24 @@ function buildTopBar(){
     if (autoCheckbox.checked !== state.autoReconnect.get()) autoCheckbox.checked = state.autoReconnect.get();
     let txt = 'Disconnected', cls = 'st-idle';
     if (reconnecting) { txt = 'Reconnecting…'; cls = 'st-connecting'; }
-    else if (connecting) { txt = 'Connecting…'; cls = 'st-connecting'; }
+    else if (connecting) {
+      // Show the transport-supplied phase label (e.g. "WS connecting",
+      // "WS verifying", "Link connecting", "Finding path"…) plus the elapsed
+      // time so the user has feedback during slow LoRa-paced steps.
+      const label = (conn.info && String(conn.info).trim()) ? conn.info : 'Connecting';
+      if (connectingStartedAt === null) connectingStartedAt = Date.now();
+      if (elapsedTimer === null) elapsedTimer = setInterval(update, 1000);
+      const elapsed = Math.floor((Date.now() - connectingStartedAt) / 1000);
+      txt = label + '… ' + elapsed + 's';
+      cls = 'st-connecting';
+    }
     else if (connected) { txt = 'Connected' + (conn.info ? ` (${conn.info})` : ''); cls = 'st-ok'; }
     else if (conn.state === 'error') { txt = 'Error: ' + (conn.info || ''); cls = 'st-err'; }
+    // Stop the elapsed-time ticker once we leave 'connecting'.
+    if (!connecting && !reconnecting) {
+      connectingStartedAt = null;
+      if (elapsedTimer !== null) { clearInterval(elapsedTimer); elapsedTimer = null; }
+    }
     pill.className = 'pill ' + cls;
     pill.textContent = txt;
   }
@@ -2164,6 +2897,10 @@ function buildTopBar(){
   state.conn.subscribe(update);
   state.transportName.subscribe(update);
   state.wsUrl.subscribe(update);
+  state.rnsUrl.subscribe(update);
+  state.rnsDestHash.subscribe(update);
+  state.rnsAutoIdentify.subscribe(update);
+
   state.autoReconnect.subscribe(update);
   state.reconnecting.subscribe(update);
   return root;
@@ -2202,21 +2939,33 @@ function buildTabBar(){
     // Treat "reconnecting" as not-yet-connected so per-tab actions don't fire
     // against a transport that's still being re-established.
     const connected = state.conn.get().state === 'connected' && !state.reconnecting.get();
-    const showCfg = transportConfigVisible();
-    // legacySupported starts null (not yet probed) — show Node Config until we
-    // confirm the device doesn't respond, to avoid hiding it before the probe
-    // completes on slower devices.
-    const showNcfg = state.legacySupported.get() !== false;
+    // Capability-gated visibility: every tab other than Node Status only
+    // surfaces once we've positively confirmed the active transport supports
+    // it. While disconnected (or reconnecting), only Node Status shows.
+    //   - Node Config (legacy KISS opcodes): requires legacySupported === true
+    //     (CMD_BOARD probe succeeded). Starts null and the probe takes up to
+    //     1500ms, during which we keep the tab hidden — a brief delay is
+    //     preferable to a flash-then-hide.
+    //   - Transport Config (Provisioning + RNS namespaces): requires
+    //     transportConfigVisible() (schema fetched and has an id<100 ns).
+    //   - Logs (KISS CMD_LOG frames from the device): not delivered over RNS
+    //     because RnsTransport only forwards CMD_PROVISION_RSP frames back.
+    const isRns = state.transportName.get() === 'rns';
+    const showNcfg = connected && state.legacySupported.get() === true;
+    const showCfg  = connected && transportConfigVisible();
+    const showLogs = connected && !isRns;
     for (const t of tabs) {
       const b = buttons[t.id];
       b.classList.toggle('active', active === t.id);
       b.disabled = !connected && t.id !== 'status';
-      if (t.id === 'config') b.style.display = showCfg ? '' : 'none';
+      if (t.id === 'config')     b.style.display = showCfg  ? '' : 'none';
       if (t.id === 'nodeconfig') b.style.display = showNcfg ? '' : 'none';
+      if (t.id === 'logs')       b.style.display = showLogs ? '' : 'none';
     }
     // Redirect away from any hidden tab so the user isn't on an invisible body.
-    if (!showCfg && active === 'config') state.activeTab.set('status');
+    if (!showCfg  && active === 'config')     state.activeTab.set('status');
     if (!showNcfg && active === 'nodeconfig') state.activeTab.set('status');
+    if (!showLogs && active === 'logs')       state.activeTab.set('status');
   }
   update();
   state.activeTab.subscribe(update);
@@ -2224,6 +2973,7 @@ function buildTabBar(){
   state.reconnecting.subscribe(update);
   state.schema.subscribe(update);
   state.legacySupported.subscribe(update);
+  state.transportName.subscribe(update);
   return root;
 }
 slots.tabbar.appendChild(buildTabBar());
@@ -2548,6 +3298,14 @@ function buildFieldRowWriteOnly(nsId, f, c){
     const verr = validateValue(f, v);
     if (verr) { errEl.textContent = verr; row.classList.add('has-err'); return; }
     errEl.textContent = ''; row.classList.remove('has-err');
+    // Write-only fields are imperative one-shot commands (Clear Storage,
+    // Clear Provisioning, reboots, etc.) that fire setters server-side with
+    // no draft / revert step. Always require an explicit confirmation so a
+    // misclick can't trigger a destructive action.
+    const label = f.label || f.name || 'this command';
+    if (!window.confirm(`Send "${label}"?\n\nThis is a one-shot command and cannot be undone.`)) {
+      return;
+    }
     sendBtn.disabled = true;
     const prevLbl = sendBtn.textContent || 'Send';
     sendBtn.textContent = 'Sending…';
@@ -2797,6 +3555,10 @@ function buildConfigTab(){
 
   // Cleanup for the inner-mounted namespace panel
   let nsCleanups = [];
+  // After this many ms in the "Loading…" state, show a "timed out + Refresh"
+  // view. Matches the RNS request timeout so on a stalled connection the
+  // UI surfaces a retry control instead of an indefinite spinner.
+  const LOAD_TIMEOUT_MS = 30000;
   function mountNs(nsId){
     for (const fn of nsCleanups) { try { fn(); } catch(_) {} }
     nsCleanups = [];
@@ -2811,6 +3573,19 @@ function buildConfigTab(){
     const allLoaded = treeIds.length > 0 && treeIds.every(id => !!loaded[id]);
     if (!allLoaded) {
       detail.appendChild(el('em', null, 'Loading…'));
+      const timerId = setTimeout(() => {
+        // Only swap to the timeout view if we're still in the loading state —
+        // a successful fetch in the meantime will have re-entered mountNs and
+        // cleared this timer via nsCleanups.
+        const cur = state.nsLoaded.get();
+        const stillLoading = !(treeIds.length > 0 && treeIds.every(id => !!cur[id]));
+        if (!stillLoading) return;
+        detail.innerHTML = '';
+        detail.appendChild(el('div', { class: 'notice' }, 'Loading timed out.'));
+        const retry = el('button', { class: 'primary', onclick: () => refreshNamespace(nsId) }, 'Refresh');
+        detail.appendChild(retry);
+      }, LOAD_TIMEOUT_MS);
+      nsCleanups.push(() => clearTimeout(timerId));
       fetchNamespaceIfNeeded(nsId);
       return;
     }
@@ -2873,14 +3648,12 @@ function buildConfigTab(){
   bodyCleanups.push(state.schema.subscribe(() => { rebuildSidenav(); mountNs(state.activeNsTab.get()); }));
   bodyCleanups.push(state.activeNsTab.subscribe((nsId) => { updateNavActive(); mountNs(nsId); }));
   bodyCleanups.push(state.nsLoaded.subscribe(() => {
+    // Remount on every nsLoaded change so transitions in both directions are
+    // visible: loaded → invalidated (Refresh / Save / Commit) shows the
+    // "Loading…" placeholder again with a fresh 30s timeout, and
+    // invalidated → loaded swaps back to the populated panel.
     const cur = state.activeNsTab.get();
-    if (cur != null) {
-      // Re-check whether the whole tree is now loaded; only remount once it is.
-      const schema = state.schema.get();
-      const ids = schema ? getNsTreeIds(schema, cur) : [Number(cur)];
-      const loaded = state.nsLoaded.get();
-      if (ids.length > 0 && ids.every(id => !!loaded[id])) mountNs(cur);
-    }
+    if (cur != null) mountNs(cur);
   }));
   bodyCleanups.push(state.nsState.subscribe(updateNavDots));
   bodyCleanups.push(() => { for (const fn of nsCleanups) try { fn(); } catch(_) {} });
@@ -3518,6 +4291,29 @@ let logsContainer = null;
 let logsFollowing = true;
 let logsSavedScrollTop = 0;
 
+// ===== LOGFILTER-BEGIN — stripped by webconsole/package.sh when --strip-logfilter is given =====
+// Filtering is render-side only: logsBuffer always holds every received line,
+// so clearing/relaxing the filter restores past lines.
+let logsFilterText = '';
+let logsMinLevel = 9;  // 9 = LOG_MEM (all levels visible)
+const LOGFILTER_LVL_MAP = { '!!!':1, 'ERR':2, 'WRN':3, 'NOT':4, 'INF':5, 'VRB':6, 'DBG':7, '---':8, '...':9 };
+function lineLevel(line){
+  const m = line.match(/\[(!!!|ERR|WRN|NOT|INF|VRB|DBG|---|\.\.\.)\]/);
+  return m ? LOGFILTER_LVL_MAP[m[1]] : 5;  // default unprefixed lines to INFO
+}
+function lineMatches(line){
+  if (lineLevel(line) > logsMinLevel) return false;
+  if (logsFilterText && line.toLowerCase().indexOf(logsFilterText) === -1) return false;
+  return true;
+}
+function repaintLogs(){
+  if (!logsContainer) return;
+  while (logsContainer.firstChild) logsContainer.removeChild(logsContainer.firstChild);
+  for (const l of logsBuffer) if (lineMatches(l)) logsContainer.appendChild(el('div', { class: 'log-line' }, l));
+  if (logsFollowing) logsContainer.scrollTop = logsContainer.scrollHeight;
+}
+// ===== LOGFILTER-END =====
+
 function ensureLogsContainer(){
   if (logsContainer) return;
   logsContainer = el('div', { class: 'logs' });
@@ -3525,9 +4321,19 @@ function ensureLogsContainer(){
     logsFollowing = (logsContainer.scrollHeight - logsContainer.scrollTop - logsContainer.clientHeight) < 16;
     if (followPill) followPill.style.display = logsFollowing ? 'none' : '';
   });
-  for (const line of logsBuffer) logsContainer.appendChild(el('div', { class: 'log-line' }, line));
+  for (const line of logsBuffer) {
+    // ===== LOGFILTER-BEGIN — stripped by webconsole/package.sh when --strip-logfilter is given =====
+    if (!lineMatches(line)) continue;
+    // ===== LOGFILTER-END =====
+    logsContainer.appendChild(el('div', { class: 'log-line' }, line));
+  }
   logsListeners.add((newLines) => {
-    for (const l of newLines) logsContainer.appendChild(el('div', { class: 'log-line' }, l));
+    for (const l of newLines) {
+      // ===== LOGFILTER-BEGIN — stripped by webconsole/package.sh when --strip-logfilter is given =====
+      if (!lineMatches(l)) continue;
+      // ===== LOGFILTER-END =====
+      logsContainer.appendChild(el('div', { class: 'log-line' }, l));
+    }
     while (logsContainer.childNodes.length > 1000) logsContainer.removeChild(logsContainer.firstChild);
     if (logsFollowing && logsContainer.isConnected) logsContainer.scrollTop = logsContainer.scrollHeight;
   });
@@ -3551,6 +4357,18 @@ function buildLogsTab(){
     el('button', { onclick: clearLogs, title: 'Clear the log viewer (does not affect the device)' }, 'Clear'),
     el('span', { class: 'spacer' }),
   ]);
+  // ===== LOGFILTER-BEGIN — stripped by webconsole/package.sh when --strip-logfilter is given =====
+  const filterInput = el('input', { type: 'search', placeholder: 'Filter…', class: 'logs-filter', value: logsFilterText,
+    title: 'Substring filter (case-insensitive). Affects display only — all received lines stay buffered.',
+    oninput: (e) => { logsFilterText = e.target.value.toLowerCase(); repaintLogs(); } });
+  const levelOpts = [['1','Critical'],['2','Error'],['3','Warning'],['4','Notice'],['5','Info'],['6','Verbose'],['7','Debug'],['8','Trace'],['9','All']];
+  const levelSelect = el('select', { class: 'logs-level',
+    title: 'Show lines at or above this severity. Unprefixed lines treated as Info.',
+    onchange: (e) => { logsMinLevel = +e.target.value; repaintLogs(); } },
+    levelOpts.map(([v,t]) => el('option', { value: v, ...(+v === logsMinLevel ? { selected: true } : {}) }, t)));
+  toolbar.insertBefore(filterInput, toolbar.lastChild);
+  toolbar.insertBefore(levelSelect, toolbar.lastChild);
+  // ===== LOGFILTER-END =====
   followPill = el('button', { class: 'follow-pill', style: { display: logsFollowing ? 'none' : '' }, onclick: () => {
     logsFollowing = true; followPill.style.display = 'none';
     logsContainer.scrollTop = logsContainer.scrollHeight;

@@ -40,25 +40,33 @@
 //
 // NOTE: **NEVER** change these values once they are in production. Only additions can be made.
 // ---------------------------------------------------------------------------
-#define PROV_NS_GENERAL       100
-#define PROV_NS_RADIO         101
-#define PROV_NS_NETWORK       102
-#define PROV_NS_METRICS       103
-#define PROV_NS_METRICS_IFACE 104
-#define PROV_NS_IFACE_LORA    105
-#define PROV_NS_IFACE_UDP     106
-#define PROV_NS_METRICS_DSTS  107
+#define PROV_NS_GENERAL         100
+#define PROV_NS_RADIO           101
+#define PROV_NS_NETWORK         102
+#define PROV_NS_METRICS         103
+#define PROV_NS_METRICS_IFACE   104
+#define PROV_NS_IFACE_LORA      105
+#define PROV_NS_IFACE_UDP       106
+#define PROV_NS_METRICS_ADDRS   107
+#define PROV_NS_METRICS_DEV     108
 
 #define PROV_GENERAL_KISS_LOG        1
 #define PROV_GENERAL_LORA_MODE       2
 #define PROV_GENERAL_UDP_MODE        3
 #define PROV_GENERAL_NOMADNET_ENABLE 4
 #define PROV_GENERAL_NOMADNET_NAME   5
+#define PROV_GENERAL_GPIO0           6
+#define PROV_GENERAL_GPIO1           7
 
 #define PROV_METRICS_TRANS_ID   1
 #define PROV_METRICS_PROBE_DST  2
 #define PROV_METRICS_MGMT_DST   3
 #define PROV_METRICS_NOMAD_DST  4
+
+#define PROV_METRICS_DEV_VER    1
+#define PROV_METRICS_DEV_BATV   2
+#define PROV_METRICS_DEV_BATP   3
+#define PROV_METRICS_DEV_BATS   4
 
 #define PROV_METRICS_LORA_FREQ  1
 #define PROV_METRICS_LORA_BW    2
@@ -69,6 +77,8 @@
 #define PROV_METRICS_LORA_NF    7
 #define PROV_METRICS_LORA_LRSSI 8
 #define PROV_METRICS_LORA_LSNR  9
+#define PROV_METRICS_LORA_STAL  10
+#define PROV_METRICS_LORA_LTAL  11
 
 #define PROV_METRICS_UDP_ADDR   1
 #define PROV_METRICS_UDP_PORT   2
@@ -81,8 +91,15 @@
 #define PROV_RADIO_CR           5
 #define PROV_RADIO_TXP          6
 #define PROV_RADIO_IMPLICIT     7
+#define PROV_RADIO_STAL         8
+#define PROV_RADIO_LTAL         9
 
-// Set true once Provisioning::Manager::begin() has run.
+#define PROV_NET_IP             1
+#define PROV_NET_PORT           2
+#define PROV_NET_SSID           3
+#define PROV_NET_MODE           4
+
+// Set true once Provisioning::Provisioner::begin() has run.
 extern bool provisioning_started;
 
 // Buffer for an in-flight CMD_PROVISION_REQ frame. Bytes are un-escaped
@@ -95,7 +112,7 @@ extern RNS::Bytes provision_rx_buf;
 // reads can resolve.
 void init_provisioning();
 
-// Dispatch one un-escaped MsgPack envelope to the Provisioning Manager
+// Dispatch one un-escaped MsgPack envelope to the Provisioning Provisioner
 // and emit the framed MsgPack response back over KISS.
 void on_provision_request(const RNS::Bytes& req);
 

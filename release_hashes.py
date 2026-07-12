@@ -16,6 +16,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import os
+import sys
 import json
 import hashlib
 
@@ -36,15 +37,30 @@ for line in config_data:
 target_version = major_version+"."+minor_version
 
 release_hashes = {}
-target_dir = "./Release"
-files = os.listdir(target_dir)
-for filename in files:
-    if os.path.isfile(os.path.join(target_dir, filename)):
-        if filename.startswith("rnode_firmware"):
-            file = open(os.path.join(target_dir, filename), "rb")
-            release_hashes[filename] = {
-                "hash": hashlib.sha256(file.read()).hexdigest(),
-                "version": target_version
-            }
+
+if len(sys.argv) > 1:
+    # Process a single file specified on the command line.
+    filepath = sys.argv[1]
+
+    if not os.path.isfile(filepath):
+        print(f"Error: '{filepath}' is not a file.", file=sys.stderr)
+        sys.exit(1)
+
+    with open(filepath, "rb") as file:
+        release_hashes[os.path.basename(filepath)] = {
+            "hash": hashlib.sha256(file.read()).hexdigest(),
+            "version": target_version,
+        }
+else:
+    target_dir = "./Release"
+    files = os.listdir(target_dir)
+    for filename in files:
+        if os.path.isfile(os.path.join(target_dir, filename)):
+            if filename.startswith("rnode_firmware"):
+                file = open(os.path.join(target_dir, filename), "rb")
+                release_hashes[filename] = {
+                    "hash": hashlib.sha256(file.read()).hexdigest(),
+                    "version": target_version
+                }
 
 print(json.dumps(release_hashes))

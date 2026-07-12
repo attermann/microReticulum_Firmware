@@ -1,4 +1,4 @@
-// Copyright (C) 2026, microReticulum_Firmware contributors
+// Copyright (C) 2026, Chad Attermann
 //
 // File-backed EEPROM shim for the native Linux build. Stands in for the
 // Arduino <EEPROM.h> library so the existing config-load/save paths in

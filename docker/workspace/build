@@ -1,4 +1,5 @@
 #!/bin/sh
+[ ! -d "microReticulum_Firmware" ] && git clone https://github.com/attermann/microReticulum_Firmware
 cd microReticulum_Firmware
 git pull
 #pio run -e native -t clean

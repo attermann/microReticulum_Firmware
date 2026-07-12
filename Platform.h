@@ -1,4 +1,4 @@
-// Copyright (C) 2026, microReticulum_Firmware contributors
+// Copyright (C) 2026, Chad Attermann
 //
 // Platform abstraction for cross-target builds. Provides:
 //   - FreeRTOS xQueue-compatible shim on native Linux (std::deque + mutex)

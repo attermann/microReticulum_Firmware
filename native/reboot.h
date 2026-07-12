@@ -1,4 +1,4 @@
-// Copyright (C) 2026, microReticulum_Firmware contributors
+// Copyright (C) 2026, Chad Attermann
 //
 // Deferred-reboot mechanism for the native daemon. Mirrors embedded
 // firmware's hard_reset() semantics: a KISS-driven config write (e.g.

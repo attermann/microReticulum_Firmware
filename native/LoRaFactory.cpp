@@ -1,4 +1,4 @@
-// Copyright (C) 2026, microReticulum_Firmware contributors
+// Copyright (C) 2026, Chad Attermann
 
 #include "LoRaFactory.h"
 

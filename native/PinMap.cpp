@@ -1,14 +1,17 @@
-// Copyright (C) 2026, microReticulum_Firmware contributors
+// Copyright (C) 2026, Chad Attermann
 //
 // Definitions for the runtime-configurable pin globals declared as
 // `extern int pin_*` in Boards.h under MCU_VARIANT == MCU_NATIVE.
 // Populated from native_config::g_config before LoRa->begin() runs.
 
 #include "config.h"
+#include "PinMap.h"
 #include "EEPROMShim.h"
 #include "../Boards.h"   // PRODUCT_NATIVE_LINUX / MODEL_60 / BOARD_NATIVE_LINUX constants
 #include "../ROM.h"      // CONF_OK_BYTE, INFO_LOCK_BYTE, ADDR_* offsets
+#include <Arduino.h>     // pinMode / digitalWrite / HIGH / LOW / OUTPUT
 #include <cstdio>
+#include <vector>
 
 #ifdef PORTDUINO_LINUX_HARDWARE
 #include <PortduinoGPIO.h>
@@ -130,6 +133,9 @@ void bind_linux_gpios() {
     bind_linux(c.pin_tcxo_enable,"TCXO_EN");
     bind_linux(c.pin_led_rx,     "LED_RX");
     bind_linux(c.pin_led_tx,     "LED_TX");
+    for (const auto& entry : c.radio_enable_pins) {
+        bind_linux(entry.first, "RADIO_EN");
+    }
 
     std::fprintf(stderr, "[pinmap] bound Linux GPIOs on %s (label=%s)\n",
                  chipPath, chipLabel.c_str());
@@ -148,11 +154,14 @@ void bind_linux_gpios() {
 void release_linux_gpios() {
 #ifdef PORTDUINO_LINUX_HARDWARE
     const auto& c = native_config::g_config;
-    const int pins[] = {
+    std::vector<int> pins = {
         c.pin_cs, c.pin_reset, c.pin_busy, c.pin_dio,
         c.pin_rxen, c.pin_txen, c.pin_tcxo_enable,
         c.pin_led_rx, c.pin_led_tx,
     };
+    for (const auto& entry : c.radio_enable_pins) {
+        pins.push_back(entry.first);
+    }
     for (int pin : pins) {
         if (pin < 0) continue;
         GPIOPin* p = new SimGPIOPin(pin, "Released");
@@ -161,6 +170,29 @@ void release_linux_gpios() {
     }
     std::fprintf(stderr, "[pinmap] released Linux GPIOs\n");
 #endif
+}
+
+// Drive each radio_enable_pins entry to its active level. Uses Arduino-API
+// pinMode/digitalWrite so this works uniformly on macOS (SimGPIOPin) and
+// Linux (LinuxGPIOPin) — Portduino routes both through the same vtable.
+void assert_radio_enable_pins() {
+    for (const auto& entry : native_config::g_config.radio_enable_pins) {
+        int pin = entry.first;
+        bool active_high = entry.second;
+        if (pin < 0) continue;
+        pinMode(pin, OUTPUT);
+        digitalWrite(pin, active_high ? HIGH : LOW);
+    }
+}
+
+void deassert_radio_enable_pins() {
+    for (const auto& entry : native_config::g_config.radio_enable_pins) {
+        int pin = entry.first;
+        bool active_high = entry.second;
+        if (pin < 0) continue;
+        pinMode(pin, OUTPUT);
+        digitalWrite(pin, active_high ? LOW : HIGH);
+    }
 }
 
 // Seed the EEPROM image with the LoRa radio settings from config so the

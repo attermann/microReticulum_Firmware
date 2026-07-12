@@ -1,5 +1,5 @@
 [Unit]
-Description=RNode Native Daemon
+Description=RNode Daemon Service
 After=network-online.target
 StartLimitInterval=200
 StartLimitBurst=5
@@ -10,6 +10,7 @@ User=rnoded
 Group=rnoded
 Type=simple
 ExecStart=/usr/bin/rnoded
+#WorkingDirectory=./
 Restart=always
 RestartSec=3
 

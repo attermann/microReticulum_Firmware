@@ -1,4 +1,4 @@
-// Copyright (C) 2026, microReticulum_Firmware contributors
+// Copyright (C) 2026, Chad Attermann
 
 #include "TCPHostInterface.h"
 
@@ -54,6 +54,16 @@ void set_nonblocking(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags < 0) return;
     (void)fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+
+// Close-on-exec so a re-exec'd daemon (native_reboot::perform) doesn't
+// inherit the parent's listener/client and fail to re-bind with EADDRINUSE.
+// shutdown() also closes these fds explicitly — this is belt and suspenders,
+// and covers any future exec*() callers too.
+void set_cloexec(int fd) {
+    int flags = fcntl(fd, F_GETFD, 0);
+    if (flags < 0) return;
+    (void)fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
 }
 
 // Enable TCP keepalive on the accepted socket with aggressive timing so
@@ -158,6 +168,7 @@ bool init(uint16_t port, bool bind_public) {
     }
 
     set_nonblocking(listen_fd);
+    set_cloexec(listen_fd);
     std::fprintf(stderr, "[kiss-tcp] listening on %s:%u%s\n",
                  bind_label, port, bind_public ? " (PUBLIC — no auth)" : "");
     return true;
@@ -189,6 +200,7 @@ void poll_accept() {
         }
 
         set_nonblocking(fd);
+        set_cloexec(fd);
         apply_keepalive(fd);
         // Nagle off — KISS frames are small and latency-sensitive.
         int yes = 1;

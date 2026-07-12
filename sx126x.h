@@ -57,7 +57,7 @@ public:
   void receive(int size = 0) override;
   void standby();
   void sleep();
-  void reset(void);
+  void reset(void) override;
 
   bool preInit() override;
   uint8_t getTxPower() override;
@@ -75,6 +75,14 @@ public:
   void disableCrc();
   void enableTCXO();
   void disableTCXO();
+
+  // Runtime overrides used by the native target. setTcxoVoltage() sets the
+  // byte written to the DIO3-TCXO-control opcode; 0xFF (default) defers to
+  // the per-board compile-time #if BOARD_MODEL chain in enableTCXO().
+  // setDio2AsRfSwitch() forces the DIO2-as-RF-switch opcode on/off
+  // independently of the compile-time DIO2_AS_RF_SWITCH macro.
+  void setTcxoVoltage(uint8_t mode_byte) override;
+  void setDio2AsRfSwitch(bool enable) override;
 
   void rxAntEnable();
   void loraMode();
@@ -141,6 +149,14 @@ private:
   bool _preinit_done;
   volatile bool _dio0_pending;
   void (*_onReceive)(int);
+
+  // Runtime override state. _tcxoVoltageOverride defaults to 0xFF (= "no
+  // override; use per-board default"); 0x00 is a valid mode byte so we
+  // can't reuse it as a sentinel. _dio2_as_rf_switch_override pairs with
+  // _dio2_as_rf_switch_set because both true and false are valid values.
+  uint8_t _tcxoVoltageOverride;
+  bool _dio2_as_rf_switch_override;
+  bool _dio2_as_rf_switch_set;
 };
 
 extern sx126x sx126x_modem;

@@ -23,6 +23,9 @@
 #include <microReticulum/Identity.h>
 #include <microReticulum/Utilities/OS.h>
 #include <microReticulum/Bytes.h>
+#ifdef HAS_BME
+#include "BME680.h"
+#endif
 // CBA NOTE Thge following <MsgPack.h> include *MUST* precede the "Utilities.h" include
 #include <MsgPack.h>
 
@@ -125,6 +128,11 @@ RNS::Bytes serve_page(
       content << ">> Device\n";
       content << "`!`[• General`:/page/device.mu`c=general]`\n";
       content << "`!`[• Interface`:/page/device.mu`c=interfaces]`\n";
+#ifdef HAS_BME
+      if (BME680::bme_installed) {
+        content << "`!`[• Telemetry`:/page/telemetry.mu]`\n";
+      }
+#endif
       if (remote_identity) content << "\n🛡️ Verified identity: " << remote_identity.hash().toHex() << "\n";
       else content << "\n⚠️ Unknown identity. Identity must be provided for access to this site.\n";
     }
@@ -183,7 +191,7 @@ RNS::Bytes serve_page(
           destination_path_responses += destination.path_responses().size();
         }
         uint32_t interface_announces = 0;
-        for (auto& [interface_hash, interface] : RNS::Transport::get_interfaces()) {
+        for (auto& interface : RNS::Transport::get_interfaces()) {
           interface_announces += interface.announce_queue().size();
         }
 
@@ -219,7 +227,9 @@ RNS::Bytes serve_page(
         content = "{\n";
         content << "  \"packets_sent\": " << std::to_string(RNS::Transport::packets_sent()) << ",\n";
         content << "  \"packets_received\": " << std::to_string(RNS::Transport::packets_received()) << ",\n";
-        content << "  \"destinations_added\": " << std::to_string(RNS::Transport::destinations_added()) << ",\n";
+        content << "  \"paths_added\": " << std::to_string(RNS::Transport::paths_added()) << ",\n";
+        content << "  \"paths_updated\": " << std::to_string(RNS::Transport::paths_updated()) << ",\n";
+        content << "  \"paths_failed\": " << std::to_string(RNS::Transport::paths_failed()) << ",\n";
       	content << "}";
       }
       else {
@@ -265,8 +275,10 @@ RNS::Bytes serve_page(
         content << "    \"tx_power\": " << std::to_string(lora_txp) << ",\n";
         content << "    \"spreading_factor\": " << std::to_string(lora_sf) << ",\n";
         content << "    \"coding_rate\": " << std::to_string(lora_cr) << ",\n";
-        content << "    \"current_rssi\": " << std::to_string(last_rssi+rssi_offset) << ",\n";
-        content << "    \"current_snr\": " << std::to_string(last_snr_raw) << ",\n";
+        content << "    \"current_rssi\": " << std::to_string(current_rssi) << ",\n";
+        content << "    \"noise_floor\": " << std::to_string(noise_floor) << ",\n";
+        content << "    \"last_rssi\": " << std::to_string(last_rssi) << ",\n";
+        content << "    \"last_snr\": " << std::to_string(last_snr_raw) << ",\n";
         add_interface_details(content, lora_interface);
       	content << "  },\n";
 #endif
@@ -286,6 +298,19 @@ RNS::Bytes serve_page(
         content = "CATEGORY NOT FOUND\n";
       }
     }
+#ifdef HAS_BME
+    else if (path == "/page/telemetry.mu") {
+      if (!BME680::bme.performReading()) {
+        content = "> Telemetry\n\n`!`❌ Failed to perform BME680 reading.`\n";
+      } else {
+        content = "> Environmental Telemetry\n\n";
+        content << "🌡️ Temperature: " << std::to_string((float)BME680::bme.temperature) << " °C\n";
+        content << "💧 Humidity: " << std::to_string((float)BME680::bme.humidity) << " %\n";
+        content << "⏲️ Pressure: " << std::to_string((float)(BME680::bme.pressure / 100.0)) << " hPa\n";
+        content << "💨 Gas Resistance: " << std::to_string((float)(BME680::bme.gas_resistance / 1000.0)) << " KOhms\n";
+      }
+    }
+#endif
     else {
       content = "PATH NOT FOUND\n";
     }

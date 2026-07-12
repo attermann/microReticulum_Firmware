@@ -145,15 +145,13 @@ bool sx127x::preInit() {
 }
 
 uint8_t ISR_VECT sx127x::singleTransfer(uint8_t address, uint8_t value) {
-  // Send address + data as a single SPI transaction. On Portduino (native
-  // Linux build) each SPI.transfer(byte) is its own SPI_IOC_MESSAGE ioctl,
-  // and the SPI controller deasserts hardware CS between ioctls — the chip
-  // sees the address byte as a complete (1-byte) command, throws it away,
-  // and returns 0xFF for the follow-up. Routing both bytes through the
-  // buffer form keeps everything in one ioctl, so CS stays asserted across
-  // the pair. On Arduino-ESP32 / nRF52 the buffer form is internally a
-  // byte loop with CS still driven manually by digitalWrite below, so the
-  // behavior is unchanged on those platforms.
+#if MCU_VARIANT == MCU_NATIVE
+  // Native (Portduino / Linux spidev) only: per-byte SPI.transfer() becomes
+  // one ioctl per byte and spidev deasserts CS between them — the chip sees
+  // the address byte as a complete (1-byte) command and returns 0xFF for
+  // the follow-up. Send both bytes in one ioctl so CS stays asserted.
+  // Embedded targets keep the per-byte path — see sx126x for the ESP32-S3
+  // RX regression that was traced to the batched SPI.transfer(buf, len).
   uint8_t buf[2] = { address, value };
 
   digitalWrite(_ss, LOW);
@@ -163,6 +161,16 @@ uint8_t ISR_VECT sx127x::singleTransfer(uint8_t address, uint8_t value) {
   digitalWrite(_ss, HIGH);
 
   return buf[1];
+#else
+  uint8_t response;
+  digitalWrite(_ss, LOW);
+  SPI.beginTransaction(_spiSettings);
+  SPI.transfer(address);
+  response = SPI.transfer(value);
+  SPI.endTransaction();
+  digitalWrite(_ss, HIGH);
+  return response;
+#endif
 }
 
 int sx127x::begin(uint32_t frequency) {

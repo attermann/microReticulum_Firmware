@@ -176,9 +176,38 @@ void sx128x::writeRegister(uint16_t address, uint8_t value) { singleTransfer(OP_
 
 uint8_t ISR_VECT sx128x::singleTransfer(uint8_t opcode, uint16_t address, uint8_t value) {
     waitOnBusy();
+
+#if MCU_VARIANT == MCU_NATIVE
+    // Native (Portduino / Linux spidev) only: per-byte SPI.transfer()
+    // becomes one ioctl per byte and spidev deasserts CS between them,
+    // making the chip treat each byte as an independent command. The
+    // batched buffer form keeps CS asserted across the whole exchange.
+    // Embedded targets keep the per-byte path — see sx126x for the
+    // ESP32-S3 RX regression that was traced to the batched form.
+    uint8_t buf[5];
+    buf[0] = opcode;
+    buf[1] = (address & 0xFF00) >> 8;
+    buf[2] = address & 0x00FF;
+    uint8_t len;
+    if (opcode == OP_READ_REGISTER_8X) {
+      buf[3] = 0x00;   // status-byte skip
+      buf[4] = value;
+      len = 5;
+    } else {
+      buf[3] = value;
+      len = 4;
+    }
+
+    digitalWrite(_ss, LOW);
+    SPI.beginTransaction(_spiSettings);
+    SPI.transfer(buf, len);
+    SPI.endTransaction();
+    digitalWrite(_ss, HIGH);
+
+    return buf[len - 1];
+#else
     uint8_t response;
     digitalWrite(_ss, LOW);
-
     SPI.beginTransaction(_spiSettings);
     SPI.transfer(opcode);
     SPI.transfer((address & 0xFF00) >> 8);
@@ -187,8 +216,8 @@ uint8_t ISR_VECT sx128x::singleTransfer(uint8_t opcode, uint16_t address, uint8_
     response = SPI.transfer(value);
     SPI.endTransaction();
     digitalWrite(_ss, HIGH);
-
     return response;
+#endif
 }
 
 void sx128x::rxAntEnable() {
@@ -215,16 +244,41 @@ void sx128x::waitOnBusy() {
 
 void sx128x::executeOpcode(uint8_t opcode, uint8_t *buffer, uint8_t size) {
     waitOnBusy();
+#if MCU_VARIANT == MCU_NATIVE
+    // Native-only batched form — see singleTransfer() for rationale.
+    // Max payload of any sx128x opcode is well under 64 bytes.
+    uint8_t buf[1 + 64];
+    buf[0] = opcode;
+    for (uint8_t i = 0; i < size; i++) { buf[1 + i] = buffer[i]; }
+    digitalWrite(_ss, LOW);
+    SPI.beginTransaction(_spiSettings);
+    SPI.transfer(buf, 1 + size);
+    SPI.endTransaction();
+    digitalWrite(_ss, HIGH);
+#else
     digitalWrite(_ss, LOW);
     SPI.beginTransaction(_spiSettings);
     SPI.transfer(opcode);
     for (int i = 0; i < size; i++) { SPI.transfer(buffer[i]); }
     SPI.endTransaction();
     digitalWrite(_ss, HIGH);
+#endif
 }
 
 void sx128x::executeOpcodeRead(uint8_t opcode, uint8_t *buffer, uint8_t size) {
     waitOnBusy();
+#if MCU_VARIANT == MCU_NATIVE
+    uint8_t buf[2 + 64];
+    buf[0] = opcode;
+    buf[1] = 0x00;
+    for (uint8_t i = 0; i < size; i++) { buf[2 + i] = 0x00; }
+    digitalWrite(_ss, LOW);
+    SPI.beginTransaction(_spiSettings);
+    SPI.transfer(buf, 2 + size);
+    SPI.endTransaction();
+    digitalWrite(_ss, HIGH);
+    for (uint8_t i = 0; i < size; i++) { buffer[i] = buf[2 + i]; }
+#else
     digitalWrite(_ss, LOW);
     SPI.beginTransaction(_spiSettings);
     SPI.transfer(opcode);
@@ -232,10 +286,23 @@ void sx128x::executeOpcodeRead(uint8_t opcode, uint8_t *buffer, uint8_t size) {
     for (int i = 0; i < size; i++) { buffer[i] = SPI.transfer(0x00); }
     SPI.endTransaction();
     digitalWrite(_ss, HIGH);
+#endif
 }
 
 void sx128x::writeBuffer(const uint8_t* buffer, size_t size) {
     waitOnBusy();
+#if MCU_VARIANT == MCU_NATIVE
+    uint8_t buf[2 + 256];
+    buf[0] = OP_FIFO_WRITE_8X;
+    buf[1] = _fifo_tx_addr_ptr;
+    for (size_t i = 0; i < size; i++) { buf[2 + i] = buffer[i]; }
+    _fifo_tx_addr_ptr += size;
+    digitalWrite(_ss, LOW);
+    SPI.beginTransaction(_spiSettings);
+    SPI.transfer(buf, 2 + size);
+    SPI.endTransaction();
+    digitalWrite(_ss, HIGH);
+#else
     digitalWrite(_ss, LOW);
     SPI.beginTransaction(_spiSettings);
     SPI.transfer(OP_FIFO_WRITE_8X);
@@ -243,10 +310,24 @@ void sx128x::writeBuffer(const uint8_t* buffer, size_t size) {
     for (int i = 0; i < size; i++) { SPI.transfer(buffer[i]); _fifo_tx_addr_ptr++; }
     SPI.endTransaction();
     digitalWrite(_ss, HIGH);
+#endif
 }
 
 void sx128x::readBuffer(uint8_t* buffer, size_t size) {
     waitOnBusy();
+#if MCU_VARIANT == MCU_NATIVE
+    uint8_t buf[3 + 256];
+    buf[0] = OP_FIFO_READ_8X;
+    buf[1] = _fifo_rx_addr_ptr;
+    buf[2] = 0x00;
+    for (size_t i = 0; i < size; i++) { buf[3 + i] = 0x00; }
+    digitalWrite(_ss, LOW);
+    SPI.beginTransaction(_spiSettings);
+    SPI.transfer(buf, 3 + size);
+    SPI.endTransaction();
+    digitalWrite(_ss, HIGH);
+    for (size_t i = 0; i < size; i++) { buffer[i] = buf[3 + i]; }
+#else
     digitalWrite(_ss, LOW);
     SPI.beginTransaction(_spiSettings);
     SPI.transfer(OP_FIFO_READ_8X);
@@ -255,6 +336,7 @@ void sx128x::readBuffer(uint8_t* buffer, size_t size) {
     for (int i = 0; i < size; i++) { buffer[i] = SPI.transfer(0x00); }
     SPI.endTransaction();
     digitalWrite(_ss, HIGH);
+#endif
 }
 
 void sx128x::setModulationParams(uint8_t sf, uint8_t bw, uint8_t cr) {

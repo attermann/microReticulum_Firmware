@@ -1,4 +1,4 @@
-// Copyright (C) 2026, microReticulum_Firmware contributors
+// Copyright (C) 2026, Chad Attermann
 //
 // Native-build runtime configuration. Loaded once at startup from a key=value
 // text file (default: ./rnoded.conf). All values have sensible
@@ -9,6 +9,8 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace native_config {
 
@@ -38,6 +40,27 @@ struct Config {
     int pin_led_rx       = 9;
     int pin_led_tx       = 10;
 
+    // Additional GPIOs to drive to an active level for the duration the
+    // radio is in use (asserted before LoRa->begin(), de-asserted after
+    // LoRa->end()). Use for external LDO enables, antenna-switch power,
+    // PA bias, etc. Each entry is (pin, active_high): default active is
+    // HIGH; in rnoded.conf, append ":low" to a pin to invert.
+    //   radio_enable_pins = 22,25:low,33
+    std::vector<std::pair<int,bool>> radio_enable_pins;
+
+    // SX1262-only. Override the per-board compile-time TCXO voltage byte
+    // written to the chip's DIO3-TCXO-control register. Float volts;
+    // 0.0f = unset (keep compile-time default). Accepts the meshtasticd
+    // YAML conventions: a float like 1.8, or the literal "true" (alias
+    // for 1.8 V) / "false" (no override).
+    float dio3_tcxo_voltage = 0.0f;
+
+    // SX1262-only. When true, configure the chip's DIO2 line as the RF
+    // switch driver (the SX1262 toggles the antenna switch itself from
+    // its TX/RX state, no host GPIO needed). Default false on native;
+    // embedded targets keep their per-board compile-time #define.
+    bool dio2_as_rf_switch = false;
+
     // LoRa radio settings. These get written into the EEPROM image at
     // startup so the existing eeprom_conf_load() path picks them up.
     uint32_t lora_freq_hz = 915000000;
@@ -52,6 +75,17 @@ struct Config {
     // `native` env before runtime selection landed.
     uint8_t  modem        = 0x03;
 
+    // When true, a TX failure (LoRa->endPacket() returning 0, i.e. the
+    // modem didn't report TX_DONE within the driver's timeout) triggers
+    // hard_reset() — on native that means re-execing the daemon. The
+    // default is false because a re-exec is expensive on native (releases
+    // libgpiod handles, closes the KISS-TCP socket, etc.) and one bad
+    // packet doesn't justify killing the process. When false, the firmware
+    // logs the error to KISS and returns the modem to RX so subsequent
+    // packets can still flow. Set to true if your deployment really needs
+    // the embedded behavior of "reboot on any TX timeout".
+    bool reboot_on_tx_failure = false;
+
     // KISS-over-TCP host transport. The native daemon listens on this
     // localhost port for a single client (rnodeconf, an RNS KISSInterface,
     // etc.). 7633 matches the ESP32 WiFi-remote convention in Remote.h.
@@ -62,6 +96,11 @@ struct Config {
     // no auth/encryption, so the daemon should only be reachable across a
     // network you trust. Turning this on is the explicit way to opt in.
     bool     kiss_tcp_public = false;
+
+    // Bind the KISS-over-WebSocket server on all interfaces (0.0.0.0)
+    // instead of just 127.0.0.1. Same caveats as kiss_tcp_public — no
+    // auth or encryption — so only opt in on networks you trust.
+    bool     kiss_ws_public  = false;
 };
 
 extern Config g_config;
