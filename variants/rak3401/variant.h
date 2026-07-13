@@ -104,22 +104,27 @@ extern "C"
 /*
  * SPI Interfaces
  *
- * Primary SPI (SPI0/SPIM2) on P1 — matches stock rak4630 BSP layout.
- * Secondary SPI (SPI1/SPIM3) on P0 — RAK13302 LoRa bus pins.
+ * Internal SPI (SPI0/SPIM2) on P1 — This is the internal SPI bus on both RAK4631 and RAK3401, and connects to the internal SX1262 radio on RAK4631.
+ * External SPI (SPI1/SPIM3) on P0 — This is the external SPI bus on both RAK4631 and RAK3401 (exported to WisCore IO slots), and is shared with the RAK13302 radio.
  * spiModem in Config.h explicitly constructs on NRF_SPIM2 with P0 pins
  * from Boards.h, overriding the BSP's SPI0 pin assignment at runtime.
  */
-#define SPI_INTERFACES_COUNT 2
+/*
+ * SPI Interfaces
+ */
+#define SPI_INTERFACES_COUNT 1
 
-#define PIN_SPI_MISO (45)
-#define PIN_SPI_MOSI (44)
-#define PIN_SPI_SCK (43)
+#define PIN_SPI_MISO (29)
+#define PIN_SPI_MOSI (30)
+#define PIN_SPI_SCK (3)
+#define PIN_SPI_CS (26)
 
-#define PIN_SPI1_MISO (29)
-#define PIN_SPI1_MOSI (30)
-#define PIN_SPI1_SCK (3)
+#define PIN_SPI1_MISO (45)
+#define PIN_SPI1_MOSI (44)
+#define PIN_SPI1_SCK (43)
+#define PIN_SPI1_CS (42)
 
-	static const uint8_t SS = 42;
+	static const uint8_t SS = PIN_SPI_CS;
 	static const uint8_t MOSI = PIN_SPI_MOSI;
 	static const uint8_t MISO = PIN_SPI_MISO;
 	static const uint8_t SCK = PIN_SPI_SCK;
