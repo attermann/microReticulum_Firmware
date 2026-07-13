@@ -264,7 +264,7 @@ void measure_battery() {
 
     bat_v_samples[bat_samples_count%BAT_SAMPLES] = battery_measurement;
     bat_p_samples[bat_samples_count%BAT_SAMPLES] = ((battery_measurement-BAT_V_MIN) / (BAT_V_MAX-BAT_V_MIN))*100.0;
-    
+
     bat_samples_count++;
     if (!battery_ready && bat_samples_count >= BAT_SAMPLES) {
       battery_ready = true;
@@ -277,13 +277,13 @@ void measure_battery() {
         battery_percent += bat_p_samples[bi];
       }
       battery_percent = battery_percent/BAT_SAMPLES;
-      
+
       battery_voltage = 0;
       for (uint8_t bi = 0; bi < BAT_SAMPLES; bi++) {
         battery_voltage += bat_v_samples[bi];
       }
       battery_voltage = battery_voltage/BAT_SAMPLES;
-      
+
       if (bat_delay_v == 0) bat_delay_v = battery_voltage;
       if (bat_state_change_v == 0) bat_state_change_v = battery_voltage;
       if (battery_percent > 100.0) battery_percent = 100.0;
@@ -332,7 +332,12 @@ void measure_battery() {
       }
 
       #if MCU_VARIANT == MCU_NRF52
-        if (bt_state != BT_STATE_OFF) { blebas.write(battery_percent); }
+        if (bt_state != BT_STATE_OFF) {
+          blebas.write(battery_percent);
+          if (bt_state == BT_STATE_CONNECTED) {
+            blebas.notify(battery_percent);
+          }
+        }
       #endif
 
       // if (bt_state == BT_STATE_CONNECTED) {
@@ -611,7 +616,7 @@ bool init_pmu() {
     // Set the time of pressing the button to turn off
     PMU->setPowerKeyPressOffTime(XPOWERS_POWEROFF_4S);
 
-    return true; 
+    return true;
   #elif BOARD_MODEL == BOARD_TBEAM_S_V1
     Wire1.begin(I2C_SDA, I2C_SCL);
 
@@ -691,7 +696,7 @@ bool init_pmu() {
     PMU->enableBattVoltageMeasure();
 
 
-    return true; 
+    return true;
   #else
     return false;
   #endif
