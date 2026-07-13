@@ -550,15 +550,17 @@ void setup() {
   #endif
 
   #if MCU_VARIANT == MCU_NRF52
-    #if BOARD_MODEL == BOARD_TECHO
+    #if BOARD_MODEL == BOARD_TECHO || BOARD_MODEL == BOARD_RAK4631
       delay(200);
       pinMode(PIN_VEXT_EN, OUTPUT);
       digitalWrite(PIN_VEXT_EN, HIGH);
-      pinMode(pin_btn_usr1, INPUT_PULLUP);
-      pinMode(pin_btn_touch, INPUT_PULLUP);
-      pinMode(PIN_LED_RED, OUTPUT);
-      pinMode(PIN_LED_GREEN, OUTPUT);
-      pinMode(PIN_LED_BLUE, OUTPUT);
+      #if BOARD_MODEL == BOARD_TECHO
+        pinMode(pin_btn_usr1, INPUT_PULLUP);
+        pinMode(pin_btn_touch, INPUT_PULLUP);
+        pinMode(PIN_LED_RED, OUTPUT);
+        pinMode(PIN_LED_GREEN, OUTPUT);
+        pinMode(PIN_LED_BLUE, OUTPUT);
+      #endif
       delay(200);
     #endif
 
@@ -627,12 +629,12 @@ void setup() {
   // Initialise buffers
   memset(pbuf, 0, sizeof(pbuf));
   memset(cmdbuf, 0, sizeof(cmdbuf));
-  
+
   memset(packet_queue, 0, sizeof(packet_queue));
 
   memset(packet_starts_buf, 0, sizeof(packet_starts_buf));
   fifo16_init(&packet_starts, packet_starts_buf, CONFIG_QUEUE_MAX_LENGTH);
-  
+
   memset(packet_lengths_buf, 0, sizeof(packet_starts_buf));
   fifo16_init(&packet_lengths, packet_lengths_buf, CONFIG_QUEUE_MAX_LENGTH);
 
@@ -903,9 +905,28 @@ void setup() {
     static const SPIFlash_Device_t device_rak15001 = RAK15001;
     // CBA NOTE: RAK base boards generally *share* the same chip select (CS/SS) across all module slots.
     // SS below is expected to be configured as the "external" SPI bus chip select.
-    filesystem = microStore::Adapters::FlashFSFileSystem(&device_rak15001, SS);
-    if (filesystem.init()) {
-      TRACE("Initialized RAK15001 flash");
+    static SPIClass wb_spi(NRF_SPIM3, 29, 3, 30); // MISO, SCLK, MOSI
+    wb_spi.begin();
+
+    // Set all WisBlock IO pins to OUTPUT HIGH to strongly pull WP and HOLD high
+    // Slot A/B: IO1=17. Slot C: IO3=21, IO4=4. Slot D: IO5=9, IO6=10.
+    const int wb_io_pins[] = {17, 21, 4, 9, 10};
+    for (int i = 0; i < 5; i++) {
+        pinMode(wb_io_pins[i], OUTPUT);
+        digitalWrite(wb_io_pins[i], HIGH);
+    }
+
+    bool flash_found = false;
+    // The standard WisBlock SPI_CS pin for all sensor slots is 26
+    int cs_pin = 26;
+
+    filesystem = microStore::Adapters::FlashFSFileSystem(&device_rak15001, cs_pin, wb_spi);
+    if (filesystem.init(true)) {
+        TRACEF("Initialized RAK15001 flash on CS pin %d", cs_pin);
+        flash_found = true;
+    }
+
+    if (flash_found) {
       // Raise path store limits to account for larger external flash size
       RNS::Transport::path_table_maxsize(500);
       RNS::Transport::path_store_segment_size(24576);
@@ -1164,7 +1185,7 @@ inline void kiss_write_packet() {
 
   serial_write(FEND);
   serial_write(CMD_DATA);
-  
+
   for (uint16_t i = 0; i < host_write_len; i++) {
     #if MCU_VARIANT == MCU_NRF52
       portENTER_CRITICAL();
@@ -1197,7 +1218,7 @@ inline void getPacketData(uint16_t len) {
   #if MCU_VARIANT != MCU_NRF52
     while (len-- && read_len < MTU) {
       pbuf[read_len++] = LoRa->read();
-    }  
+    }
   #else
     BaseType_t int_mask = taskENTER_CRITICAL_FROM_ISR();
     while (len-- && read_len < MTU) {
@@ -1231,7 +1252,7 @@ void ISR_VECT receive_callback(int packet_size) {
       #else
         read_len = 0;
       #endif
-      
+
       seq = sequence;
 
       #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52 && MCU_VARIANT != MCU_NATIVE
@@ -2008,7 +2029,7 @@ void serial_callback(uint8_t sbyte) {
           if (frame_len == 9) {
             uint8_t line = cmdbuf[0];
             if (line > 63) line = 63;
-            int fb_o = line*8; 
+            int fb_o = line*8;
             memcpy(fb+fb_o, cmdbuf+1, 8);
           }
         #endif
@@ -2502,7 +2523,7 @@ void validate_status() {
               }
             #endif
           }
-          
+
           if (hw_ready && eeprom_have_conf()) {
             eeprom_conf_load();
             op_mode = MODE_TNC;
@@ -2563,7 +2584,7 @@ void validate_status() {
     }
 
     if (new_cw_band > CSMA_CW_BANDS) { new_cw_band = CSMA_CW_BANDS; }
-    if (new_cw_band != cw_band) { 
+    if (new_cw_band != cw_band) {
       cw_band = (uint8_t)(new_cw_band);
       cw_min  = (cw_band-1) * CSMA_CW_PER_BAND_WINDOWS;
       cw_max  = (cw_band) * CSMA_CW_PER_BAND_WINDOWS - 1;
@@ -2582,7 +2603,7 @@ void tx_queue_handler() {
     if (difs_wait_start == -1) {                                                  // DIFS wait not yet started
       if (medium_free()) { difs_wait_start = millis(); return; }                  // Set DIFS wait start time
       else               { return; } }                                            // Medium not yet free, continue waiting
-    
+
     else {                                                                        // We are waiting for DIFS or CW to pass
       if (!medium_free()) { difs_wait_start = -1; cw_wait_start = -1; return; }   // Medium became occupied while in DIFS wait, restart waiting when free again
       else {                                                                      // Medium is free, so continue waiting

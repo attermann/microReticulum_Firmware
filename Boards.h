@@ -766,6 +766,7 @@
       #define EEPROM_OFFSET EEPROM_SIZE-EEPROM_RESERVED
       #define BLE_MANUFACTURER "RAK Wireless"
       #define BLE_MODEL "RAK4640"
+      #define PIN_VEXT_EN 34
 
       const int pin_btn_usr1 = 9;
 
