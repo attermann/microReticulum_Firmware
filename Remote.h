@@ -128,7 +128,7 @@ void wifi_remote_start_sta() {
   //delay(10000);
   wr_wifi_status = WiFi.status(); 
   printf("[WiFi] status: %d\n", wr_wifi_status);
-  //printf("[WiFi] ip: %s\n", WiFi.localIP());
+	//printf("[WiFi] ip: %s\n", WiFi.localIP());
   wifi_initialized = true;
   wr_last_connect_try = millis();
 }

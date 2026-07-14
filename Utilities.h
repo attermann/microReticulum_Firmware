@@ -1739,7 +1739,6 @@ bool eeprom_product_valid() {
 	#endif
 		return true;
 	} else {
-		printf("[init] EEPROM product (%x) invalid\n", rval);
 		return false;
 	}
 }
@@ -1799,7 +1798,6 @@ bool eeprom_model_valid() {
 	#endif
 		return true;
 	} else {
-		printf("[init] EEPROM model (%x) invalid\n", model);
 		return false;
 	}
 }
@@ -1813,7 +1811,6 @@ bool eeprom_hwrev_valid() {
 	if (hwrev != 0x00 && hwrev != 0xFF) {
 		return true;
 	} else {
-		printf("[init] EEPROM hwrev (%x) invalid\n", hwrev);
 		return false;
 	}
 }
@@ -1845,7 +1842,6 @@ bool eeprom_checksum_valid() {
 
 	free(hash);
 	free(data);
-	if (!checksum_valid) printf("[init] EEPROM checksum invalid\n");
 	return checksum_valid;
 }
 

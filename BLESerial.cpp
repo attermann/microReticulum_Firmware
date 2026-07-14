@@ -117,7 +117,6 @@ void BLESerial::begin(const char *name) {
 
   ble_server = BLEDevice::createServer();
   ble_server->setCallbacks(this);
-  BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT_MITM);
   BLEDevice::setSecurityCallbacks(this);
 
   SetupSerialService();

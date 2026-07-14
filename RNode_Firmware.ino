@@ -897,13 +897,11 @@ void setup() {
   try {
     // CBA Init filesystem
     HEAD("Initializing filesystem...", RNS::LOG_TRACE);
-#if BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401
+#if BOARD_MODEL == BOARD_RAK4631
     // First attempt to initialize RAK15001 flash
     TRACE("Looking for RAK15001 flash...");
     static const SPIFlash_Device_t device_rak15001 = RAK15001;
-    // CBA NOTE: RAK base boards generally *share* the same chip select (CS/SS) across all module slots.
-    // SS below is expected to be configured as the "external" SPI bus chip select.
-    filesystem = microStore::Adapters::FlashFSFileSystem(&device_rak15001, SS);
+    filesystem = microStore::Adapters::FlashFSFileSystem(&device_rak15001);
     if (filesystem.init()) {
       TRACE("Initialized RAK15001 flash");
       // Raise path store limits to account for larger external flash size
@@ -972,7 +970,7 @@ void setup() {
     TRACE("Listing filesystem...");
     dump_filesystem("./", 1, 2);
 #endif
-#endif // RNS_USE_FS
+#endif // !NDEBUG && RNS_USE_FS
 
     // CBA Start RNS
     //if (hw_ready) {
@@ -991,16 +989,16 @@ void setup() {
       }
 #endif
 
-      // Provisioning default
-      reticulum.transport_enabled(true);
-      // Provisioning default
-      reticulum.probe_destination_enabled(true);
-      // Provisioning default
-      reticulum.remote_management_enabled(true);
+    // Provisioning default
+    reticulum.transport_enabled(true);
+    // Provisioning default
+    reticulum.probe_destination_enabled(true);
+    // Provisioning default
+    reticulum.remote_management_enabled(true);
 
 #ifdef URTN_STATS_PAGES
-      // Provisioning default
-      snprintf(nomadnet_name, sizeof(nomadnet_name), "microReticulum Node [%s]", device_uid_str);
+    // Provisioning default
+    snprintf(nomadnet_name, sizeof(nomadnet_name), "microReticulum Node [%s]", device_uid_str);
 #endif
 
 #ifdef HAS_PROVISIONING
@@ -1041,8 +1039,8 @@ void setup() {
       HEAD("Creating Reticulum instance...", RNS::LOG_TRACE);
       reticulum = RNS::Reticulum();
       // CBA NOTE: `transport_enabled` needs to always be overridden to false when op_mode is not MODE_TNC
-printf("hw_ready: %u\n", hw_ready);
-printf("op_mode: %U\n", op_mode);
+TRACEF("hw_ready: %u", hw_ready);
+TRACEF("op_mode: %U", op_mode);
       if (op_mode != MODE_TNC) {
         INFO("Not in TNC mode, transport will be disabled");
         reticulum.transport_enabled(false);
@@ -2442,7 +2440,7 @@ void validate_status() {
 
   if (hw_ready || device_init_done) {
     hw_ready = false;
-    printf("[init] Error, invalid hardware check state\r\n");
+    Serial.write("Error, invalid hardware check state\r\n");
     #if HAS_DISPLAY
       if (disp_ready) {
         device_init_done = true;
@@ -2487,14 +2485,13 @@ void validate_status() {
                 hw_ready = true;
               } else {
                 hw_ready = false;
-                printf("[init] Error, device init failed\r\n");
               }
             #else
               hw_ready = true;
             #endif
           } else {
             hw_ready = false;
-            printf("[init] No radio module found\r\n");
+            Serial.write("No radio module found\r\n");
             #if HAS_DISPLAY
               if (disp_ready) {
                 device_init_done = true;
@@ -2510,7 +2507,7 @@ void validate_status() {
           }
         } else {
           hw_ready = false;
-          printf("[init] Invalid EEPROM checksum\r\n");
+          Serial.write("Invalid EEPROM checksum\r\n");
           #if HAS_DISPLAY
             if (disp_ready) {
               device_init_done = true;
@@ -2520,7 +2517,7 @@ void validate_status() {
         }
       } else {
         hw_ready = false;
-        printf("[init] Invalid EEPROM configuration\r\n");
+        Serial.write("Invalid EEPROM configuration\r\n");
         #if HAS_DISPLAY
           if (disp_ready) {
             device_init_done = true;
@@ -2530,7 +2527,7 @@ void validate_status() {
       }
     } else {
       hw_ready = false;
-      printf("[init] Device unprovisioned, no device configuration found in EEPROM\r\n");
+      Serial.write("Device unprovisioned, no device configuration found in EEPROM\r\n");
       #if HAS_DISPLAY
         if (disp_ready) {
           device_init_done = true;
@@ -2540,7 +2537,7 @@ void validate_status() {
     }
   } else {
     hw_ready = false;
-    printf("[init] Error, incorrect boot vector\r\n");
+    Serial.write("Error, incorrect boot vector\r\n");
     #if HAS_DISPLAY
       if (disp_ready) {
         device_init_done = true;
