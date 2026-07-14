@@ -180,7 +180,7 @@ float pmu_temperature = PMU_TEMP_MIN-1;
   bool bat_voltage_dropping = false;
   float bat_delay_v = 0;
   float bat_state_change_v = 0;
-#elif BOARD_MODEL == BOARD_RAK4631
+#elif BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401
   #define BAT_V_MIN       3.15
   #define BAT_V_MAX       4.2
   #define BAT_V_CHG       4.48
