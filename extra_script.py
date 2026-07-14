@@ -187,23 +187,17 @@ def firmware_hash(source, env):
     else:
         print("source_file:", source_file)
         firmware_data = open(source_file, "rb").read()
+        try:
+            calc_hash = esp_image_sha256(firmware_data)
+        except ValueError as error:
+            print(f"Unable to calculate firmware hash: {error}")
+            return
+        hex_hash = calc_hash.hex()
+        print("firmware_hash:", hex_hash)
         if env.GetProjectOption("custom_variant") in ("heltec_tracker_v2", "heltec_tracker_v2_local"):
-            try:
-                calc_hash = esp_image_sha256(firmware_data)
-            except ValueError as error:
-                print(f"Unable to calculate firmware hash: {error}")
-                return
-            print("firmware_hash:", calc_hash.hex())
             device_set_firmware_hash(calc_hash, env)
         else:
-            calc_hash = hashlib.sha256(firmware_data[0:-32]).digest()
-            part_hash = firmware_data[-32:]
-            hex_hash = calc_hash.hex()
-            print("firmware_hash:", hex_hash)
-            if calc_hash == part_hash:
-                env.Execute("rnodeconf --firmware-hash " + hex_hash + " " + env.subst("$UPLOAD_PORT"))
-            else:
-                print("Calculated hash does not match!")
+            env.Execute("rnodeconf --firmware-hash " + hex_hash + " " + env.subst("$UPLOAD_PORT"))
 
 def firmware_package(env):
     # Firmware package
