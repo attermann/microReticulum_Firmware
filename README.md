@@ -67,6 +67,7 @@ Build a single environment (board):
 pio run -e ttgo-t-beam
 pio run -e heltec-wireless-tracker-v2
 pio run -e wiscore_rak4631
+pio run -e wismesh_tag_rak4631
 ```
 
 Build and upload a single environment (board):
@@ -74,6 +75,7 @@ Build and upload a single environment (board):
 pio run -e ttgo-t-beam -t upload
 pio run -e heltec-wireless-tracker-v2 -t upload
 pio run -e wiscore_rak4631 -t upload
+pio run -e wismesh_tag_rak4631 -t upload
 ```
 
 Build and package a single environment (board):
@@ -81,6 +83,7 @@ Build and package a single environment (board):
 pio run -e ttgo-t-beam -t package
 pio run -e heltec-wireless-tracker-v2 -t package
 pio run -e wiscore_rak4631 -t package
+pio run -e wismesh_tag_rak4631 -t package
 ```
 
 On erased EEPROM, the Heltec Wireless Tracker V2 enables BLE and explicitly
