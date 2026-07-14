@@ -1058,7 +1058,7 @@ void setup() {
       reticulum = RNS::Reticulum();
       // CBA NOTE: `transport_enabled` needs to always be overridden to false when op_mode is not MODE_TNC
 printf("hw_ready: %u\n", hw_ready);
-printf("op_mode: %U\n", op_mode);
+printf("op_mode: %u\n", op_mode);
       if (op_mode != MODE_TNC) {
         INFO("Not in TNC mode, transport will be disabled");
         reticulum.transport_enabled(false);
