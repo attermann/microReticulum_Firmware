@@ -775,7 +775,7 @@
       const int pin_reset = 38;
       const int pin_cs = 42;
       const int pin_sclk = 43;
-      const int pin_mosi = MOSI;
+      const int pin_mosi = 44;
       const int pin_miso = 45;
       const int pin_busy = 46;
       const int pin_dio = 47;
