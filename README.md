@@ -66,18 +66,21 @@ Build a single environment (board):
 ```
 pio run -e ttgo-t-beam
 pio run -e wiscore_rak4631
+pio run -e wismesh_tag_rak4631
 ```
 
 Build and upload a single environment (board):
 ```
 pio run -e ttgo-t-beam -t upload
 pio run -e wiscore_rak4631 -t upload
+pio run -e wismesh_tag_rak4631 -t upload
 ```
 
 Build and package a single environment (board):
 ```
 pio run -e ttgo-t-beam -t package
 pio run -e wiscore_rak4631 -t package
+pio run -e wismesh_tag_rak4631 -t package
 ```
 
 Build all environments (boards):
