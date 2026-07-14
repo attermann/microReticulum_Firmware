@@ -1930,13 +1930,23 @@ void drot_conf_save(uint8_t val) {
 }
 
 void dia_conf_save(uint8_t val) {
-	if (val > 0x00)  { eeprom_update(eeprom_addr(ADDR_CONF_DIA), 0x01); }
-	else             { eeprom_update(eeprom_addr(ADDR_CONF_DIA), 0x00); }
+	if (val > 0x00) {
+		eeprom_update(eeprom_addr(ADDR_CONF_DIA), 0x01);
+		avoid_interference = false;
+	} else {
+		eeprom_update(eeprom_addr(ADDR_CONF_DIA), 0x00);
+		#if MODEM == MODEM_RUNTIME
+			avoid_interference = current_modem != SX1280;
+		#elif MODEM == SX1280
+			avoid_interference = false;
+		#else
+			avoid_interference = true;
+		#endif
+	}
   #if !HAS_EEPROM && MCU_VARIANT == MCU_NRF52
     // have to do a flush because we're only writing 2 bytes and it syncs after 8
     eeprom_flush();
   #endif
-	hard_reset();
 }
 
 void np_int_conf_save(uint8_t p_int) {

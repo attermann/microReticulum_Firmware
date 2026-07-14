@@ -87,10 +87,13 @@ button.primary { background: var(--accent); color: var(--accent-ink); border-col
 .ns-toolbar { display: flex; gap: 8px; padding-bottom: 12px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
 .ns-toolbar button { font: inherit; padding: 5px 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--ink); cursor: pointer; }
 .ns-toolbar button:disabled { opacity: 0.5; cursor: not-allowed; }
-.bottombar { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: var(--panel); border-top: 1px solid var(--border); flex: 0 0 auto; }
-.bottombar button { font: inherit; padding: 6px 14px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--ink); cursor: pointer; }
+.bottombar { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: var(--accent); color: var(--accent-ink); border-top: 1px solid rgba(255,255,255,0.3); box-shadow: 0 -3px 12px rgba(0,0,0,0.18); flex: 0 0 auto; font-weight: 600; }
+.bottombar button { font: inherit; padding: 6px 14px; border: 1px solid rgba(255,255,255,0.65); border-radius: 4px; background: rgba(255,255,255,0.12); color: var(--accent-ink); cursor: pointer; }
+.bottombar button:hover:not(:disabled) { background: rgba(255,255,255,0.22); }
+.bottombar button.primary { background: var(--accent-ink); color: var(--accent); border-color: var(--accent-ink); }
+.bottombar button.primary:hover:not(:disabled) { background: rgba(255,255,255,0.88); }
 .bottombar button:disabled { opacity: 0.5; cursor: not-allowed; }
-.bottombar button:disabled.primary { background: var(--panel); color: var(--muted); border-color: var(--border); }
+.bottombar button:disabled.primary { background: rgba(255,255,255,0.12); color: var(--accent-ink); border-color: rgba(255,255,255,0.45); }
 .status-sec { margin-bottom: 18px; }
 .config-tab { flex: 1 1 auto; min-height: 0; display: flex; padding: 0; overflow: hidden; }
 .sidenav { width: 180px; flex: 0 0 auto; border-right: 1px solid var(--border); overflow-y: auto; padding: 8px 0; background: var(--panel); }
@@ -2662,9 +2665,9 @@ async function saveNamespace(nsId){
     const ns = getNsById(schema, nsId);
     const label = ns ? ns.name : String(nsId);
     if (r.fieldErrors.length === 0) {
-      showToast(`Saved ${r.applied} field${r.applied !== 1 ? 's' : ''} to "${label}"`, 'ok');
+      showToast(`Staged ${r.applied} field${r.applied !== 1 ? 's' : ''} in "${label}" — commit to save persistently`, 'ok');
     } else {
-      showToast(`Saved with ${r.fieldErrors.length} error${r.fieldErrors.length !== 1 ? 's' : ''}`, 'warn');
+      showToast(`Staged with ${r.fieldErrors.length} error${r.fieldErrors.length !== 1 ? 's' : ''}`, 'warn');
     }
   } catch (e) {
     showToast('Save failed: ' + e.message, 'err');
@@ -2694,7 +2697,7 @@ async function refreshNamespace(nsId){
 }
 async function commitAll(){
   if (!client) return;
-  if (!confirm('Commit all pending changes to the device?')) return;
+  if (!confirm('Commit all staged changes to persistent device storage?')) return;
   try {
     const r = await client.commit(null);
     state.nsServerErrors.set({});
@@ -2731,11 +2734,27 @@ async function discardAll(){
 async function reboot(){
   if (!client) return;
   const auto = state.autoReconnect.get();
-  const msg = auto
-    ? 'Reboot the device now? The console will automatically reconnect.'
-    : 'Reboot the device now? You will be disconnected.';
+  const hasFirmwareDraft = state.firmwareHasDraft.get();
+  // A local-only edit has not reached the firmware yet, so there is nothing
+  // the reboot path can safely commit. Refuse to silently throw it away.
+  if (!hasFirmwareDraft && state.hasDraft.get()) {
+    showToast('Stage the pending edits, then commit them before rebooting', 'warn');
+    return;
+  }
+  const msg = hasFirmwareDraft
+    ? 'Staged changes are not yet persistent. Commit them to device storage and reboot now?'
+    : auto
+      ? 'Reboot the device now? The console will automatically reconnect.'
+      : 'Reboot the device now? You will be disconnected.';
   if (!confirm(msg)) return;
   try {
+    // Staged Provisioning values live only in RAM. Commit them before issuing
+    // the reset so a reboot can never silently discard settings that the user
+    // already staged with the namespace action.
+    if (hasFirmwareDraft) {
+      await client.commit(null);
+      state.firmwareHasDraft.set(false);
+    }
     // Prefer the first-class Provisioning OP.Reboot — works over any
     // transport, including RNS where legacy KISS CMD_RESET is filtered.
     // UnknownOp (code 2) means the device's microReticulum is older than
@@ -3501,7 +3520,7 @@ function buildFieldRow(nsId, f, ctx){
 function buildNamespacePanel(nsId){
   // Renders a root namespace AND any descendant namespaces as nested
   // sub-sections inside the same panel. One toolbar at the top operates on
-  // the whole tree (Save / Revert / Refresh). Field rows from every namespace
+  // the whole tree (Stage / Revert / Refresh). Field rows from every namespace
   // in the tree feed into the same hasDraftError / Save-enable computation.
   const wrap = el('div');
   const schema = state.schema.get();
@@ -3513,13 +3532,18 @@ function buildNamespacePanel(nsId){
   const header = el('h2', { class: 'ns-h' }, rootNs.name);
   wrap.appendChild(header);
   const toolbar = el('div', { class: 'ns-toolbar' });
-  const saveBtn = el('button', null, 'Save namespace');
+  const saveBtn = el('button', null, 'Stage changes');
+  const commitBtn = el('button', {
+    title: 'Write all staged Provisioning changes to persistent device storage',
+  }, 'Commit to device');
   const revertBtn = el('button', null, 'Revert');
   const refreshBtn = el('button', null, 'Refresh');
   saveBtn.onclick = () => saveNamespace(nsId);
+  commitBtn.onclick = () => commitAll();
   revertBtn.onclick = () => revertNamespace(nsId);
   refreshBtn.onclick = () => refreshNamespace(nsId);
   toolbar.appendChild(saveBtn);
+  toolbar.appendChild(commitBtn);
   toolbar.appendChild(revertBtn);
   toolbar.appendChild(refreshBtn);
   wrap.appendChild(toolbar);
@@ -3588,6 +3612,9 @@ function buildNamespacePanel(nsId){
     const anyErr = fieldHandles.some(h => h.hasDraftError());
     saveBtn.disabled = !hasDraft || anyErr;
     saveBtn.classList.toggle('primary', hasDraft && !anyErr);
+    const hasFirmwareDraft = state.firmwareHasDraft.get();
+    commitBtn.disabled = !hasFirmwareDraft;
+    commitBtn.classList.toggle('primary', hasFirmwareDraft);
     revertBtn.disabled = !hasDraft;
   }
   function updateAll(){
@@ -3599,6 +3626,7 @@ function buildNamespacePanel(nsId){
   const cleanups = [
     state.nsState.subscribe(updateAll),
     state.nsServerErrors.subscribe(updateAll),
+    state.firmwareHasDraft.subscribe(updateButtons),
   ];
   return { node: wrap, cleanups };
 }
@@ -4037,21 +4065,45 @@ function buildNcfgRadioPanel(){
         }
         // Persist any drafted radio fields, then bring the radio online, then CMD_CONF_SAVE.
         const nsObj = state.nodeCfgState.get()['radio'] || { committed:{}, draft:{} };
-        if (Object.keys(nsObj.draft).length > 0) {
-          await legacy.writeSection('radio', nsObj.draft);
-          // Treat drafts as committed.
-          state.nodeCfgState.update(s => {
-            const obj = s['radio'] || { committed: {}, draft: {} };
-            s['radio'] = { committed: { ...obj.committed, ...obj.draft }, draft: {} };
-          });
-          recomputeHasDraft(NCFG_CTX);
-        }
+        const draft = { ...nsObj.draft };
+        const iaChanged = Object.prototype.hasOwnProperty.call(draft, 'ia');
+        const iaValue = draft.ia;
+
+        // Older firmware resets immediately when CMD_DIS_IA is received. Keep
+        // it out of the initial field batch so that reset cannot interrupt the
+        // radio-start and CMD_CONF_SAVE sequence that persists TNC mode.
+        delete draft.ia;
+        if (Object.keys(draft).length > 0) await legacy.writeSection('radio', draft);
+
         // Bring the radio online and CMD_CONF_SAVE the current lora_* values
         // to EEPROM. writeSection() above only updates RAM via per-field
         // opcodes; without this, edited values revert on the next reboot.
         // Also sets ADDR_CONF_OK so the device boots into TNC mode. Safe to
         // call even when there were no drafts — covers the mode-change-only case too.
         await legacy.setMode(true);
+
+        // CMD_CONF_SAVE has no response and historically failed silently when
+        // radio startup failed. An EEPROM read is both an ordering barrier and
+        // proof that the boot marker really reached persistent storage.
+        const persisted = await legacy.readEeprom();
+        if (!persisted || persisted[0xA7] !== CONF_OK_BYTE) {
+          throw new Error('radio did not start; TNC boot marker was not persisted');
+        }
+        state.nodeCfgEeprom.set(persisted);
+
+        // Apply IA last. Current firmware applies it live; older firmware may
+        // reset here, but the TNC marker and PHY configuration are now safe.
+        if (iaChanged) {
+          const iaField = sec.fields.find(f => f.id === 'ia');
+          await legacy.write(CMD_DIS_IA, legacy.encodeField(iaField, iaValue));
+        }
+
+        // Only clear drafts after persistence has been verified.
+        state.nodeCfgState.update(s => {
+          const obj = s['radio'] || { committed: {}, draft: {} };
+          s['radio'] = { committed: { ...obj.committed, ...obj.draft }, draft: {} };
+        });
+        recomputeHasDraft(NCFG_CTX);
         state.nodeCfgNeedsReboot.set(true);
         showToast('Radio config persisted (device will boot in TNC mode)', 'warn');
       } else {
@@ -4479,13 +4531,13 @@ function buildBottomBar(){
     // exists once at least one namespace has been Saved. Until then, both
     // buttons are no-ops on the device side, so disable them.
     const label = hasFw
-      ? `${fieldCount} field${fieldCount !== 1 ? 's' : ''} pending in ${nsCount} namespace${nsCount !== 1 ? 's' : ''}`
-      : `${fieldCount} local edit${fieldCount !== 1 ? 's' : ''} — save a namespace to enable Commit / Discard`;
+      ? `${fieldCount} staged field${fieldCount !== 1 ? 's' : ''} — commit to save persistently`
+      : `${fieldCount} local edit${fieldCount !== 1 ? 's' : ''} — stage changes to enable Commit / Discard`;
     const bar = el('div', { class: 'bottombar' }, [
       el('span', null, label),
       el('span', { class: 'spacer' }),
       el('button', { onclick: discardAll, disabled: !hasFw, title: hasFw ? '' : 'No firmware-side draft to discard' }, 'Discard all'),
-      el('button', { class: 'primary', onclick: commitAll, disabled: !hasFw, title: hasFw ? '' : 'No firmware-side draft to commit' }, 'Commit all'),
+      el('button', { class: 'primary', onclick: commitAll, disabled: !hasFw, title: hasFw ? 'Write all staged changes to persistent device storage' : 'No firmware-side draft to commit' }, 'Commit to device'),
     ]);
     wrap.appendChild(bar);
   }
