@@ -474,6 +474,7 @@ int sx126x::begin(uint32_t frequency) {
   setTxPower(2);
   enableCrc();
   writeRegister(REG_LNA_6X, 0x96); // Set LNA boost
+  writeRegister(0x0902, 0x00); // RTC STOP (Semtech Errata 15.3)
   uint8_t basebuf[2] = {0}; // Set base addresses
   executeOpcode(OP_BUFFER_BASE_ADDR_6X, basebuf, 2);
 
@@ -823,10 +824,10 @@ void sx126x::enableTCXO() {
       if (_tcxoVoltageOverride != 0xFF) {
         mode = _tcxoVoltageOverride;
       } else {
-        #if BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_XIAO_S3
+        #if BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_XIAO_S3
           mode = MODE_TCXO_3_3V_6X;
-        #elif BOARD_MODEL == BOARD_RAK3401
-          // RAK13302 specifies DIO3 TCXO at 1.8V (SX126X_DIO3_TCXO_VOLTAGE 1.8)
+        #elif BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401
+          // RAK4631 and RAK13302 specify DIO3 TCXO at 1.8V
           mode = MODE_TCXO_1_8V_6X;
         #elif BOARD_MODEL == BOARD_TBEAM
           mode = MODE_TCXO_1_8V_6X;
