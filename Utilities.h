@@ -878,6 +878,9 @@ void serial_write(uint8_t byte) {
 	      else if (!serial_in_frame && byte == FEND) { serial_in_frame = true; }
       #endif
 		}
+	#elif HAS_WIFI
+		if (wifi_host_is_connected()) { wifi_remote_write(byte); }
+		else                          { Serial.write(byte); }
 	#else
 		Serial.write(byte);
 	#endif

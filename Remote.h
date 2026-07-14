@@ -47,6 +47,7 @@ IPAddress ap_ip(10, 0, 0, 1);
 IPAddress ap_nm(255, 255, 255, 0);
 IPAddress wr_device_ip;
 char wr_hostname[10];
+char wr_devname[11];
 wl_status_t wr_wifi_status = WL_IDLE_STATUS;
 #if defined(UDP_TRANSPORT)
 WiFiUDP udp;
@@ -80,8 +81,8 @@ void wifi_remote_start_ap() {
     if (wr_psk[0] != 0x00) { WiFi.softAP(wr_ssid, wr_psk, wr_channel); }
     else                   { WiFi.softAP(wr_ssid, NULL, wr_channel); }
   } else {
-    if (wr_psk[0] != 0x00) { WiFi.softAP(bt_devname, wr_psk, wr_channel); }
-    else                   { WiFi.softAP(bt_devname, NULL, wr_channel); }
+    if (wr_psk[0] != 0x00) { WiFi.softAP(wr_devname, wr_psk, wr_channel); }
+    else                   { WiFi.softAP(wr_devname, NULL, wr_channel); }
   }
   delay(150);
   WiFi.softAPConfig(ap_ip, ap_ip, ap_nm);
@@ -163,8 +164,14 @@ void wifi_remote_start() {
 
 void wifi_remote_init() {
   printf("Initializing WiFi...\n");
-  memcpy(wr_hostname, bt_devname, 5);
-  memcpy(wr_hostname+5, bt_devname+6, 4);
+  #if HAS_BLUETOOTH || HAS_BLE == true
+    memcpy(wr_devname, bt_devname, sizeof(wr_devname));
+  #else
+    uint16_t chip_suffix = (uint16_t)(ESP.getEfuseMac() >> 32);
+    snprintf(wr_devname, sizeof(wr_devname), "RNode %04X", chip_suffix);
+  #endif
+  memcpy(wr_hostname, wr_devname, 5);
+  memcpy(wr_hostname+5, wr_devname+6, 4);
   wr_hostname[9] = 0x00;
   WiFi.softAPdisconnect(true);
   WiFi.disconnect(true, true);
