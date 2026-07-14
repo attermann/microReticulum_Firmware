@@ -92,7 +92,7 @@ bool kiss_framed_logs = false;
 #else
 bool kiss_framed_logs = true;
 #endif
-bool nomadnet_enabled = true;
+bool nomadnet_enabled = URTN_NOMADNET_DEFAULT_ENABLED != 0;
 RNS::Destination nomadnet_destination = {RNS::Type::NONE};
 char nomadnet_name[64];
 
@@ -895,9 +895,9 @@ void setup() {
   // Set sane default memory limits based on hardware-specific availability
   // (note these may be adjusted dynamically based on detected hardware below)
   RNS::Transport::path_table_maxsize(URTN_PATH_TABLE_MAX_RECS);
-  RNS::Transport::announce_table_maxsize(50);
-  RNS::Transport::hashlist_maxsize(50);
-  RNS::Identity::known_destinations_maxsize(50);
+  RNS::Transport::announce_table_maxsize(URTN_ANNOUNCE_TABLE_MAX_RECS);
+  RNS::Transport::hashlist_maxsize(URTN_HASHLIST_MAX_RECS);
+  RNS::Identity::known_destinations_maxsize(URTN_KNOWN_DESTINATIONS_MAX_RECS);
   RNS::Transport::max_pr_tags(50);
   RNS::Reticulum::clean_interval(60*15); // 60 minutes
   //RNS::Reticulum::clean_interval(60*15); // 15 minutes

@@ -83,9 +83,11 @@ pio run -e heltec-wireless-tracker-v2 -t package
 pio run -e wiscore_rak4631 -t package
 ```
 
-On erased EEPROM, the Heltec Wireless Tracker V2 enables BLE and explicitly
-disables Wi-Fi; later user choices are preserved. Radio parameters remain unset
-until a user selects region-appropriate values.
+The Heltec Wireless Tracker V2 uses a balanced no-PSRAM profile: 500 paths,
+100 announce entries, 100 packet hashes, and 100 known destinations. On erased
+EEPROM, BLE is enabled and Wi-Fi is explicitly disabled; later user choices are
+preserved. NomadNet is opt-in, and radio parameters remain unset until a user
+selects region-appropriate values. TRACE logging remains enabled for this build.
 
 Build all environments (boards):
 ```
@@ -212,4 +214,3 @@ Common HATs / wirings are documented in `rnoded.example.conf`, including RAK6421
 - [x] Add build targets for NRF52 boards
 
 Please open an Issue if you have trouble building or using the firmware or daemon, and feel free to start a new Discussion for anything else.
-

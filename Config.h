@@ -27,6 +27,22 @@
 	#define MODE_HOST 0x11
 	#define MODE_TNC  0x12
 
+	// Firmware-level microReticulum defaults. Individual PlatformIO board
+	// environments can override these without changing the shared startup
+	// path used by every target.
+	#ifndef URTN_ANNOUNCE_TABLE_MAX_RECS
+		#define URTN_ANNOUNCE_TABLE_MAX_RECS 50
+	#endif
+	#ifndef URTN_HASHLIST_MAX_RECS
+		#define URTN_HASHLIST_MAX_RECS 50
+	#endif
+	#ifndef URTN_KNOWN_DESTINATIONS_MAX_RECS
+		#define URTN_KNOWN_DESTINATIONS_MAX_RECS 50
+	#endif
+	#ifndef URTN_NOMADNET_DEFAULT_ENABLED
+		#define URTN_NOMADNET_DEFAULT_ENABLED 1
+	#endif
+
 	#define CABLE_STATE_DISCONNECTED 0x00
 	#define CABLE_STATE_CONNECTED    0x01
 	uint8_t cable_state = CABLE_STATE_DISCONNECTED;
