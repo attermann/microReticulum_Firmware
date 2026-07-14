@@ -272,6 +272,10 @@ char bt_devname[11];
       return ble_authenticated;
     }
 
+    void bt_mark_client_authenticated() {
+      ble_authenticated = true;
+    }
+
     bool bt_security_request_callback() {
       if (bt_allow_pairing) {
           // Serial.println("Accepting security request");
@@ -286,10 +290,12 @@ char bt_devname[11];
       if (auth_result.success == true) {
         // Serial.println("Authentication success");
         ble_authenticated = true;
-        if (bt_state == BT_STATE_PAIRING) {
-          // Serial.println("Pairing complete, disconnecting");
-          delay(2000); SerialBT.disconnect();
-        } else { bt_state = BT_STATE_CONNECTED; }
+        // The active link is already encrypted and MITM-authenticated when
+        // this callback succeeds. Keep it open so Web Bluetooth can finish
+        // service discovery and enable notifications on the same connection.
+        // Forcing a disconnect here can leave Chrome's pending GATT operation
+        // unresolved even though the OS reports that pairing succeeded.
+        bt_state = BT_STATE_CONNECTED;
       } else {
         // Serial.println("Authentication fail");
         ble_authenticated = false;

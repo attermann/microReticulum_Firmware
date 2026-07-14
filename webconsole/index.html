@@ -755,13 +755,27 @@ const NUS_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const NUS_RX_CHAR = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
 const NUS_TX_CHAR = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 class BLETransport {
-  constructor(){ this.device=null; this.rx=null; this.tx=null; this.onBytes=()=>{}; this.onStatus=()=>{}; this._writeNoResp=true; this._gattHandler=null; this._notifyHandler=null; }
+  constructor(){ this.device=null; this.rx=null; this.tx=null; this.onBytes=()=>{}; this.onStatus=()=>{}; this._writeNoResp=true; this._gattHandler=null; this._notifyHandler=null; this._attaching=false; this._attachDisconnected=false; this._attachDisconnectReject=null; }
   static available(){ return !!navigator.bluetooth; }
   async connect(){
     this.onStatus({state:'connecting'});
     try {
       this.device = await navigator.bluetooth.requestDevice({ filters: [{ services: [NUS_SERVICE] }] });
-      this._gattHandler = () => this.onStatus({state:'closed'});
+      this._gattHandler = () => {
+        this.rx = this.tx = null;
+        // Reject the exact attach step that was pending when GATT dropped.
+        // Some Web Bluetooth implementations otherwise leave service or
+        // notification promises unresolved indefinitely after pairing.
+        if (this._attaching) {
+          this._attachDisconnected = true;
+          if (this._attachDisconnectReject) {
+            const reject = this._attachDisconnectReject;
+            this._attachDisconnectReject = null;
+            reject(new Error('BLE GATT disconnected during setup'));
+          }
+        }
+        else this.onStatus({state:'closed'});
+      };
       this.device.addEventListener('gattserverdisconnected', this._gattHandler);
       await this._attach();
     } catch (e) {
@@ -776,17 +790,59 @@ class BLETransport {
     await this._attach();
   }
   async _attach(){
-    const server = await this.device.gatt.connect();
-    const svc = await server.getPrimaryService(NUS_SERVICE);
-    this.rx = await svc.getCharacteristic(NUS_RX_CHAR);
-    this.tx = await svc.getCharacteristic(NUS_TX_CHAR);
-    await this.tx.startNotifications();
-    this._notifyHandler = (e) => {
-      const v = e.target.value;
-      this.onBytes(new Uint8Array(v.buffer, v.byteOffset, v.byteLength));
-    };
-    this.tx.addEventListener('characteristicvaluechanged', this._notifyHandler);
-    this.onStatus({state:'connected', info: this.device.name || 'BLE device'});
+    this._attaching = true;
+    this._attachDisconnected = false;
+    try {
+      let lastError = null;
+      // The first attempt can be the PIN-pairing connection, which firmware
+      // may close after bonding on older firmware. Retry against the same Web
+      // Bluetooth device handle; no second chooser/user gesture is required.
+      for (let attempt = 0; attempt < 3; ++attempt) {
+        let rejectDisconnect = null;
+        try {
+          const disconnected = new Promise((_, reject) => {
+            rejectDisconnect = reject;
+            this._attachDisconnectReject = reject;
+          });
+          const waitFor = (promise, phase) => {
+            this.onStatus({state:'connecting', info: phase});
+            return Promise.race([promise, disconnected]);
+          };
+          const server = await waitFor(this.device.gatt.connect(), attempt ? 'Reconnecting after pairing' : 'Connecting Bluetooth');
+          const svc = await waitFor(server.getPrimaryService(NUS_SERVICE), 'Discovering BLE service');
+          this.rx = await waitFor(svc.getCharacteristic(NUS_RX_CHAR), 'Opening BLE channel');
+          const rxProperties = this.rx.properties;
+          this._writeNoResp = !!(rxProperties && rxProperties.writeWithoutResponse);
+          if (rxProperties && !rxProperties.writeWithoutResponse && !rxProperties.write) {
+            throw new Error('BLE RX characteristic is not writable');
+          }
+          this.tx = await waitFor(svc.getCharacteristic(NUS_TX_CHAR), 'Opening BLE notifications');
+          await waitFor(this.tx.startNotifications(), 'Enabling BLE notifications');
+          this._notifyHandler = (e) => {
+            const v = e.target.value;
+            this.onBytes(new Uint8Array(v.buffer, v.byteOffset, v.byteLength));
+          };
+          this.tx.addEventListener('characteristicvaluechanged', this._notifyHandler);
+          this.onStatus({state:'connected', info: this.device.name || 'BLE device'});
+          return;
+        } catch (e) {
+          lastError = e;
+          this.rx = this.tx = null;
+          const disconnected = this._attachDisconnected ||
+            !this.device || !this.device.gatt || !this.device.gatt.connected ||
+            /GATT Server is disconnected|Cannot retrieve services|disconnected/i.test(e && e.message ? e.message : String(e));
+          if (!disconnected || attempt === 2) throw e;
+          this._attachDisconnected = false;
+          await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
+        } finally {
+          if (this._attachDisconnectReject === rejectDisconnect) this._attachDisconnectReject = null;
+        }
+      }
+      throw lastError || new Error('BLE GATT attach failed');
+    } finally {
+      this._attachDisconnectReject = null;
+      this._attaching = false;
+    }
   }
   async send(bytes){
     if (!this.rx) return;

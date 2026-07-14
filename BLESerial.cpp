@@ -28,6 +28,7 @@ bool bt_confirm_pin_callback(uint32_t pin);
 void bt_connect_callback(BLEServer *server);
 void bt_disconnect_callback(BLEServer *server);
 bool bt_client_authenticated();
+void bt_mark_client_authenticated();
 
 uint32_t BLESerial::onPassKeyRequest() { return bt_passkey_callback(); }
 void BLESerial::onPassKeyNotify(uint32_t passkey) { bt_passkey_notify_callback(passkey); }
@@ -142,6 +143,11 @@ void BLESerial::end() { BLEDevice::deinit(); }
 
 void BLESerial::onWrite(BLECharacteristic *characteristic) {
   if (characteristic->getUUID().toString() == BLE_RX_UUID) {
+    // The RX characteristic requires an encrypted MITM-authenticated write.
+    // Bluedroid does not necessarily repeat onAuthenticationComplete when a
+    // bonded client reconnects, so a permitted RX write is the reliable proof
+    // that this connection is authenticated and may receive notifications.
+    bt_mark_client_authenticated();
     auto value = characteristic->getValue();
     for (int i = 0; i < value.length(); i++) { rx_buffer.push(value[i]); }
   }
@@ -150,10 +156,14 @@ void BLESerial::onWrite(BLECharacteristic *characteristic) {
 void BLESerial::SetupSerialService() {
   SerialService = ble_server->createService(BLE_SERIAL_SERVICE_UUID);
 
-  RxCharacteristic = SerialService->createCharacteristic(BLE_RX_UUID, BLECharacteristic::PROPERTY_WRITE);
+  RxCharacteristic = SerialService->createCharacteristic(
+    BLE_RX_UUID,
+    BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR
+  );
   RxCharacteristic->setAccessPermissions(ESP_GATT_PERM_WRITE_ENC_MITM);
   RxCharacteristic->addDescriptor(new BLE2902());
   RxCharacteristic->setWriteProperty(true);
+  RxCharacteristic->setWriteNoResponseProperty(true);
   RxCharacteristic->setCallbacks(this);
 
   TxCharacteristic = SerialService->createCharacteristic(BLE_TX_UUID, BLECharacteristic::PROPERTY_NOTIFY);
