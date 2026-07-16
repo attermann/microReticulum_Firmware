@@ -898,20 +898,40 @@ void setup() {
     // CBA Init filesystem
     HEAD("Initializing filesystem...", RNS::LOG_TRACE);
 #if BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401
+    bool init_success = false;
     // First attempt to initialize RAK15001 flash
-    TRACE("Looking for RAK15001 flash...");
-    static const SPIFlash_Device_t device_rak15001 = RAK15001;
-    // CBA NOTE: RAK base boards generally *share* the same chip select (CS/SS) across all module slots.
-    // SS below is expected to be configured as the "external" SPI bus chip select.
-    filesystem = microStore::Adapters::FlashFSFileSystem(&device_rak15001, SS);
-    if (filesystem.init()) {
-      TRACE("Initialized RAK15001 flash");
-      // Raise path store limits to account for larger external flash size
-      RNS::Transport::path_table_maxsize(500);
-      RNS::Transport::path_store_segment_size(24576);
-      RNS::Transport::path_store_segment_count(8);
+    {
+      TRACE("Looking for RAK15001 flash...");
+      static const SPIFlash_Device_t device = RAK15001;
+      // CBA NOTE: RAK base boards generally *share* the same chip select (CS/SS) across all module slots.
+      // SS below is expected to be configured as the "external" SPI bus chip select.
+      filesystem = microStore::Adapters::FlashFSFileSystem(&device, SS);
+      if (filesystem.init()) {
+        TRACE("Initialized RAK15001 flash");
+        init_success = true;
+        // Raise path store limits to account for larger external flash size
+        RNS::Transport::path_table_maxsize(500);
+        RNS::Transport::path_store_segment_size(24576);
+        RNS::Transport::path_store_segment_count(8);
+      }
     }
-    else {
+    // Then attempt to initialize W25Q128 flash
+    {
+      TRACE("Looking for W25Q128 flash...");
+      static const SPIFlash_Device_t device = W25Q128JV_SQ;
+      // CBA NOTE: RAK base boards generally *share* the same chip select (CS/SS) across all module slots.
+      // This particular module is expected to be on an *alternate* chip select gpio WB_IO1.
+      filesystem = microStore::Adapters::FlashFSFileSystem(&device, WB_IO1);
+      if (filesystem.init()) {
+        TRACE("Initialized W25Q128 flash");
+        init_success = true;
+        // Raise path store limits to account for larger external flash size
+        RNS::Transport::path_table_maxsize(500);
+        RNS::Transport::path_store_segment_size(24576);
+        RNS::Transport::path_store_segment_count(8);
+      }
+    }
+    if (!init_success) {
       // Finaly attempt to initialize internl flash
       TRACE("Using internal flash...");
       filesystem = microStore::Adapters::InternalFSFileSystem();
@@ -1156,7 +1176,7 @@ inline void kiss_write_packet() {
     // CBA send packet received over LoRa to RNS in addition to connected client
     RNS::Bytes data(pbuf, host_write_len);
     lora_interface.r_stat_rssi(last_rssi);
-    lora_interface.r_stat_snr(last_snr_raw);
+    lora_interface.r_stat_snr(((int8_t)last_snr_raw) / 4.0f);
     lora_interface.r_stat_q(get_quality());
     lora_interface.handle_incoming(data);
   }

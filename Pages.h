@@ -276,9 +276,9 @@ RNS::Bytes serve_page(
         content << "    \"spreading_factor\": " << std::to_string(lora_sf) << ",\n";
         content << "    \"coding_rate\": " << std::to_string(lora_cr) << ",\n";
         content << "    \"current_rssi\": " << std::to_string(current_rssi) << ",\n";
-        content << "    \"noise_floor\": " << std::to_string(noise_floor) << ",\n";
-        content << "    \"last_rssi\": " << std::to_string(last_rssi) << ",\n";
-        content << "    \"last_snr\": " << std::to_string(last_snr_raw) << ",\n";
+        content << "    \"noise_floor\": " << std::to_string((int16_t)noise_floor) << ",\n";
+        content << "    \"last_rssi\": " << std::to_string((int16_t)last_rssi) << ",\n";
+        content << "    \"last_snr\": " << std::to_string((int8_t)((int8_t)last_snr_raw) / 4.0f) << ",\n";
         add_interface_details(content, lora_interface);
       	content << "  },\n";
 #endif
