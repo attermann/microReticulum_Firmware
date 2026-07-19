@@ -218,7 +218,7 @@ void measure_temperature() {
 }
 
 void measure_battery() {
-  #if BOARD_MODEL == BOARD_RNODE_NG_21 || BOARD_MODEL == BOARD_LORA32_V2_1 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_HELTEC32_V4 || BOARD_MODEL == BOARD_TDECK || BOARD_MODEL == BOARD_T3S3 || BOARD_MODEL == BOARD_HELTEC_T114 || BOARD_MODEL == BOARD_TECHO || BOARD_MODEL == BOARD_RAK4631
+  #if BOARD_MODEL == BOARD_RNODE_NG_21 || BOARD_MODEL == BOARD_LORA32_V2_1 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_HELTEC32_V4 || BOARD_MODEL == BOARD_TDECK || BOARD_MODEL == BOARD_T3S3 || BOARD_MODEL == BOARD_HELTEC_T114 || BOARD_MODEL == BOARD_TECHO || BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401
     battery_installed = true;
     #if BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_HELTEC32_V4
       battery_indeterminate = false;
@@ -236,7 +236,7 @@ void measure_battery() {
       float battery_measurement = (float)(analogRead(pin_vbat)) * 0.017165;
     #elif BOARD_MODEL == BOARD_TECHO
       float battery_measurement = (float)(analogRead(pin_vbat)) * 0.007067;
-    #elif BOARD_MODEL == BOARD_RAK4631
+    #elif BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401
       float battery_measurement = (float)(analogRead(pin_vbat)) * 0.005068;
     #else
       float battery_measurement = (float)(analogRead(pin_vbat)) / 4095.0*7.26;
@@ -406,6 +406,7 @@ void measure_battery() {
       battery_ready = false;
     }
   #endif
+//printf("[battery] voltage=%f, percent=%f, state=%u\n", battery_voltage, battery_percent, battery_state);
 
   if (battery_ready) {
     pmu_rc++;
@@ -429,9 +430,9 @@ bool init_pmu() {
     pmu_temp_sensor_ready = true;
   #endif
 
-  #if BOARD_MODEL == BOARD_RNODE_NG_21 || BOARD_MODEL == BOARD_LORA32_V2_1 || BOARD_MODEL == BOARD_TDECK || BOARD_MODEL == BOARD_T3S3 || BOARD_MODEL == BOARD_TECHO || BOARD_MODEL == BOARD_RAK4631
+  #if BOARD_MODEL == BOARD_RNODE_NG_21 || BOARD_MODEL == BOARD_LORA32_V2_1 || BOARD_MODEL == BOARD_TDECK || BOARD_MODEL == BOARD_T3S3 || BOARD_MODEL == BOARD_TECHO || BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401
     pinMode(pin_vbat, INPUT);
-    #if BOARD_MODEL == BOARD_RAK4631
+    #if BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401
       analogReference(AR_INTERNAL_3_0);
       analogReadResolution(10);
     #endif
