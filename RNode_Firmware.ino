@@ -899,7 +899,7 @@ void setup() {
     HEAD("Initializing filesystem...", RNS::LOG_TRACE);
 #if BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401
     bool init_success = false;
-    // First attempt to initialize RAK15001 flash
+    // Attempt to initialize RAK15001 flash
     {
       TRACE("Looking for RAK15001 flash...");
       static const SPIFlash_Device_t device = RAK15001;
@@ -915,10 +915,10 @@ void setup() {
         RNS::Transport::path_store_segment_count(8);
       }
     }
-    // Then attempt to initialize W25Q128 flash
-    {
+    // Attempt to initialize W25Q128 flash
+    if (!init_success) {
       TRACE("Looking for W25Q128 flash...");
-      static const SPIFlash_Device_t device = W25Q128JV_SQ;
+      static const SPIFlash_Device_t device = W25Q128;
       // CBA NOTE: RAK base boards generally *share* the same chip select (CS/SS) across all module slots.
       // This particular module is expected to be on an *alternate* chip select gpio WB_IO1.
       filesystem = microStore::Adapters::FlashFSFileSystem(&device, WB_IO1);
@@ -931,8 +931,8 @@ void setup() {
         RNS::Transport::path_store_segment_count(8);
       }
     }
+    // If no other initialize attempts succeeded then fallback to internal flash
     if (!init_success) {
-      // Finaly attempt to initialize internl flash
       TRACE("Using internal flash...");
       filesystem = microStore::Adapters::InternalFSFileSystem();
       if (!filesystem.init()) WARNING("Failed to initialize filesystem!");
