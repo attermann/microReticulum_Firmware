@@ -482,8 +482,11 @@ void setup() {
     }
     delay(10);
   }
-  // CBA Test
-  delay(2000);
+  // Native USB opens reset the Tracker V2. Keep its startup short enough to
+  // answer rnodeconf's EEPROM request before the utility times out.
+  #if BOARD_MODEL != BOARD_HELTEC_TRACKER_V2
+    delay(2000);
+  #endif
 
 #ifdef HAS_RNS
   printf("Total SRAM:  %7u bytes\n", RNS::Utilities::Memory::heap_size());
@@ -595,7 +598,7 @@ void setup() {
     boot_seq();
   #endif
 
-  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_RAK3401 && BOARD_MODEL != BOARD_HELTEC_T114 && BOARD_MODEL != BOARD_TECHO && BOARD_MODEL != BOARD_T3S3 && BOARD_MODEL != BOARD_TBEAM_S_V1 && BOARD_MODEL != BOARD_HELTEC32_V4
+  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_RAK3401 && BOARD_MODEL != BOARD_HELTEC_T114 && BOARD_MODEL != BOARD_TECHO && BOARD_MODEL != BOARD_T3S3 && BOARD_MODEL != BOARD_TBEAM_S_V1 && BOARD_MODEL != BOARD_HELTEC32_V4 && BOARD_MODEL != BOARD_HELTEC_TRACKER_V2
     // Some boards need to wait until the hardware UART is set up before booting
     // the full firmware. In the case of the RAK4631, RAK3401, and Heltec T114,
     // the line below will wait until a serial connection is actually established
@@ -777,6 +780,19 @@ void setup() {
   #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
     #if HAS_PMU == true
       pmu_ready = init_pmu();
+    #endif
+
+    // Seed only erased Tracker V2 settings. Explicit user choices (including
+    // disabling BLE) are represented by non-0xFF values and remain intact.
+    // Radio parameters intentionally remain unset because frequency and power
+    // require a region-appropriate choice during onboarding.
+    #if BOARD_MODEL == BOARD_HELTEC_TRACKER_V2 && HAS_EEPROM
+      if (EEPROM.read(eeprom_addr(ADDR_CONF_BT)) == 0xFF) {
+        eeprom_update(eeprom_addr(ADDR_CONF_BT), BT_ENABLE_BYTE);
+      }
+      if (EEPROM.read(eeprom_addr(ADDR_CONF_WIFI)) == 0xFF) {
+        eeprom_update(eeprom_addr(ADDR_CONF_WIFI), WR_WIFI_OFF);
+      }
     #endif
 
     #if HAS_BLUETOOTH || HAS_BLE == true
@@ -2315,7 +2331,7 @@ int  noise_floor_buffer[NOISE_FLOOR_SAMPLES] = {0};
 void update_noise_floor() {
   #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52 || MCU_VARIANT == MCU_NATIVE
     if (!dcd) {
-      #if BOARD_MODEL != BOARD_HELTEC32_V4
+      #if HAS_LORA_LNA == false
       if (!noise_floor_sampled || current_rssi < noise_floor + CSMA_INFR_THRESHOLD_DB) {
       #else
       if ((!noise_floor_sampled || current_rssi < noise_floor + CSMA_INFR_THRESHOLD_DB) || (noise_floor_sampled && (noise_floor < LNA_GD_THRSHLD && current_rssi <= LNA_GD_LIMIT))) {
@@ -2365,7 +2381,7 @@ void update_modem_status() {
     portEXIT_CRITICAL();
   #endif
 
-  #if BOARD_MODEL == BOARD_HELTEC32_V4
+  #if HAS_LORA_LNA
     if (noise_floor > LNA_GD_THRSHLD)  { interference_detected = !carrier_detected && (current_rssi > (noise_floor+CSMA_INFR_THRESHOLD_DB)); }
     else                               { interference_detected = !carrier_detected && (current_rssi > LNA_GD_LIMIT); }
   #else
@@ -2790,6 +2806,12 @@ void sleep_now() {
           digitalWrite(LORA_PA_CSD, LOW);
           digitalWrite(LORA_PA_PWR_EN, LOW);
           digitalWrite(Vext, HIGH);
+      #endif
+      #if BOARD_MODEL == BOARD_HELTEC_TRACKER_V2
+          digitalWrite(LORA_PA_CTX, LOW);
+          digitalWrite(LORA_PA_CSD, LOW);
+          digitalWrite(LORA_PA_PWR_EN, LOW);
+          digitalWrite(Vext, VEXT_OFF);
       #endif
       #if PIN_DISP_SLEEP >= 0
         pinMode(PIN_DISP_SLEEP, OUTPUT);

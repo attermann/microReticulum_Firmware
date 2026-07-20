@@ -17,7 +17,10 @@
 #include <Adafruit_GFX.h>
 
 #if BOARD_MODEL != BOARD_TECHO
-  #if BOARD_MODEL == BOARD_TDECK
+  #if BOARD_MODEL == BOARD_HELTEC_TRACKER_V2
+    #include <SPI.h>
+    #include <Adafruit_ST7735.h>
+  #elif BOARD_MODEL == BOARD_TDECK
     #include <Adafruit_ST7789.h>
   #elif BOARD_MODEL == BOARD_HELTEC_T114
     #include "ST7789.h"
@@ -40,8 +43,13 @@
 #endif
 
 #include "Fonts/Org_01.h"
-#define DISP_W 128
-#define DISP_H 64
+#if BOARD_MODEL == BOARD_HELTEC_TRACKER_V2
+  #define DISP_W 160
+  #define DISP_H 80
+#else
+  #define DISP_W 128
+  #define DISP_H 64
+#endif
 
 #if BOARD_MODEL == BOARD_RNODE_NG_20 || BOARD_MODEL == BOARD_LORA32_V2_0
   #define DISP_RST -1
@@ -65,6 +73,15 @@
   #define DISP_ADDR 0x3C
   #define SCL_OLED 18
   #define SDA_OLED 17
+#elif BOARD_MODEL == BOARD_HELTEC_TRACKER_V2
+  #define DISP_RST 39
+  #define DISP_ADDR -1
+  #define DISP_CUSTOM_ADDR false
+  #define DISPLAY_CS 38
+  #define DISPLAY_SCLK 41
+  #define DISPLAY_MOSI 42
+  #define DISPLAY_DC 40
+  #define DISPLAY_BL_PIN 21
 #elif BOARD_MODEL == BOARD_RAK4631
   // RAK1921/SSD1306
   #define DISP_RST -1
@@ -104,7 +121,14 @@
 
 #define SMALL_FONT &Org_01
 
-#if BOARD_MODEL == BOARD_TDECK
+#if BOARD_MODEL == BOARD_HELTEC_TRACKER_V2
+  // Keep the TFT on the ESP32-S3's second SPI controller. The SX1262 uses
+  // the default controller on GPIO 8-11, while the TFT has its own pin set.
+  SPIClass displaySPI = SPIClass(HSPI);
+  Adafruit_ST7735 display(&displaySPI, DISPLAY_CS, DISPLAY_DC, DISP_RST);
+  #define SSD1306_WHITE ST77XX_WHITE
+  #define SSD1306_BLACK ST77XX_BLACK
+#elif BOARD_MODEL == BOARD_TDECK
   Adafruit_ST7789 display = Adafruit_ST7789(DISPLAY_CS, DISPLAY_DC, -1);
   #define SSD1306_WHITE ST77XX_WHITE
   #define SSD1306_BLACK ST77XX_BLACK
@@ -197,6 +221,14 @@ void update_area_positions() {
       p_as_x = 126;
       p_as_y = p_ad_y;
     }
+  #elif BOARD_MODEL == BOARD_HELTEC_TRACKER_V2
+    // Centre the inherited 130x64 landscape UI on the 160x80 TFT. The
+    // status area is offset by two pixels below to leave room for its
+    // separator, so the base positions account for that total width.
+    p_ad_x = 15;
+    p_ad_y = 8;
+    p_as_x = 79;
+    p_as_y = 8;
   #elif BOARD_MODEL == BOARD_TECHO
     if (disp_mode == DISP_MODE_PORTRAIT) {
       p_ad_x = 61;
@@ -260,6 +292,10 @@ uint8_t display_contrast = 0x00;
     }
     level = value;
   }
+#elif BOARD_MODEL == BOARD_HELTEC_TRACKER_V2
+  void set_contrast(Adafruit_ST7735 *display, uint8_t value) {
+    digitalWrite(DISPLAY_BL_PIN, value == 0 ? LOW : HIGH);
+  }
 #else
   void set_contrast(Adafruit_SSD1306 *display, uint8_t contrast) {
     display->ssd1306_command(SSD1306_SETCONTRAST);
@@ -302,6 +338,12 @@ bool display_init() {
       digitalWrite(pin_display_en, HIGH);
       delay(50);
       Wire.begin(SDA_OLED, SCL_OLED);
+    #elif BOARD_MODEL == BOARD_HELTEC_TRACKER_V2
+      pinMode(Vext, OUTPUT);
+      digitalWrite(Vext, VEXT_ON);
+      pinMode(DISPLAY_BL_PIN, OUTPUT);
+      digitalWrite(DISPLAY_BL_PIN, HIGH);
+      delay(50);
     #elif BOARD_MODEL == BOARD_LORA32_V1_0
       int pin_display_en = 16;
       digitalWrite(pin_display_en, LOW);
@@ -371,6 +413,10 @@ bool display_init() {
     #elif BOARD_MODEL == BOARD_TDECK
     display.init(240, 320);
     display.setSPISpeed(80e6);
+    #elif BOARD_MODEL == BOARD_HELTEC_TRACKER_V2
+    displaySPI.begin(DISPLAY_SCLK, -1, DISPLAY_MOSI, DISPLAY_CS);
+    display.initR(INITR_MINI160x80_PLUGIN);
+    if (false) {
     #elif BOARD_MODEL == BOARD_HELTEC_T114
     display.init();
     // set white as default pixel colour for Heltec T114
@@ -422,6 +468,9 @@ bool display_init() {
         #elif BOARD_MODEL == BOARD_HELTEC32_V4
           disp_mode = DISP_MODE_PORTRAIT;
           display.setRotation(1);
+        #elif BOARD_MODEL == BOARD_HELTEC_TRACKER_V2
+          disp_mode = DISP_MODE_LANDSCAPE;
+          display.setRotation(1);
         #elif BOARD_MODEL == BOARD_HELTEC_T114
           disp_mode = DISP_MODE_PORTRAIT;
           display.setRotation(1);
@@ -467,7 +516,7 @@ bool display_init() {
         #endif
       #endif
 
-      #if BOARD_MODEL == BOARD_TDECK
+      #if BOARD_MODEL == BOARD_TDECK || BOARD_MODEL == BOARD_HELTEC_TRACKER_V2
         display.fillScreen(SSD1306_BLACK);
       #endif
 
@@ -785,7 +834,7 @@ void update_stat_area() {
       drawBitmap(p_as_x, p_as_y, stat_area.getBuffer(), stat_area.width(), stat_area.height(), SSD1306_WHITE, SSD1306_BLACK);
     } else if (disp_mode == DISP_MODE_LANDSCAPE) {
       drawBitmap(p_as_x+2, p_as_y, stat_area.getBuffer(), stat_area.width(), stat_area.height(), SSD1306_WHITE, SSD1306_BLACK);
-      if (device_init_done && !disp_ext_fb) drawLine(p_as_x, 0, p_as_x, 64, SSD1306_WHITE);
+      if (device_init_done && !disp_ext_fb) drawLine(p_as_x, p_as_y, p_as_x, p_as_y+stat_area.height()-1, SSD1306_WHITE);
     }
 
   } else {
@@ -794,7 +843,7 @@ void update_stat_area() {
     } else if (console_active && device_init_done) {
       drawBitmap(p_as_x, p_as_y, bm_console, stat_area.width(), stat_area.height(), SSD1306_BLACK, SSD1306_WHITE);
       if (disp_mode == DISP_MODE_LANDSCAPE) {
-        drawLine(p_as_x, 0, p_as_x, 64, SSD1306_WHITE);
+        drawLine(p_as_x, p_as_y, p_as_x, p_as_y+stat_area.height()-1, SSD1306_WHITE);
       }
     }
   }
@@ -1001,7 +1050,7 @@ void update_disp_area() {
   drawBitmap(p_ad_x, p_ad_y, disp_area.getBuffer(), disp_area.width(), disp_area.height(), SSD1306_WHITE, SSD1306_BLACK);
   if (disp_mode == DISP_MODE_LANDSCAPE) {
     if (device_init_done && !firmware_update_mode && !disp_ext_fb) {
-      drawLine(0, 0, 0, 63, SSD1306_WHITE);
+      drawLine(p_ad_x, p_ad_y, p_ad_x, p_ad_y+disp_area.height()-1, SSD1306_WHITE);
     }
   }
 }
@@ -1077,6 +1126,8 @@ void update_display(bool blank = false) {
         display.clear();
         display.display();
         digitalWrite(PIN_T114_TFT_BLGT, HIGH);
+      #elif BOARD_MODEL == BOARD_HELTEC_TRACKER_V2
+        display.fillScreen(SSD1306_BLACK);
       #elif BOARD_MODEL != BOARD_TDECK && BOARD_MODEL != BOARD_TECHO
         display.clearDisplay();
         display.display();
@@ -1098,7 +1149,7 @@ void update_display(bool blank = false) {
       #if BOARD_MODEL == BOARD_HELTEC_T114
         display.clear();
         digitalWrite(PIN_T114_TFT_BLGT, LOW);
-      #elif BOARD_MODEL != BOARD_TDECK && BOARD_MODEL != BOARD_TECHO
+      #elif BOARD_MODEL != BOARD_TDECK && BOARD_MODEL != BOARD_TECHO && BOARD_MODEL != BOARD_HELTEC_TRACKER_V2
         display.clearDisplay();
       #endif
 
@@ -1123,7 +1174,7 @@ void update_display(bool blank = false) {
           last_epd_refresh = millis();
           epd_blanked = false;
         }
-      #elif BOARD_MODEL != BOARD_TDECK
+      #elif BOARD_MODEL != BOARD_TDECK && BOARD_MODEL != BOARD_HELTEC_TRACKER_V2
         display.display();
       #endif
 
