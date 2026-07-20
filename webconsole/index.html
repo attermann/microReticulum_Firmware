@@ -178,12 +178,17 @@ const CMD_LOG=0x80, CMD_PROVISION_REQ=0x86, CMD_PROVISION_RSP=0x87;
 const CMD_RESET=0x55, CMD_RESET_BYTE=0xF8;
 const STAT_CMD_RANGE = [0x21, 0x29];
 
-// Optional schema baked in at packaging time. When BUNDLED_SCHEMA is non-null
-// and its hash/version match the device's GetInfo response, the web console
-// uses it directly and skips the GetSchema round-trip entirely — important
-// on LoRa where a full schema fetch is ~3 KB of airtime. The placeholder is
-// replaced by webconsole/package.sh from a build-time schema dump. Shape:
-//   { version: <int>, hash: <uint32>, schemaJson: "<serialised schema>" }
+// Optional schema baked in at packaging time. When BUNDLED_SCHEMA is non-null,
+// resolveSchema consults it per-namespace: for each entry whose (id, schemaHash)
+// pair matches what GetCapabilities reports, the bundled schemaJson is used
+// directly and the network fetch is skipped for that namespace — important on
+// LoRa where each unused namespace saves hundreds of bytes of airtime. The
+// placeholder is replaced by webconsole/package.sh from a build-time schema
+// dump. Shape:
+//   { namespaces: [
+//       { id: <nsId>, schemaHash: <uint32>, schemaJson: "<serialised ns>" },
+//       ...
+//     ] }
 const BUNDLED_SCHEMA = null;
 
 const OP = { GetSchema:1, GetInfo:2, GetCapabilities:3, GetState:4, SetState:5, Commit:6, Discard:7, FactoryReset:8, Reboot:9, Ack:100, Error:101 };
@@ -213,7 +218,27 @@ const COMPRESSIBLE_OPS = new Set([
   OP.GetSchema, OP.GetInfo, OP.GetCapabilities, OP.GetState,
   OP.FactoryReset, OP.Reboot,
 ]);
-const GK = { NamespaceFilter:1, Pending:2 };
+// GetState / SetState request keys. NamespaceFilter scopes the fetch (GetState)
+// or is currently unused (SetState). Draft=true (GetState) asks the server to
+// include drafts alongside working. State (SetState) wraps the {ns:{fid:value}}
+// write map. PriorHash carries a client-cached CRC32 for GetState's
+// short-circuit.
+const GK  = { NamespaceFilter:1, Draft:2, State:3, PriorHash:4 };
+// GetState response body keys. Values holds the working set; Drafts (when
+// present) holds the sparse per-namespace draft map. Unchanged is a
+// single-entry cache-hit body.
+const GSK = { Values:1, Drafts:2, Hash:3, Unchanged:4 };
+// Per-namespace entry keys in the GetCapabilities response map array.
+const NSK = { NsId:1, NsName:2, NsParent:4, NsFieldCount:5, NsSchemaHash:6 };
+// Commit / SetState shared request options (both use `IncludeState` in the
+// request envelope). Numerically the same slot on the wire; one JS constant.
+const CmK = { IncludeState:5 };
+// Post-op response body keys — returned by Commit and SetState when the
+// request set IncludeState=true. Slots 4/5/6 avoid collision with Applied(1),
+// NeedsReboot/DraftHasReboot(2), and FieldErrors(3) in the enclosing body.
+// Commit only emits Values+Hash (drafts are cleared); SetState emits
+// Values+Drafts+Hash (drafts persist through SetState).
+const POK = { Values:4, Drafts:5, Hash:6 };
 const SK = { Applied:1, DraftHasReboot:2, FieldErrors:3 };
 const CK = { Applied:1, NeedsReboot:2 };
 const EK = { Code:1, Message:2, Namespace:3, Field:4 };
@@ -1343,12 +1368,12 @@ class RnsTransport {
 }
 
 // ===== Schema cache helpers =====
-// Schemas are content-addressed by the firmware's CRC32 hash (info.schemaHash),
-// so two devices reporting the same hash share the same cached entry. We cap
-// the total number of cached schemas at SCHEMA_CACHE_MAX to bound storage
-// growth as a user connects to many devices over time.
-const SCHEMA_CACHE_PREFIX = 'mrf_schema_v';
-const SCHEMA_CACHE_MAX    = 5;
+// Per-namespace schema cache. Each namespace's schema entry is content-
+// addressed by the firmware's per-namespace CRC32 (surfaced via GetCapabilities
+// as NsSchemaHash). Entries live at `mrf_schema_ns${nsId}_${hashHex}`. Stale
+// entries from prior firmware versions linger harmlessly — per-namespace
+// blobs are small and localStorage quota is generous.
+const NS_SCHEMA_CACHE_PREFIX = 'mrf_schema_ns';
 
 // Convert Uint8Array (bytes-typed defaults) to a JSON-safe tagged form. Most
 // schema fields are plain primitives, so this is rarely needed in practice.
@@ -1375,23 +1400,23 @@ function _schemaSerialize(schema){
 function _schemaDeserialize(str){
   return JSON.parse(str, _schemaJsonReviver);
 }
-// Evict the oldest entries to keep cache size bounded. Called before writing
-// a new key; the `keepKey` arg ensures we don't evict the entry we're about
-// to write if it already exists (LRU-bump semantics).
-function _schemaCachePrune(keepKey){
-  if (!window.localStorage) return;
-  const keys = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const k = localStorage.key(i);
-    if (k && k.startsWith(SCHEMA_CACHE_PREFIX) && k !== keepKey) keys.push(k);
+function _nsSchemaCacheKey(nsId, hash){
+  const h = (Number(hash) >>> 0).toString(16).padStart(8, '0');
+  return `${NS_SCHEMA_CACHE_PREFIX}${Number(nsId)}_${h}`;
+}
+// Flatten BUNDLED_SCHEMA (if any) into a lookup keyed by `${nsId}_${hashHex}`.
+// Returns null when no bundle is configured or it has no valid entries, so
+// the resolveSchema path can short-circuit past bundle lookup with a single
+// truthy check.
+function _bundledNsByHash(){
+  if (!BUNDLED_SCHEMA || !Array.isArray(BUNDLED_SCHEMA.namespaces)) return null;
+  const m = new Map();
+  for (const ns of BUNDLED_SCHEMA.namespaces) {
+    if (!ns || ns.id == null || ns.schemaHash == null || typeof ns.schemaJson !== 'string') continue;
+    const h = (Number(ns.schemaHash) >>> 0).toString(16).padStart(8, '0');
+    m.set(`${Number(ns.id)}_${h}`, ns.schemaJson);
   }
-  // localStorage doesn't expose write order, so eviction is approximate —
-  // we drop in iteration order until under the cap. Good enough for an
-  // O(<=5) cache that's only churned when a user touches many devices.
-  while (keys.length >= SCHEMA_CACHE_MAX) {
-    const victim = keys.shift();
-    try { localStorage.removeItem(victim); } catch(_) {}
-  }
+  return m.size ? m : null;
 }
 
 // ===== heatshrink decoder =====
@@ -1474,6 +1499,31 @@ class ProvisioningClient {
     // set `compressionPreferred = true`). Local Serial / WebSocket leave
     // it false: bytes are cheap there and decompression adds latency.
     this.compressionEnabled = !!(transport && transport.compressionPreferred);
+    // GetState PriorHash short-circuit cache. Keyed by the combination of
+    // scope (sorted nsIds) and whether drafts were requested, so panel
+    // fetches with/without drafts each maintain their own cache line. The
+    // cache is cleared wholesale by any op that could change server-side
+    // state (setState, commit, discard, factoryReset, requestReboot).
+    this._stateHashes = new Map();
+    this._stateCache  = new Map();
+  }
+  // Cache key for GetState calls — combines the requested scope (sorted
+  // nsIds) with the withDrafts flag so a fetch that includes drafts doesn't
+  // collide with a working-only fetch of the same scope.
+  _stateCacheKey(nsIds, withDrafts){
+    const scope = Array.isArray(nsIds) && nsIds.length
+      ? JSON.stringify([...nsIds].map(Number).sort((a, b) => a - b))
+      : '[]';
+    return (withDrafts ? 'd|' : 'w|') + scope;
+  }
+  // Called after any op that may have changed server-side state. Blows away
+  // the state cache so the next fetch is unconditional and populates it
+  // freshly. Conservative: mutations to drafts and working both invalidate
+  // all cache lines, since a change to either invalidates any cached body
+  // that included the other.
+  _invalidateStateCache(){
+    this._stateHashes.clear();
+    this._stateCache.clear();
   }
   _onFrame(cmd, payload){
     if (cmd === CMD_PROVISION_RSP) this._onResponse(payload);
@@ -1592,8 +1642,20 @@ class ProvisioningClient {
       schemaHash: m.get(IK.SchemaHash),
     };
   }
-  async getSchema(){
-    const { body } = await this._request(OP.GetSchema);
+  // Fetch schema. `nsIds` is optional; when provided, only those namespaces
+  // are returned (server-side NamespaceFilter). The response array shape is
+  // unchanged — same [[id, name, parent, fields], ...] entries — so callers
+  // can concat multiple filtered fetches to assemble a complete schema.
+  async getSchema(nsIds){
+    const { body } = await this._request(OP.GetSchema, (p, ctx) => {
+      const hasFilter = Array.isArray(nsIds) && nsIds.length > 0;
+      const compress = !!(ctx && ctx.wantsCompress);
+      const entries = (hasFilter ? 1 : 0) + (compress ? 1 : 0);
+      if (entries === 0) { p.nil(); return; }
+      p.map(entries);
+      if (hasFilter) { p.int(GK.NamespaceFilter); p.arr(nsIds.length); for (const n of nsIds) p.int(Number(n)); }
+      if (compress) { p.int(WK.ReqCompress); p.bool(true); }
+    });
     const namespaces = [];
     if (Array.isArray(body)) {
       for (const nsEntry of body) {
@@ -1631,66 +1693,171 @@ class ProvisioningClient {
     }
     return { namespaces };
   }
-  // Resolve the device's schema, preferring (1) a build-time bundled schema
-  // whose hash matches the device, then (2) a localStorage cache entry keyed
-  // by (schemaVersion, schemaHash), then (3) a network GetSchema fetch. The
-  // hash is the CRC32 the firmware computes over the GetSchema response
-  // bytes at boot and reports in GetInfo; identical hashes imply identical
-  // schemas, so no per-device key is needed.
-  //
-  // Firmware that predates SchemaHash returns info.schemaHash === undefined,
-  // in which case we bypass cache and bundle and just fetch as before.
-  async resolveSchema(info){
-    const hash = info && info.schemaHash;
-    const ver  = info && info.schemaVersion;
-    if (hash == null || ver == null) return await this.getSchema();
-    const hashHex = (Number(hash) >>> 0).toString(16).padStart(8, '0');
-    const cacheKey = `mrf_schema_v${Number(ver)}_${hashHex}`;
-    // 1) Bundled (zero network).
-    if (BUNDLED_SCHEMA &&
-        Number(BUNDLED_SCHEMA.version) === Number(ver) &&
-        (Number(BUNDLED_SCHEMA.hash) >>> 0) === (Number(hash) >>> 0) &&
-        typeof BUNDLED_SCHEMA.schemaJson === 'string') {
-      try { return _schemaDeserialize(BUNDLED_SCHEMA.schemaJson); } catch(_) {}
-    }
-    // 2) localStorage cache.
-    try {
-      const raw = window.localStorage && localStorage.getItem(cacheKey);
-      if (raw) return _schemaDeserialize(raw);
-    } catch(_) {}
-    // 3) Fetch + persist.
-    const schema = await this.getSchema();
-    try {
-      if (window.localStorage) {
-        _schemaCachePrune(cacheKey);
-        localStorage.setItem(cacheKey, _schemaSerialize(schema));
-      }
-    } catch(_) { /* quota/disabled — non-fatal */ }
-    return schema;
-  }
-  async getState(nsIds, pending){
-    const { body } = await this._request(OP.GetState, (p, ctx) => {
-      const hasFilter = Array.isArray(nsIds) && nsIds.length > 0;
-      const compress = !!(ctx && ctx.wantsCompress);
-      const entries = (hasFilter ? 1 : 0) + (pending ? 1 : 0) + (compress ? 1 : 0);
-      if (entries === 0) { p.nil(); return; }
-      p.map(entries);
-      if (hasFilter) { p.int(GK.NamespaceFilter); p.arr(nsIds.length); for (const n of nsIds) p.int(n); }
-      if (pending) { p.int(GK.Pending); p.bool(true); }
-      if (compress) { p.int(WK.ReqCompress); p.bool(true); }
-    });
-    const out = {};
-    if (body instanceof Map) {
-      for (const [nsId, fields] of body) {
-        const f = {};
-        if (fields instanceof Map) for (const [fid, v] of fields) f[Number(fid)] = v;
-        out[Number(nsId)] = f;
+  // Fetch the namespace hierarchy map. One-shot at connect time; the returned
+  // per-namespace schemaHash values gate resolveSchema's per-namespace cache
+  // lookups. Response is an array of {id, name, parentId, fieldCount, schemaHash}.
+  async getCapabilities(){
+    const { body } = await this._request(OP.GetCapabilities);
+    const out = [];
+    if (Array.isArray(body)) {
+      for (const entry of body) {
+        if (!(entry instanceof Map)) continue;
+        out.push({
+          id:         Number(entry.get(NSK.NsId)),
+          name:       String(entry.get(NSK.NsName) || ''),
+          parentId:   Number(entry.get(NSK.NsParent) || 0),
+          fieldCount: Number(entry.get(NSK.NsFieldCount) || 0),
+          schemaHash: Number(entry.get(NSK.NsSchemaHash) || 0),
+        });
       }
     }
     return out;
   }
-  async setState(stateMap){
-    const { body } = await this._request(OP.SetState, (p) => {
+  // Resolve the device's schema per-namespace: (1) fetch GetCapabilities to
+  // learn the namespace map and each namespace's schema hash, (2) pull each
+  // namespace's schema from a build-time bundle or localStorage when the
+  // hash matches, (3) issue a single filtered GetSchema for whichever
+  // namespaces are missing, and (4) assemble the schema object in
+  // capabilities order. The cache scheme is content-addressed by
+  // (nsId, schemaHash) so a firmware upgrade that only changes some
+  // namespaces re-fetches just those.
+  //
+  // `info` is unused today but kept in the signature for call-site symmetry
+  // with the previous implementation; older firmware without GetCapabilities
+  // would trip in getCapabilities() itself, which is fine — this device is
+  // too old to support the new protocol either way.
+  async resolveSchema(info){
+    void info;
+    const caps = await this.getCapabilities();
+    const nsBundleByHash = _bundledNsByHash();	// key = `${id}_${hashHex}`
+    const resolved = new Map();	// nsId → namespace entry
+    const missing = [];
+    for (const cap of caps) {
+      const key = _nsSchemaCacheKey(cap.id, cap.schemaHash);
+      // (1) Bundled — zero network.
+      const bundleKey = `${cap.id}_${(Number(cap.schemaHash) >>> 0).toString(16).padStart(8, '0')}`;
+      if (nsBundleByHash && nsBundleByHash.has(bundleKey)) {
+        try {
+          const ns = _schemaDeserialize(nsBundleByHash.get(bundleKey));
+          if (ns && typeof ns === 'object') { resolved.set(cap.id, ns); continue; }
+        } catch(_) {}
+      }
+      // (2) localStorage.
+      try {
+        const raw = window.localStorage && localStorage.getItem(key);
+        if (raw) {
+          const ns = _schemaDeserialize(raw);
+          if (ns && typeof ns === 'object') { resolved.set(cap.id, ns); continue; }
+        }
+      } catch(_) {}
+      // (3) Queue for a batched network fetch.
+      missing.push(cap.id);
+    }
+    if (missing.length > 0) {
+      const partial = await this.getSchema(missing);
+      const fetchedById = new Map();
+      for (const ns of (partial && partial.namespaces) || []) {
+        fetchedById.set(Number(ns.id), ns);
+      }
+      for (const nsId of missing) {
+        const ns = fetchedById.get(nsId);
+        if (!ns) continue;	// server may have dropped an unknown id
+        resolved.set(nsId, ns);
+        // Persist under (nsId, schemaHash). Look up the hash from caps —
+        // fetched schema entries don't carry the hash themselves.
+        const cap = caps.find(c => c.id === nsId);
+        if (cap && window.localStorage) {
+          try { localStorage.setItem(_nsSchemaCacheKey(nsId, cap.schemaHash), _schemaSerialize(ns)); }
+          catch(_) { /* quota/disabled — non-fatal */ }
+        }
+      }
+    }
+    // (4) Assemble in capabilities order so parent → child ordering is
+    // preserved for downstream renderers.
+    const namespaces = [];
+    for (const cap of caps) {
+      const ns = resolved.get(cap.id);
+      if (ns) namespaces.push(ns);
+    }
+    return { namespaces };
+  }
+  // Single GetState entry point. `options.withDrafts=true` asks the server
+  // to include drafts alongside working in the same response body — one
+  // round-trip covers both working and draft state.
+  //
+  // Return shape:
+  //   - Cache hit (server said Unchanged): { unchanged: true, values, drafts?, hash }
+  //     where values/drafts come from the client-side cache.
+  //   - Cache miss: { unchanged: false, values, drafts?, hash } with fresh
+  //     values/drafts and a new hash. The client caches these so a follow-up
+  //     call with the same scope can short-circuit.
+  //
+  // drafts is undefined for withDrafts=false and also for withDrafts=true
+  // responses where no in-scope namespace had drafts (server omits the key).
+  async getState(nsIds, options){
+    const withDrafts = !!(options && options.withDrafts);
+    const cacheKey = this._stateCacheKey(nsIds, withDrafts);
+    const priorHash = this._stateHashes.get(cacheKey);
+    const { body } = await this._request(OP.GetState, (p, ctx) => {
+      const hasFilter = Array.isArray(nsIds) && nsIds.length > 0;
+      const compress = !!(ctx && ctx.wantsCompress);
+      const hasPrior = priorHash != null;
+      const entries = (hasFilter ? 1 : 0) + (withDrafts ? 1 : 0) + (hasPrior ? 1 : 0) + (compress ? 1 : 0);
+      if (entries === 0) { p.nil(); return; }
+      p.map(entries);
+      if (hasFilter)  { p.int(GK.NamespaceFilter); p.arr(nsIds.length); for (const n of nsIds) p.int(Number(n)); }
+      if (withDrafts) { p.int(GK.Draft); p.bool(true); }
+      if (hasPrior)   { p.int(GK.PriorHash); p.int(Number(priorHash) >>> 0); }
+      if (compress)   { p.int(WK.ReqCompress); p.bool(true); }
+    });
+    const m = body instanceof Map ? body : new Map();
+    if (m.get(GSK.Unchanged) === true) {
+      const cached = this._stateCache.get(cacheKey) || { values: {} };
+      return {
+        unchanged: true,
+        values: cached.values,
+        drafts: cached.drafts,	// undefined if the cached body didn't have drafts
+        hash: priorHash,
+      };
+    }
+    const values = {};
+    const valuesMap = m.get(GSK.Values);
+    if (valuesMap instanceof Map) {
+      for (const [nsId, fields] of valuesMap) {
+        const f = {};
+        if (fields instanceof Map) for (const [fid, v] of fields) f[Number(fid)] = v;
+        values[Number(nsId)] = f;
+      }
+    }
+    let drafts;
+    const draftsMap = m.get(GSK.Drafts);
+    if (draftsMap instanceof Map) {
+      drafts = {};
+      for (const [nsId, fields] of draftsMap) {
+        const f = {};
+        if (fields instanceof Map) for (const [fid, v] of fields) f[Number(fid)] = v;
+        drafts[Number(nsId)] = f;
+      }
+    }
+    const hashRaw = m.get(GSK.Hash);
+    const hash = hashRaw != null ? (Number(hashRaw) >>> 0) : null;
+    if (hash != null) this._stateHashes.set(cacheKey, hash);
+    this._stateCache.set(cacheKey, { values, drafts });
+    return { unchanged: false, values, drafts, hash };
+  }
+  // Stage drafts on the server. Options:
+  //   includeState: when true, response includes post-write Values + Drafts
+  //                 + Hash for the touched namespaces, letting the caller
+  //                 refresh the panel without a follow-up GetState round-trip.
+  //
+  // Wire envelope: { State: {ns: {fid: value}}, IncludeState?: bool, ReqCompress?: bool }.
+  async setState(stateMap, options){
+    const includeState = !!(options && options.includeState);
+    const { body } = await this._request(OP.SetState, (p, ctx) => {
+      const compress = !!(ctx && ctx.wantsCompress);
+      const entries = 1 + (includeState ? 1 : 0) + (compress ? 1 : 0);
+      p.map(entries);
+      p.int(GK.State);
       const nsIds = Object.keys(stateMap).map(Number);
       p.map(nsIds.length);
       for (const nsId of nsIds) {
@@ -1700,21 +1867,107 @@ class ProvisioningClient {
         p.map(fids.length);
         for (const fid of fids) { p.int(fid); packTypedValue(p, fields[fid].type, fields[fid].value); }
       }
+      if (includeState) { p.int(CmK.IncludeState); p.bool(true); }
+      if (compress)     { p.int(WK.ReqCompress); p.bool(true); }
     });
     const m = body instanceof Map ? body : new Map();
     const errs = m.get(SK.FieldErrors);
     const fieldErrors = Array.isArray(errs) ? errs.map(e => ({
       ns: Number(e[0]), field: Number(e[1]), code: Number(e[2]), codeName: ERR_NAMES[Number(e[2])] || 'Unknown',
     })) : [];
-    return { applied: Number(m.get(SK.Applied) || 0), draftHasReboot: !!m.get(SK.DraftHasReboot), fieldErrors };
+    // Server-side draft state changed — invalidate the cache so the next
+    // fetch sees fresh drafts. If includeState delivered fresh Values+Drafts
+    // we'll re-prime the withDrafts=true cache line below.
+    this._invalidateStateCache();
+    // Optional post-write Values / Drafts / Hash. When present we can prime
+    // the client-side cache and hand the caller ready-to-apply maps.
+    let values, drafts, hash;
+    const valuesMap = m.get(POK.Values);
+    if (valuesMap instanceof Map) {
+      values = {};
+      for (const [nsId, fields] of valuesMap) {
+        const f = {};
+        if (fields instanceof Map) for (const [fid, v] of fields) f[Number(fid)] = v;
+        values[Number(nsId)] = f;
+      }
+    }
+    const draftsMap = m.get(POK.Drafts);
+    if (draftsMap instanceof Map) {
+      drafts = {};
+      for (const [nsId, fields] of draftsMap) {
+        const f = {};
+        if (fields instanceof Map) for (const [fid, v] of fields) f[Number(fid)] = v;
+        drafts[Number(nsId)] = f;
+      }
+    }
+    const hashRaw = m.get(POK.Hash);
+    if (hashRaw != null) hash = (Number(hashRaw) >>> 0);
+    if (values && hash != null) {
+      // Prime the withDrafts=true cache line for the touched scope so a
+      // follow-up getState with the same scope hits the PriorHash short-
+      // circuit. Server-side Hash covers Values + Drafts (matching what
+      // op_get_state would emit for the same scope + withDrafts:true).
+      const touchedIds = Object.keys(values).map(Number);
+      if (touchedIds.length > 0) {
+        const cacheKey = this._stateCacheKey(touchedIds, true);
+        this._stateHashes.set(cacheKey, hash);
+        this._stateCache.set(cacheKey, { values, drafts });
+      }
+    }
+    return {
+      applied: Number(m.get(SK.Applied) || 0),
+      draftHasReboot: !!m.get(SK.DraftHasReboot),
+      fieldErrors,
+      values,
+      drafts,
+      hash,
+    };
   }
-  async commit(nsIds){
-    const { body } = await this._request(OP.Commit, (p) => {
-      if (Array.isArray(nsIds) && nsIds.length > 0) { p.arr(nsIds.length); for (const n of nsIds) p.int(n); }
-      else p.nil();
+  // Commit pending drafts. Options:
+  //   nsIds:        optional array — restricts commit to these namespaces
+  //   includeState: when true, response includes post-commit Values + Hash
+  //                 for the affected namespaces, letting the caller refresh
+  //                 the UI without a follow-up GetState round-trip.
+  async commit(nsIds, options){
+    const includeState = !!(options && options.includeState);
+    const { body } = await this._request(OP.Commit, (p, ctx) => {
+      const hasFilter = Array.isArray(nsIds) && nsIds.length > 0;
+      const compress = !!(ctx && ctx.wantsCompress);
+      const entries = (hasFilter ? 1 : 0) + (includeState ? 1 : 0) + (compress ? 1 : 0);
+      if (entries === 0) { p.nil(); return; }
+      p.map(entries);
+      if (hasFilter)    { p.int(GK.NamespaceFilter); p.arr(nsIds.length); for (const n of nsIds) p.int(Number(n)); }
+      if (includeState) { p.int(CmK.IncludeState); p.bool(true); }
+      if (compress)     { p.int(WK.ReqCompress); p.bool(true); }
     });
     const m = body instanceof Map ? body : new Map();
-    return { applied: Number(m.get(CK.Applied) || 0), needsReboot: !!m.get(CK.NeedsReboot) };
+    this._invalidateStateCache();
+    const applied = Number(m.get(CK.Applied) || 0);
+    const needsReboot = !!m.get(CK.NeedsReboot);
+    // Optional post-commit Values / Hash. When present we can prime the
+    // client-side cache so a follow-up getState with the same withDrafts=false
+    // scope hits the PriorHash short-circuit.
+    let values, hash;
+    const valuesMap = m.get(POK.Values);
+    if (valuesMap instanceof Map) {
+      values = {};
+      for (const [nsId, fields] of valuesMap) {
+        const f = {};
+        if (fields instanceof Map) for (const [fid, v] of fields) f[Number(fid)] = v;
+        values[Number(nsId)] = f;
+      }
+    }
+    const hashRaw = m.get(POK.Hash);
+    if (hashRaw != null) hash = (Number(hashRaw) >>> 0);
+    if (values && hash != null && Array.isArray(nsIds) && nsIds.length > 0) {
+      // Prime the withDrafts=false cache line for this exact scope — the
+      // response body's Values is what a fresh working-only GetState would
+      // return for the same nsIds.
+      const cacheKey = this._stateCacheKey(nsIds, false);
+      this._stateHashes.set(cacheKey, hash);
+      this._stateCache.set(cacheKey, { values });
+    }
+    return { applied, needsReboot, values, hash };
   }
   async discard(nsIds){
     const { body } = await this._request(OP.Discard, (p) => {
@@ -1722,11 +1975,13 @@ class ProvisioningClient {
       else p.nil();
     });
     const m = body instanceof Map ? body : new Map();
+    this._invalidateStateCache();
     return { applied: Number(m.get(CK.Applied) || 0) };
   }
   async factoryReset(){
     const { body } = await this._request(OP.FactoryReset);
     const m = body instanceof Map ? body : new Map();
+    this._invalidateStateCache();
     return { needsReboot: !!m.get(CK.NeedsReboot) };
   }
   // First-class Provisioning reboot — the library sends an Ack before
@@ -1738,6 +1993,9 @@ class ProvisioningClient {
   // too old to know about OP.Reboot — so callers can fall back cleanly to
   // the legacy KISS reset path.
   async requestReboot(){
+    // Invalidate proactively — a successful reboot resets device-side state
+    // and any pre-reboot hashes we're carrying would be stale on reconnect.
+    this._invalidateStateCache();
     try {
       await this._request(OP.Reboot, null, 3000);
     } catch (e) {
@@ -1751,6 +2009,7 @@ class ProvisioningClient {
   // so there is no response — we just send the bytes. Used as the fallback
   // for legacy RNodes that don't implement OP.Reboot.
   async reboot(){
+    this._invalidateStateCache();
     await this.t.send(kissEncode(CMD_RESET, new Uint8Array([CMD_RESET_BYTE])));
   }
   // Called after the underlying transport reconnects (post-reboot). Clears
@@ -1766,6 +2025,10 @@ class ProvisioningClient {
     this.decoder = new KissDecoder((cmd, payload) => this._onFrame(cmd, payload));
     this.t.onBytes = (b) => this.decoder.feed(b);
     this.seq = 1;
+    // Any state cached from the pre-disconnect session may not reflect what
+    // the device now holds (could have rebooted, could have had drafts
+    // dropped, could be a different device via KISS-over-BLE). Start clean.
+    this._invalidateStateCache();
   }
 }
 function packTypedValue(p, type, v){
@@ -2368,10 +2631,14 @@ async function startReconnect(){
   state.conn.set({ state: 'idle' });
 }
 async function fetchNamespaceIfNeeded(nsId){
-  // The argument is a ROOT namespace id. Fetches that namespace AND all of its
-  // descendants in two batched getState calls (one for committed, one for
-  // merged-with-draft). Each child is populated into state.nsState alongside
-  // the root so the panel can render them as sub-sections.
+  // The argument is a ROOT namespace id. Fetches that namespace AND all of
+  // its descendants: one getWorkingState call to populate committed values
+  // and learn which sub-namespaces hold drafts, then (conditionally) a
+  // targeted getDraftState for just those. Both calls are hash-cached in
+  // the client, so refetches after nothing has changed return a tiny
+  // { Unchanged: true } body — the client transparently substitutes cached
+  // values. Each child is populated into state.nsState alongside the root
+  // so the panel can render them as sub-sections.
   if (!client) return;
   const schema = state.schema.get();
   const ids = getNsTreeIds(schema, nsId);
@@ -2383,37 +2650,28 @@ async function fetchNamespaceIfNeeded(nsId){
   if (todo.length === 0) return;
   state.nsLoading.update(s => { for (const id of todo) s[id] = true; });
   try {
-    const committedAll = await client.getState(todo, false);
-    const mergedAll    = await client.getState(todo, true);
+    // Single call: server returns Values (working) and Drafts (sparse map
+    // of drafted fields) in the same response body, delivered in one
+    // round-trip. Eliminates the previous double-fetch pattern and its
+    // "live metric drift produces phantom drafts" workaround.
+    const resp = await client.getState(todo, { withDrafts: true });
+    const committedAll = resp.values || {};
+    const draftsAll = resp.drafts || {};	// undefined → no drafts anywhere
+
     let firmwareDraftAny = false;
     state.nsState.update(s => {
       for (const id of todo) {
         const committed = committedAll[id] || {};
-        const merged    = mergedAll[id]    || {};
-        // FF_READ_ONLY fields (metrics/instrumentation) report live runtime
-        // values via their getter. Two consecutive GetState calls — one for
-        // committed, one for merged — can sample slightly different values
-        // (e.g. current_rssi, channel utilisation), producing a phantom
-        // "draft" diff that's really just live-value drift. Build a set of
-        // read-only fids up front and exclude them from the diff so the
-        // pending-changes count never reflects this drift.
-        const ns = getNsById(schema, id);
-        const roFids = new Set();
-        if (ns && Array.isArray(ns.fields)) {
-          for (const f of ns.fields) if ((f.flags|0) & FF.READ_ONLY) roFids.add(Number(f.id));
-        }
+        const draftFields = draftsAll[id] || {};
         const draft = {};
         const firmwareDraftFids = new Set();
-        for (const fid in merged) {
-          const nfid = Number(fid);
-          if (roFids.has(nfid)) continue;
-          if (!valuesEqual(merged[fid], committed[fid])) {
-            draft[nfid] = merged[fid];
-            firmwareDraftFids.add(nfid);
-          }
+        for (const fidStr in draftFields) {
+          const nfid = Number(fidStr);
+          draft[nfid] = draftFields[fidStr];
+          firmwareDraftFids.add(nfid);
         }
-        s[id] = { committed, draft, firmwareDraftFids };
         if (firmwareDraftFids.size > 0) firmwareDraftAny = true;
+        s[id] = { committed, draft, firmwareDraftFids };
       }
     });
     state.nsLoaded.update(s => { for (const id of todo) s[id] = true; });
@@ -2546,6 +2804,8 @@ function getNsTreeIds(schema, rootId){
   walk(rootId);
   return out;
 }
+// True iff the namespace has at least one field that could carry a draft —
+// i.e. at least one field whose flags carry neither FF_READ_ONLY (metrics /
 // Total drafted-field count across a namespace and all its descendants. Used
 // for the sidenav "•" indicator on root namespaces.
 function nsTreeDraftCount(schema, rootId, ctx){
@@ -2592,7 +2852,10 @@ async function saveNamespace(nsId){
   }
   if (Object.keys(stateMap).length === 0) return;
   try {
-    const r = await client.setState(stateMap);
+    // includeState:true — the setState response includes the touched
+    // namespaces' post-write Values and Drafts, so we can refresh
+    // state.nsState directly without a follow-up GetState round-trip.
+    const r = await client.setState(stateMap, { includeState: true });
     // Spread server-side field errors back to their owning namespace.
     const perNs = {};
     for (const fe of r.fieldErrors) {
@@ -2600,9 +2863,34 @@ async function saveNamespace(nsId){
       perNs[fe.ns][fe.field] = fe.codeName;
     }
     state.nsServerErrors.update(s => { for (const id of treeIds) s[id] = perNs[id] || {}; });
-    state.nsLoaded.update(s => { for (const id of treeIds) delete s[id]; });
     if (r.applied > 0) state.firmwareHasDraft.set(true);
-    await fetchNamespaceIfNeeded(nsId);
+    if (r.values) {
+      // Apply returned Values + Drafts directly to state.nsState. The
+      // committed values are what working() would report; drafts are the
+      // firmware-side draft entries after set_draft's dedup logic ran.
+      state.nsState.update(s => {
+        for (const idStr in r.values) {
+          const nid = Number(idStr);
+          const committed = r.values[idStr];
+          const draftFields = (r.drafts && r.drafts[idStr]) || {};
+          const draft = {};
+          const firmwareDraftFids = new Set();
+          for (const fidStr in draftFields) {
+            const nfid = Number(fidStr);
+            draft[nfid] = draftFields[fidStr];
+            firmwareDraftFids.add(nfid);
+          }
+          s[nid] = { committed, draft, firmwareDraftFids };
+        }
+      });
+      state.nsLoaded.update(s => { for (const id of treeIds) s[id] = true; });
+      recomputeHasDraft();
+    } else {
+      // Older firmware without IncludeState support — fall back to the
+      // pre-Phase-3.6 refetch path.
+      state.nsLoaded.update(s => { for (const id of treeIds) delete s[id]; });
+      await fetchNamespaceIfNeeded(nsId);
+    }
     const ns = getNsById(schema, nsId);
     const label = ns ? ns.name : String(nsId);
     if (r.fieldErrors.length === 0) {
@@ -2640,16 +2928,49 @@ async function commitAll(){
   if (!client) return;
   if (!confirm('Commit all pending changes to the device?')) return;
   try {
-    const r = await client.commit(null);
+    // includeState=true: the commit response includes the post-commit
+    // working values for touched namespaces, letting us update state.nsState
+    // directly without a follow-up GetState round-trip.
+    const r = await client.commit(null, { includeState: true });
     state.nsServerErrors.set({});
-    state.nsLoaded.set({});
-    state.nsState.set({});
+    if (r.values) {
+      // Populate state.nsState from the returned Values. Namespaces that
+      // weren't touched by the commit (no drafts) are not in r.values —
+      // clear them so the panel refresh path re-fetches when reopened.
+      const touched = new Set(Object.keys(r.values).map(Number));
+      state.nsState.update(s => {
+        for (const nsIdStr in r.values) {
+          const nsIdN = Number(nsIdStr);
+          s[nsIdN] = { committed: r.values[nsIdStr], draft: {}, firmwareDraftFids: new Set() };
+        }
+        for (const idStr in s) {
+          if (!touched.has(Number(idStr))) delete s[idStr];
+        }
+      });
+      state.nsLoaded.update(s => {
+        for (const nsIdStr in r.values) s[Number(nsIdStr)] = true;
+        for (const idStr in s) {
+          if (!touched.has(Number(idStr))) delete s[idStr];
+        }
+      });
+    } else {
+      // Older firmware without IncludeState support — fall back to the
+      // pre-Phase-3 behavior: clear and refetch on next panel open.
+      state.nsLoaded.set({});
+      state.nsState.set({});
+    }
     recomputeHasDraft();
     state.firmwareHasDraft.set(false);
-    // Banner is derived from state.info.needsReboot; re-fetching info updates it.
-    try { state.info.set(await client.getInfo()); } catch(_) {}
-    const cur = state.activeNsTab.get();
-    if (cur != null) await fetchNamespaceIfNeeded(cur);
+    // "Reboot recommended" banner reads state.info.needsReboot. The commit
+    // response already carries the fresh value — patch state.info in place
+    // rather than making a second round-trip for GetInfo.
+    state.info.update(info => info ? { ...info, needsReboot: r.needsReboot } : info);
+    // With Values applied above the active panel already reflects the
+    // committed state; only refetch when we didn't get Values back.
+    if (!r.values) {
+      const cur = state.activeNsTab.get();
+      if (cur != null) await fetchNamespaceIfNeeded(cur);
+    }
     showToast(`Committed ${r.applied} change${r.applied !== 1 ? 's' : ''}` + (r.needsReboot ? ' — reboot recommended' : ''), r.needsReboot ? 'warn' : 'ok');
   } catch (e) {
     showToast('Commit failed: ' + e.message, 'err');
