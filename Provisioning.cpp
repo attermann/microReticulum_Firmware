@@ -301,9 +301,9 @@ static void register_provisioning_namespaces() {
         .metric_int("TX Power", PROV_METRICS_LORA_TXP, []() { return lora_txp; })
         //.metric_int("Current RSSI", PROV_METRICS_LORA_CRSSI, []() { return last_rssi+rssi_offset; })
         .metric_int("Current RSSI", PROV_METRICS_LORA_CRSSI, []() { return current_rssi; })
-        .metric_int("Noise Floor", PROV_METRICS_LORA_NF, []() { return noise_floor; })
-        .metric_int("Last RSSI", PROV_METRICS_LORA_LRSSI, []() { return last_rssi; })
-        .metric_int("Last SNR", PROV_METRICS_LORA_LSNR, []() { return last_snr_raw; })
+        .metric_int("Noise Floor", PROV_METRICS_LORA_NF, []() { return (uint16_t)noise_floor; })
+        .metric_int("Last RSSI", PROV_METRICS_LORA_LRSSI, []() { return (uint16_t)last_rssi; })
+        .metric_int("Last SNR", PROV_METRICS_LORA_LSNR, []() { return (uint16_t)((int8_t)last_snr_raw) / 4.0f; })
         .metric_float("ST Airtime Limit", PROV_METRICS_LORA_STAL, []() { return st_airtime_limit; })
         .metric_float("LT Airtime Limit", PROV_METRICS_LORA_LTAL, []() { return lt_airtime_limit; })
         .end();
