@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **Provisioning wire format** — reworked the wire protocol for lower LoRa airtime and fewer round-trips. Breaking change from the previous format:
+    - `GET_STATE` now returns `{Values, Drafts?, Hash}`; the `Draft` request flag folds drafts into the same response.
+    - `GET_STATE` supports a `PriorHash` short-circuit: clients echo the previous response's `Hash` back, and the server responds `{Unchanged: true}` when state hasn't changed.
+    - `SET_STATE` requests use a `{State: {...}, IncludeState?, ReqCompress?}` envelope. With `IncludeState: true`, the response includes `PostOpValues` / `PostOpDrafts` / `PostOpHash` — Save no longer needs a follow-up `GET_STATE`.
+    - `COMMIT` requests use a `{NamespaceFilter?, IncludeState?, ReqCompress?}` map (was a bare `[ns_ids]` array). With `IncludeState: true`, the response carries post-commit `PostOpValues` and `PostOpHash` — Commit no longer needs a follow-up refresh.
+    - `GET_CAPABILITIES` returns a namespace hierarchy map (`{NsId, NsName, NsParent, NsFieldCount, NsSchemaHash}`) instead of a bare id array; combined with `GET_SCHEMA`'s new `NamespaceFilter` support, this enables lazy per-namespace schema loading.
+- **Web console** — refactored to use the new wire protocol. Save and Commit each collapse from two transactions to one; namespace-panel refreshes cache-hit via `PriorHash` when state hasn't changed since the last poll.
+
 ## [1.86.4] - 2026-06-27
 
 ### Added

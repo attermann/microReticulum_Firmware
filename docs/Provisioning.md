@@ -16,6 +16,11 @@ This guide walks through using the **RNode Console** (the single-page web app sh
   - [WebSocket (WiFi)](#websocket-wifi)
   - [RNS via ReticulumAPI](#rns-via-ReticulumAPI)
 - [Console tabs in detail](#console-tabs-in-detail)
+  - [Settings](#settings)
+  - [Node Status](#node-status)
+  - [Node Config](#node-config)
+  - [Transport Config](#transport-config)
+  - [Logs](#logs)
 - [Caveats and pitfalls](#caveats-and-pitfalls)
   - [RNS over LoRa](#rns-over-lora)
   - [Security and exposure](#security-and-exposure)
@@ -36,6 +41,8 @@ A node's identity in the RNS sense is a long-lived Ed25519 keypair generated on 
 ## Opening the Console
 
 The Console is a static HTML file. Open `Release/console.html` from disk (drag-and-drop into Chrome / Edge / latest Firefox), serve it from any static web server, or — when the device is in console mode — load it directly from the node's HTTP endpoint at `http://10.0.0.1/`.
+
+On launch the **Settings** tab is active — this is where connection defaults live (transport, per-transport auto-reconnect, WebSocket URL, RNS URL, default serial / Bluetooth device, RNS destination hash). Values you set there persist across page reloads in browser localStorage and pre-fill the top-bar fields at launch. On successful connect, the Console switches to **Node Status** automatically.
 
 The Console only depends on the browser's Web Serial, Web Bluetooth, and WebSocket APIs. Chrome and Chromium-derived Edge and the latest versions of Firefox are the supported browsers; Safari and older Firefox versions lack Web Serial / Web Bluetooth and can only use the WebSocket and RNS transports.
 
@@ -77,12 +84,12 @@ The RNode Console does **not** itself speak RNS — your browser can't open a Re
 1. Install and run [ReticulumAPI](https://github.com/attermann/ReticulumAPI) on your workstation. Make sure it has at least one RNS interface configured that can reach the target node (typically a `TCPClientInterface` to your local rnsd, plus whatever LoRa / packet-radio interfaces sit between you and the node).
 2. ReticulumAPI exposes a WebSocket bus (default `wss://localhost:8000/ws` — confirm the path in your ReticulumAPI install) with a generic `link.*` API. The Console uses this bus to ask ReticulumAPI to open a Link, send frames over it, and receive replies.
 3. **Obtain the destination hash of the remote node.** When a node announces, its `rnstransport.remote.management` destination shows up in Reticulum's path table. Grab the 16-byte hex hash with `rnsd` / `rnpath` / `rnstatus`, or read it off the local Console's **Transport Config → Metrics → Destinations → mgmt_destination** field.
-4. In the Console topbar, select `Transport: RNS (via ReticulumAPI)`. Fill in:
-   - **WebSocket URL** — your local ReticulumAPI endpoint (e.g. `ws://localhost:8000/ws`).
-   - **Destination hash** — the 32-hex-character hash from step 3.
-   - **Aspect** — usually `rnstransport.remote.management` (default).
-   - **authenticate** — check this to identify on the Link with ReticulumAPI's local identity. Required if the node restricts management to an allow-list.
-5. Click **Connect**. The status pill walks through the phases: *WS connecting → WS verifying → Link connecting → Finding path → Establishing link → Identifying → Connected*. This commonly takes 10–30 seconds over LoRa, much longer than the snappy Serial / BLE / WebSocket paths — the Console raises the per-request timeout when the RNS transport is in use to accommodate Resource transfers.
+4. Open the **Settings** tab → **RNS** section and set:
+   - **rnsapid URL** — your local ReticulumAPI endpoint (e.g. `ws://localhost:8000/ws`).
+   - **Identify** — check this to identify on the Link with ReticulumAPI's local identity. Required if the node restricts management to an allow-list.
+   - **Default destination hash** *(optional)* — the 32-hex-character hash from step 3; pre-fills the top-bar destination-hash field on future launches.
+5. In the Console top-bar, select `Transport: RNS`. Fill in **Destination hash** (the 32-hex-character hash from step 3, pre-filled if you set a default in Settings). The aspect is fixed to `rnstransport.remote.management` inside the transport and not surfaced in the UI.
+6. Click **Connect**. The status pill walks through the phases: *WS connecting → WS verifying → Link connecting → Finding path → Establishing link → Identifying → Connected*. This commonly takes 10–30 seconds over LoRa, much longer than the snappy Serial / BLE / WebSocket paths — the Console raises the per-request timeout when the RNS transport is in use to accommodate Resource transfers.
 
 > **Note on ReticulumAPI.** ReticulumAPI is used here as a thin RNS-to-WebSocket bridge: it gives the browser something to talk to that knows how to open Reticulum Links. Any future tool implementing the same `link.*` WebSocket protocol could be substituted. The Console caches its Link in ReticulumAPI, but a clean disconnect (`Disconnect` button, tab close, refresh) tells ReticulumAPI to evict the cache so the next session opens a fresh Link.
 
@@ -147,9 +154,25 @@ Things that *don't* work over RNS:
 
 ## Console tabs in detail
 
+### Settings
+
+Always visible and always enabled. It's the pre-connect landing tab: connection defaults and less-frequently-changed transport fields live here. All values persist in browser localStorage under the key `rnode.console.settings.v1` and pre-fill the top-bar at page load. Edits made in the top-bar during a session are **not** written back to Settings — Settings is user-managed only.
+
+Sections:
+
+- **General** — Default transport (Serial / Bluetooth / WebSocket / RNS).
+- **Serial** — Default serial device (dropdown of previously-authorized ports via `navigator.serial.getPorts()`; **Request another…** button prompts the browser to authorize a new device) and per-transport auto-reconnect default. If a default is set and still authorized, **Connect** skips the browser picker.
+- **Bluetooth** — Default Bluetooth device (dropdown via `navigator.bluetooth.getDevices()`, which requires enabling `chrome://flags/#enable-web-bluetooth-new-permissions-backend`; without that flag the dropdown is hidden and Connect always shows the browser picker) and per-transport auto-reconnect default.
+- **WebSocket** — Default URL and per-transport auto-reconnect default.
+- **RNS** — Live rnsapid URL and Identify checkbox (moved out of the top-bar; edited here exclusively), default destination hash (pre-fills the top-bar field at launch), and per-transport auto-reconnect default.
+
+The top-bar's shared **auto-reconnect** checkbox is re-seeded from the selected transport's per-transport Settings default whenever you change the transport dropdown. Top-bar toggles are session-only.
+
+On successful connect, the Console switches to **Node Status** immediately (before device info / schema fetches complete) so the tab change confirms the connection.
+
 ### Node Status
 
-Always available. Shows:
+Visible always, enabled when connected. Shows:
 
 - **Device** — firmware version, schema version, board / platform / MCU, "needs reboot" flag.
 - **Radio link** — last RSSI, last SNR, current RSSI, noise floor, interference RSSI.
