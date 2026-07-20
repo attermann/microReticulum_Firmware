@@ -585,13 +585,17 @@ class KissDecoder {
 
 // ===== Transports =====
 class SerialTransport {
-  constructor(){
+  constructor(preselected){
     this.port=null;
     this.reader=null;
     this.writer=null;
     this.onBytes=()=>{};
     this.onStatus=()=>{};
     this._abort=false;
+    // Optional pre-authorized SerialPort (resolved by doConnect via
+    // navigator.serial.getPorts() before construction). If set, connect()
+    // uses it directly and skips the browser picker.
+    this._preselected = preselected || null;
     // ────────────────────────────────────────────────────────────────────
     // TEMPORARY WORKAROUND for a Chrome Web Serial quirk:
     // After a physical USB disconnect/reconnect cycle (e.g. device reset
@@ -706,7 +710,8 @@ class SerialTransport {
   async connect(){
     this.onStatus({state:'connecting'});
     try {
-      this.port = await navigator.serial.requestPort();
+      if (this._preselected) { this.port = this._preselected; this._preselected = null; }
+      else                   { this.port = await navigator.serial.requestPort(); }
       this._installNavSerialListeners();
       await this._open();
     } catch (e) {
@@ -780,12 +785,20 @@ const NUS_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const NUS_RX_CHAR = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
 const NUS_TX_CHAR = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 class BLETransport {
-  constructor(){ this.device=null; this.rx=null; this.tx=null; this.onBytes=()=>{}; this.onStatus=()=>{}; this._writeNoResp=true; this._gattHandler=null; this._notifyHandler=null; }
+  constructor(preselected){
+    this.device=null; this.rx=null; this.tx=null; this.onBytes=()=>{}; this.onStatus=()=>{};
+    this._writeNoResp=true; this._gattHandler=null; this._notifyHandler=null;
+    // Optional pre-authorized BluetoothDevice (resolved by doConnect via
+    // navigator.bluetooth.getDevices() before construction). If set,
+    // connect() uses it directly and skips the browser picker.
+    this._preselected = preselected || null;
+  }
   static available(){ return !!navigator.bluetooth; }
   async connect(){
     this.onStatus({state:'connecting'});
     try {
-      this.device = await navigator.bluetooth.requestDevice({ filters: [{ services: [NUS_SERVICE] }] });
+      if (this._preselected) { this.device = this._preselected; this._preselected = null; }
+      else                   { this.device = await navigator.bluetooth.requestDevice({ filters: [{ services: [NUS_SERVICE] }] }); }
       this._gattHandler = () => this.onStatus({state:'closed'});
       this.device.addEventListener('gattserverdisconnected', this._gattHandler);
       await this._attach();
@@ -2313,6 +2326,31 @@ function el(tag, attrs, children){
   return e;
 }
 
+// ===== Settings persistence =====
+// Single JSON blob under SETTINGS_KEY holds user-facing defaults (loaded at
+// launch to pre-fill banner fields) plus the RNS URL / identify flag which the
+// Settings tab now owns exclusively. All access swallows exceptions so a
+// disabled or full localStorage silently falls back to in-memory state.
+const SETTINGS_KEY = 'rnode.console.settings.v1';
+const settingsStore = {
+  load(){
+    try { const raw = window.localStorage && localStorage.getItem(SETTINGS_KEY); return raw ? JSON.parse(raw) : {}; }
+    catch(_) { return {}; }
+  },
+  save(patch){
+    try {
+      const cur = settingsStore.load();
+      const next = { ...cur, ...patch,
+        defaults:      { ...(cur.defaults||{}),      ...(patch.defaults||{}) },
+        autoReconnect: { ...(cur.autoReconnect||{}), ...(patch.autoReconnect||{}) } };
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+    } catch(_) { /* quota / disabled — silent fallback */ }
+  },
+};
+// Stable identifier for a SerialPort based on getInfo(). Matches the fallback
+// USB fields used by _portsMatch() so a stored key survives across sessions.
+function portKey(info){ return `${(info.usbVendorId||0).toString(16)}:${(info.usbProductId||0).toString(16)}:${info.usbSerialNumber||''}`; }
+
 // ===== State =====
 const state = {
   transportName: observable('serial'),
@@ -2320,10 +2358,22 @@ const state = {
   rnsUrl: observable('wss://localhost:8000/ws'),
   rnsDestHash: observable(''),
   rnsAutoIdentify: observable(true),
+  // Persistent defaults edited only via the Settings tab. Live state above is
+  // pre-filled from these at launch, then decoupled — in-session banner edits
+  // do not write back.
+  defaultTransport: observable('serial'),
+  defaultSerialPortKey: observable(null),     // "vid:pid:serial" or null
+  defaultBluetoothDeviceId: observable(null), // navigator.bluetooth device.id or null
+  defaultWsUrl: observable('ws://localhost:8080'),
+  defaultRnsDestHash: observable(''),
+  autoReconnectSerial: observable(true),
+  autoReconnectBle:    observable(true),
+  autoReconnectWs:     observable(true),
+  autoReconnectRns:    observable(true),
   conn: observable({ state: 'idle' }),
   info: observable(null),
   schema: observable(null),
-  activeTab: observable('status'),         // 'status' | 'nodeconfig' | 'config' | 'logs'
+  activeTab: observable('settings'),       // 'settings' | 'status' | 'nodeconfig' | 'config' | 'logs'
   activeNsTab: observable(null),           // ns_id within Configuration tab
   nsState: observable({}),                 // { nsId: { committed:{fid:val}, draft:{fid:val} } }
   nsLoaded: observable({}),                // { nsId: true }
@@ -2379,9 +2429,42 @@ let lastTransportName = null;
 // Single in-flight reconnect token. Bumping it cancels the previous attempt.
 let reconnectToken = 0;
 
-function createTransport(name){
-  if (name === 'serial') return new SerialTransport();
-  if (name === 'ble') return new BLETransport();
+// Launch-time preload from localStorage. URL / hash defaults populate BOTH the
+// live observable (so the banner shows them) AND the default* observable (so
+// the Settings tab shows them). After this, live values are edited in the
+// banner and defaults are edited in Settings — they do not sync during the
+// session. The banner's shared auto-reconnect checkbox is seeded from the
+// currently-selected transport's per-transport default.
+(function preloadSettings(){
+  const s = settingsStore.load();
+  if (s.defaultTransport) { state.defaultTransport.set(s.defaultTransport); state.transportName.set(s.defaultTransport); }
+  if (s.defaultSerialPortKey) state.defaultSerialPortKey.set(s.defaultSerialPortKey);
+  if (s.defaultBluetoothDeviceId) state.defaultBluetoothDeviceId.set(s.defaultBluetoothDeviceId);
+  const d = s.defaults || {};
+  if (typeof d.wsUrl === 'string')            { state.defaultWsUrl.set(d.wsUrl); state.wsUrl.set(d.wsUrl); }
+  if (typeof d.rnsUrl === 'string')           state.rnsUrl.set(d.rnsUrl);
+  if (typeof d.rnsDestHash === 'string')      { state.defaultRnsDestHash.set(d.rnsDestHash); state.rnsDestHash.set(d.rnsDestHash); }
+  if (typeof d.rnsAutoIdentify === 'boolean') state.rnsAutoIdentify.set(d.rnsAutoIdentify);
+  const ar = s.autoReconnect || {};
+  if (typeof ar.serial === 'boolean') state.autoReconnectSerial.set(ar.serial);
+  if (typeof ar.ble    === 'boolean') state.autoReconnectBle.set(ar.ble);
+  if (typeof ar.ws     === 'boolean') state.autoReconnectWs.set(ar.ws);
+  if (typeof ar.rns    === 'boolean') state.autoReconnectRns.set(ar.rns);
+  state.autoReconnect.set(perTransportAutoReconnect(state.transportName.get()));
+})();
+function perTransportAutoReconnect(tn){
+  const map = { serial: state.autoReconnectSerial, ble: state.autoReconnectBle, ws: state.autoReconnectWs, rns: state.autoReconnectRns };
+  return (map[tn] || state.autoReconnect).get();
+}
+// URLs / hash defaults are launch-only, but auto-reconnect is a per-transport
+// policy: switching transports SHOULD swap the banner checkbox to that
+// transport's stored default. Registered after preloadSettings() so its
+// state.transportName.set() call doesn't trigger this handler prematurely.
+state.transportName.subscribe((tn) => state.autoReconnect.set(perTransportAutoReconnect(tn)));
+
+function createTransport(name, preselected){
+  if (name === 'serial') return new SerialTransport(preselected);
+  if (name === 'ble') return new BLETransport(preselected);
   if (name === 'ws') return new WebSocketTransport();
   if (name === 'rns') return new RnsTransport();
   throw new Error('unknown transport ' + name);
@@ -2460,7 +2543,25 @@ async function doConnect(){
   const name = state.transportName.get();
   lastTransportName = name;
   try {
-    transport = createTransport(name);
+    // Resolve the Settings default device (if any) to a pre-authorized handle
+    // so we can skip the browser picker. If the stored default is no longer
+    // authorized, pre stays null and the transport falls back to the picker;
+    // we deliberately do NOT clear the stored key — the device may reappear.
+    let pre = null;
+    if (name === 'serial' && navigator.serial && state.defaultSerialPortKey.get()) {
+      try {
+        const key = state.defaultSerialPortKey.get();
+        const ports = await navigator.serial.getPorts();
+        pre = ports.find(p => portKey(p.getInfo()) === key) || null;
+      } catch (_) { pre = null; }
+    } else if (name === 'ble' && navigator.bluetooth && typeof navigator.bluetooth.getDevices === 'function' && state.defaultBluetoothDeviceId.get()) {
+      try {
+        const id = state.defaultBluetoothDeviceId.get();
+        const devs = await navigator.bluetooth.getDevices();
+        pre = devs.find(d => d.id === id) || null;
+      } catch (_) { pre = null; }
+    }
+    transport = createTransport(name, pre);
     transport.onStatus = onTransportStatus;
     client = new ProvisioningClient(transport);
     wireClient(client);
@@ -2478,6 +2579,11 @@ async function doConnect(){
 }
 
 async function afterConnect(){
+  // Switch to Node Status immediately so the tab change confirms the
+  // connection to the user; the tab body handles its own "waiting for status
+  // frames…" placeholder while the async fetches below complete. Guarded so
+  // we don't yank users off a tab they navigated to intentionally.
+  if (state.activeTab.get() === 'settings') state.activeTab.set('status');
   try { state.info.set(await client.getInfo()); } catch (e) { console.error('getInfo:', e); showToast('Failed to fetch device info: ' + e.message, 'err'); }
   try {
     const schema = await client.resolveSchema(state.info.get());
@@ -3116,23 +3222,14 @@ function buildTopBar(){
   // Mount once; toggle visibility in update() so typing doesn't detach the
   // focused input (which would drop focus on every keystroke).
   wsHost.appendChild(wsInput);
-  // RNS-over-rnsapid config: WS URL + destination hash + auto-identify. The
-  // provisioning aspect is fixed (rnstransport.remote.management) and
-  // hard-coded inside RnsTransport, so it's not surfaced in the UI.
+  // RNS destination hash lives here for quick per-session edits. The rnsapid
+  // WS URL and 'identify' flag have moved to the Settings tab (RNS section) —
+  // doConnect() still reads them from state.rnsUrl / state.rnsAutoIdentify.
   const rnsHost = el('span', { style: { display: 'inline-flex', gap: '4px', alignItems: 'center' } });
-  const rnsUrlInput = el('input', { type: 'text', placeholder: 'ws://host:port/ws', style: { width: '200px' }, title: 'rnsapid WebSocket URL (anonymous session; auth disabled)' });
-  rnsUrlInput.value = state.rnsUrl.get();
-  rnsUrlInput.oninput = (e) => state.rnsUrl.set(e.target.value);
   const rnsHashInput = el('input', { type: 'text', placeholder: 'destination hash (32 hex)', style: { width: '260px', fontFamily: 'monospace' }, maxlength: '32', title: 'Remote node destination hash (32 hex chars)' });
   rnsHashInput.value = state.rnsDestHash.get();
   rnsHashInput.oninput = (e) => state.rnsDestHash.set(e.target.value.trim());
-  const rnsIdentCb = el('input', { type: 'checkbox' });
-  rnsIdentCb.checked = state.rnsAutoIdentify.get();
-  rnsIdentCb.onchange = (e) => state.rnsAutoIdentify.set(e.target.checked);
-  const rnsIdentLabel = el('label', { style: { display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--muted)' }, title: 'Send local identity on link establishment (auto_identify=true; required by /provision ALLOW_LIST)' }, [rnsIdentCb, 'identify']);
-  rnsHost.appendChild(rnsUrlInput);
   rnsHost.appendChild(rnsHashInput);
-  rnsHost.appendChild(rnsIdentLabel);
   const connectBtn = el('button');
   const disconnectBtn = el('button', null, 'Disconnect');
   const autoCheckbox = el('input', { type: 'checkbox' });
@@ -3140,7 +3237,7 @@ function buildTopBar(){
   autoCheckbox.onchange = (e) => state.autoReconnect.set(e.target.checked);
   const autoLabel = el('label', { style: { display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: 'var(--muted)' }, title: 'Reconnect automatically after a reboot to capture early boot logs' }, [autoCheckbox, 'auto-reconnect']);
   const pill = el('span', { class: 'pill' });
-  const opts = [['serial','Serial'], ['ble','Bluetooth'], ['ws','WebSocket'], ['rns','RNS (via rnsapid)']];
+  const opts = [['serial','Serial'], ['ble','Bluetooth'], ['ws','WebSocket'], ['rns','RNS']];
   for (const [v, lbl] of opts) sel.appendChild(el('option', { value: v }, lbl));
   sel.value = state.transportName.get();
   sel.onchange = (e) => state.transportName.set(e.target.value);
@@ -3153,9 +3250,9 @@ function buildTopBar(){
   root.appendChild(sel);
   root.appendChild(wsHost);
   root.appendChild(rnsHost);
+  root.appendChild(autoLabel);
   root.appendChild(connectBtn);
   root.appendChild(disconnectBtn);
-  root.appendChild(autoLabel);
   root.appendChild(el('span', { class: 'spacer' }));
   root.appendChild(pill);
 
@@ -3180,12 +3277,8 @@ function buildTopBar(){
     const showRns = (tname === 'rns');
     rnsHost.style.display = showRns ? '' : 'none';
     if (showRns) {
-      if (document.activeElement !== rnsUrlInput && rnsUrlInput.value !== state.rnsUrl.get()) rnsUrlInput.value = state.rnsUrl.get();
       if (document.activeElement !== rnsHashInput && rnsHashInput.value !== state.rnsDestHash.get()) rnsHashInput.value = state.rnsDestHash.get();
-      if (rnsIdentCb.checked !== state.rnsAutoIdentify.get()) rnsIdentCb.checked = state.rnsAutoIdentify.get();
-      rnsUrlInput.disabled = connecting || connected || reconnecting;
       rnsHashInput.disabled = connecting || connected || reconnecting;
-      rnsIdentCb.disabled = connecting || connected || reconnecting;
     }
     connectBtn.disabled = connecting || connected || reconnecting;
     connectBtn.textContent = connecting ? 'Connecting…' : 'Connect';
@@ -3219,9 +3312,7 @@ function buildTopBar(){
   state.conn.subscribe(update);
   state.transportName.subscribe(update);
   state.wsUrl.subscribe(update);
-  state.rnsUrl.subscribe(update);
   state.rnsDestHash.subscribe(update);
-  state.rnsAutoIdentify.subscribe(update);
 
   state.autoReconnect.subscribe(update);
   state.reconnecting.subscribe(update);
@@ -3232,8 +3323,11 @@ slots.topbar.appendChild(buildTopBar());
 // ----- Tab bar (in place) -----
 function buildTabBar(){
   const root = el('div', { class: 'tabbar' });
-  // Info merged into Node Status; that's now the always-available landing tab.
+  // Settings is the always-available pre-connect landing tab (defaults surface
+  // here for review before connecting). Node Status remains the post-connect
+  // landing tab (afterConnect() auto-switches to it).
   const tabs = [
+    { id: 'settings', label: 'Settings' },
     { id: 'status', label: 'Node Status' },
     { id: 'nodeconfig', label: 'Node Config' },
     { id: 'config', label: 'Transport Config' },
@@ -3261,9 +3355,10 @@ function buildTabBar(){
     // Treat "reconnecting" as not-yet-connected so per-tab actions don't fire
     // against a transport that's still being re-established.
     const connected = state.conn.get().state === 'connected' && !state.reconnecting.get();
-    // Capability-gated visibility: every tab other than Node Status only
+    // Capability-gated visibility: every tab other than Settings only
     // surfaces once we've positively confirmed the active transport supports
-    // it. While disconnected (or reconnecting), only Node Status shows.
+    // it. While disconnected (or reconnecting), only Settings is enabled —
+    // Node Status remains visible but disabled so its label acts as a hint.
     //   - Node Config (legacy KISS opcodes): requires legacySupported === true
     //     (CMD_BOARD probe succeeded). Starts null and the probe takes up to
     //     1500ms, during which we keep the tab hidden — a brief delay is
@@ -3279,15 +3374,16 @@ function buildTabBar(){
     for (const t of tabs) {
       const b = buttons[t.id];
       b.classList.toggle('active', active === t.id);
-      b.disabled = !connected && t.id !== 'status';
+      b.disabled = !connected && t.id !== 'settings';
       if (t.id === 'config')     b.style.display = showCfg  ? '' : 'none';
       if (t.id === 'nodeconfig') b.style.display = showNcfg ? '' : 'none';
       if (t.id === 'logs')       b.style.display = showLogs ? '' : 'none';
     }
     // Redirect away from any hidden tab so the user isn't on an invisible body.
-    if (!showCfg  && active === 'config')     state.activeTab.set('status');
-    if (!showNcfg && active === 'nodeconfig') state.activeTab.set('status');
-    if (!showLogs && active === 'logs')       state.activeTab.set('status');
+    // Settings is always visible so no redirect from it is ever needed.
+    if (!showCfg  && active === 'config')     state.activeTab.set('settings');
+    if (!showNcfg && active === 'nodeconfig') state.activeTab.set('settings');
+    if (!showLogs && active === 'logs')       state.activeTab.set('settings');
   }
   update();
   state.activeTab.subscribe(update);
@@ -3301,6 +3397,181 @@ function buildTabBar(){
 slots.tabbar.appendChild(buildTabBar());
 
 // ----- Tab bodies -----
+
+function buildSettingsTab(){
+  const root = el('div', { class: 'tab-body' });
+  root.appendChild(el('p', { style: { color: 'var(--muted)', margin: '0 0 12px' } },
+    'Defaults are pre-loaded into the top-bar fields at page load. Edits here persist in browser localStorage; edits in the top bar are session-only.'));
+
+  // Section + row helpers mirror the Status tab's visual language.
+  function row(label, control) {
+    return el('tr', null, [el('td', null, label), el('td', null, control)]);
+  }
+  function section(title, rows) {
+    return el('div', { class: 'status-sec' }, [el('h3', null, title), el('table', { class: 'kv' }, rows.filter(x => x != null))]);
+  }
+  // Two-way binding between a form control and an observable, with
+  // write-through to settingsStore on user edits. Reads clone the current
+  // value on subscribe; writes call persist(v) to build a store patch.
+  function bindSetting(input, obs, kind, persist) {
+    const isCheck = kind === 'checked';
+    const write = (v) => { if (isCheck) input.checked = !!v; else input.value = v == null ? '' : v; };
+    write(obs.get());
+    const evt = (isCheck || input.tagName === 'SELECT') ? 'change' : 'input';
+    input.addEventListener(evt, () => {
+      const v = isCheck ? input.checked : input.value;
+      obs.set(v);
+      settingsStore.save(persist(v));
+    });
+    bodyCleanups.push(obs.subscribe(v => { if (document.activeElement !== input) write(v); }));
+  }
+
+  // ---- General ----
+  const genSelect = el('select');
+  for (const [v, lbl] of [['serial','Serial'],['ble','Bluetooth'],['ws','WebSocket'],['rns','RNS']]) {
+    genSelect.appendChild(el('option', { value: v }, lbl));
+  }
+  bindSetting(genSelect, state.defaultTransport, 'value', v => ({ defaultTransport: v }));
+  root.appendChild(section('General', [
+    row('Default transport', genSelect),
+  ]));
+
+  // ---- Serial ----
+  const serialDefault = el('em', { style: { color: 'var(--muted)' } }, 'Web Serial not supported in this browser.');
+  const serialAutoCb = el('input', { type: 'checkbox' });
+  const serialRows = [];
+  if (navigator.serial) {
+    const serialSelect = el('select', { style: { minWidth: '260px' }, title: 'Authorized ports appear here. Choose one as the default so Connect skips the browser picker. Not remembered as a default when Connect prompts the picker.' });
+    const noneOpt = el('option', { value: '' }, '— No default (prompt on Connect) —');
+    serialSelect.appendChild(noneOpt);
+    // Selection wires to state.defaultSerialPortKey + persistence directly
+    // (bindSetting can't handle the async-populated option list cleanly).
+    const applySelection = () => {
+      const v = serialSelect.value || null;
+      state.defaultSerialPortKey.set(v);
+      settingsStore.save({ defaultSerialPortKey: v });
+    };
+    serialSelect.addEventListener('change', applySelection);
+    const requestBtn = el('button', { onclick: async () => {
+      try {
+        const port = await navigator.serial.requestPort();
+        const key = portKey(port.getInfo());
+        // Rebuild the option list to pick up the newly-authorized port.
+        await populateSerial(serialSelect, key);
+        state.defaultSerialPortKey.set(key);
+        settingsStore.save({ defaultSerialPortKey: key });
+      } catch (_) { /* user cancelled */ }
+    }, title: 'Prompt the browser to authorize a new serial device and set it as the default.' }, 'Request another…');
+    // Kick off async populate; keep default option first, then append authorized ports.
+    populateSerial(serialSelect, state.defaultSerialPortKey.get());
+    bindSetting(serialAutoCb, state.autoReconnectSerial, 'checked', v => ({ autoReconnect: { serial: v } }));
+    serialRows.push(row('Default device', el('span', { style: { display: 'inline-flex', gap: '8px', alignItems: 'center' } }, [serialSelect, requestBtn])));
+    serialRows.push(row('Auto-reconnect', serialAutoCb));
+  } else {
+    serialRows.push(row('Default device', serialDefault));
+  }
+  root.appendChild(section('Serial', serialRows));
+
+  // ---- Bluetooth ----
+  const bleRows = [];
+  const bleAutoCb = el('input', { type: 'checkbox' });
+  if (navigator.bluetooth) {
+    const bleSelect = el('select', { style: { minWidth: '260px' } });
+    bleSelect.appendChild(el('option', { value: '' }, '— No default (prompt on Connect) —'));
+    if (typeof navigator.bluetooth.getDevices === 'function') {
+      bleSelect.addEventListener('change', () => {
+        const v = bleSelect.value || null;
+        state.defaultBluetoothDeviceId.set(v);
+        settingsStore.save({ defaultBluetoothDeviceId: v });
+      });
+      populateBluetooth(bleSelect, state.defaultBluetoothDeviceId.get());
+      bleRows.push(row('Default device', bleSelect));
+    } else {
+      bleSelect.disabled = true;
+      bleRows.push(row('Default device', el('span', null, [
+        bleSelect,
+        el('div', { style: { marginTop: '4px', color: 'var(--muted)', fontSize: '11px', maxWidth: '520px' } },
+          'Enumerating authorized Bluetooth devices requires enabling chrome://flags/#enable-web-bluetooth-new-permissions-backend. Connect will show the picker each time.')
+      ])));
+    }
+    bindSetting(bleAutoCb, state.autoReconnectBle, 'checked', v => ({ autoReconnect: { ble: v } }));
+    bleRows.push(row('Auto-reconnect', bleAutoCb));
+  } else {
+    bleRows.push(row('Default device', el('em', { style: { color: 'var(--muted)' } }, 'Web Bluetooth not supported in this browser.')));
+  }
+  root.appendChild(section('Bluetooth', bleRows));
+
+  // ---- WebSocket ----
+  const wsInput = el('input', { type: 'text', placeholder: 'ws://host:port', style: { width: '280px' } });
+  bindSetting(wsInput, state.defaultWsUrl, 'value', v => ({ defaults: { wsUrl: v } }));
+  const wsAutoCb = el('input', { type: 'checkbox' });
+  bindSetting(wsAutoCb, state.autoReconnectWs, 'checked', v => ({ autoReconnect: { ws: v } }));
+  root.appendChild(section('WebSocket', [
+    row('Default URL', wsInput),
+    row('Auto-reconnect', wsAutoCb),
+  ]));
+
+  // ---- RNS ----
+  // rnsapid URL + identify are LIVE values (moved from banner; doConnect
+  // reads them from state.rnsUrl / state.rnsAutoIdentify). Destination hash
+  // has a separate default field — banner still holds the live hash.
+  const rnsUrlInput = el('input', { type: 'text', placeholder: 'ws://host:port/ws', style: { width: '280px' }, title: 'rnsapid WebSocket URL (anonymous session; auth disabled)' });
+  bindSetting(rnsUrlInput, state.rnsUrl, 'value', v => ({ defaults: { rnsUrl: v } }));
+  const rnsIdentCb = el('input', { type: 'checkbox', title: 'Send local identity on link establishment (auto_identify=true; required by /provision ALLOW_LIST)' });
+  bindSetting(rnsIdentCb, state.rnsAutoIdentify, 'checked', v => ({ defaults: { rnsAutoIdentify: v } }));
+  const rnsHashInput = el('input', { type: 'text', placeholder: 'destination hash (32 hex)', style: { width: '280px', fontFamily: 'monospace' }, maxlength: '32', title: 'Default remote node destination hash (pre-fills the top-bar field at launch)' });
+  bindSetting(rnsHashInput, state.defaultRnsDestHash, 'value', v => ({ defaults: { rnsDestHash: v } }));
+  const rnsAutoCb = el('input', { type: 'checkbox' });
+  bindSetting(rnsAutoCb, state.autoReconnectRns, 'checked', v => ({ autoReconnect: { rns: v } }));
+  root.appendChild(section('RNS', [
+    row('rnsapid URL', rnsUrlInput),
+    row('Identify', rnsIdentCb),
+    row('Default destination hash', rnsHashInput),
+    row('Auto-reconnect', rnsAutoCb),
+  ]));
+
+  return root;
+}
+
+// Rebuilds the option list of a serial-port <select> from
+// navigator.serial.getPorts() and restores selectedKey if still authorized.
+// Preserves the placeholder option at index 0.
+async function populateSerial(select, selectedKey){
+  try {
+    const ports = await navigator.serial.getPorts();
+    while (select.options.length > 1) select.remove(1);
+    for (const p of ports) {
+      const info = p.getInfo();
+      const key = portKey(info);
+      const label = `USB ${info.usbVendorId?.toString(16).padStart(4,'0') || '????'}:${info.usbProductId?.toString(16).padStart(4,'0') || '????'}` +
+                    (info.usbSerialNumber ? ` (${info.usbSerialNumber})` : '');
+      select.appendChild(el('option', { value: key }, label));
+    }
+    if (selectedKey && Array.from(select.options).some(o => o.value === selectedKey)) {
+      select.value = selectedKey;
+    } else {
+      select.value = '';
+    }
+  } catch (_) { /* getPorts unavailable — leave placeholder */ }
+}
+
+// Same, but for BLE devices via navigator.bluetooth.getDevices() (behind a
+// Chrome flag). Caller must have already feature-detected getDevices.
+async function populateBluetooth(select, selectedId){
+  try {
+    const devs = await navigator.bluetooth.getDevices();
+    while (select.options.length > 1) select.remove(1);
+    for (const d of devs) {
+      const label = d.name ? `${d.name} (${d.id.slice(0, 6)}…)` : d.id;
+      select.appendChild(el('option', { value: d.id }, label));
+    }
+    if (selectedId && Array.from(select.options).some(o => o.value === selectedId)) {
+      select.value = selectedId;
+    } else {
+      select.value = '';
+    }
+  } catch (_) { /* leave placeholder */ }
+}
 
 function buildStatusTab(){
   const root = el('div', { class: 'tab-body' });
@@ -4718,7 +4989,8 @@ function buildLogsTab(){
 function updateBody(){
   const t = state.activeTab.get();
   if (bodyKey === t) return;
-  if (t === 'status') setBody('status', buildStatusTab);
+  if (t === 'settings') setBody('settings', buildSettingsTab);
+  else if (t === 'status') setBody('status', buildStatusTab);
   else if (t === 'nodeconfig') setBody('nodeconfig', buildNodeConfigTab);
   else if (t === 'config') setBody('config', buildConfigTab);
   else if (t === 'logs') setBody('logs', buildLogsTab);
