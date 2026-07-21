@@ -101,6 +101,10 @@
   #define BOARD_HELTEC32_V4   0x3F
   #define MODEL_C8            0xC8 // Heltec Lora32 v3, 850-950 MHz, 28dBm
 
+  #define PRODUCT_HTRACKER_V2 0xC4
+  #define BOARD_HELTEC_TRACKER_V2 0x45
+  #define MODEL_CB            0xCB // Heltec Wireless Tracker V2, 863-928 MHz, 28dBm
+
   #define PRODUCT_HELTEC_T114 0xC2 // Heltec Mesh Node T114
   #define BOARD_HELTEC_T114   0x3C
   #define MODEL_C6            0xC6 // Heltec Mesh Node T114, 470-510 MHz
@@ -470,6 +474,67 @@
       const int pin_miso = 11;
       const int pin_sclk = 9;
 
+    #elif BOARD_MODEL == BOARD_HELTEC_TRACKER_V2
+      #define IS_ESP32S3 true
+      #define HAS_DISPLAY true
+      #define HAS_BLUETOOTH false
+      #define HAS_BLE true
+      #define HAS_WIFI true
+      #define HAS_PMU true
+      #define HAS_EEPROM true
+      #define HAS_INPUT true
+      #define HAS_SLEEP true
+      #define HAS_LORA_PA true
+      #define HAS_LORA_LNA true
+      #define PIN_WAKEUP GPIO_NUM_0
+      #define WAKEUP_LEVEL 0
+      #define OCP_TUNED 0x28
+
+      // Vext powers the onboard TFT and GNSS. The Tracker V2.3 schematic
+      // drives its high-side switch through an NPN, making GPIO3 active HIGH.
+      #define Vext GPIO_NUM_3
+      #define VEXT_ON HIGH
+      #define VEXT_OFF LOW
+
+      const int pin_btn_usr1 = 0;
+
+      // Leave the separate GPIO18 status LED unused for RX/TX activity.
+      // The TFT backlight is controlled independently on GPIO21.
+      const int pin_led_rx = -1;
+      const int pin_led_tx = -1;
+
+      #define MODEM SX1262
+      #define HAS_TCXO true
+      const int pin_tcxo_enable = -1;
+      #define HAS_BUSY true
+      #define DIO2_AS_RF_SWITCH true
+
+      // KCT8103L RF front end. SX1262 DIO2 drives PA_CPS directly.
+      #define LORA_PA_MODEL LORA_PA_KCT8103L
+      #define LORA_PA_PWR_EN 7
+      #define LORA_PA_CSD 4
+      #define LORA_PA_CTX 5
+      #define LORA_PA_CPS 46
+      #define LORA_LNA_GAIN 21
+      #define LORA_LNA_GVT 12
+      #define LNA_GD_THRSHLD (-109)
+      #define LNA_GD_LIMIT (-89)
+
+      #define PA_MAX_OUTPUT 28
+      #define PA_GAIN_POINTS 22
+      // Antenna-path gain from Heltec's Tracker V2.3 power table, indexed by
+      // SX1262 output from 0 through 21 dBm.
+      #define PA_GAIN_VALUES 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 13, 13, 13, 12, 12, 11, 10, 9, 8, 7
+
+      // Onboard SX1262 SPI and control pins.
+      const int pin_cs = 8;
+      const int pin_busy = 13;
+      const int pin_dio = 14;
+      const int pin_reset = 12;
+      const int pin_mosi = 10;
+      const int pin_miso = 11;
+      const int pin_sclk = 9;
+
     #elif BOARD_MODEL == BOARD_RNODE_NG_20
       #define HAS_DISPLAY true
       #define HAS_BLUETOOTH true
@@ -816,6 +881,11 @@
       #define HAS_LORA_LNA   true
       #define LORA_LNA_GAIN  12
       #define LORA_LNA_GVT   8
+      // LNA_GD_x matching HELTEC32_V4 since both boards run the SX1262,
+      // the gain-drift artifact these macros compensate for is a property
+      // of the SX1262 RX chain's LNA/AGC, not of the external FEM.
+      #define LNA_GD_THRSHLD (-109)
+      #define LNA_GD_LIMIT   (-89)
 
       // SKY66122 FEM is controlled via pin_rxen (WB_IO3) and SX1262 DIO2 (DIO2_AS_RF_SWITCH).
       // Use LORA_PA_UNKNOWN so sx126x model-specific branches are skipped.

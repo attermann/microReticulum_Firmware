@@ -3,6 +3,8 @@ import hashlib
 import shutil
 import platform as platformlib
 
+from firmware_image import esp_image_sha256, firmware_hash_kiss_frame
+
 #
 # Helpier functions
 #
@@ -120,6 +122,22 @@ def device_wipe(env):
     print("--- Wiping Device ---")
     env.Execute("rnodeconf --eeprom-wipe " + env.subst("$UPLOAD_PORT"))
 
+def device_set_firmware_hash(firmware_hash, env):
+    import serial
+
+    port_path = env.subst("$UPLOAD_PORT")
+    frame = firmware_hash_kiss_frame(firmware_hash)
+    print("Writing firmware hash directly over KISS for unsupported rnodeconf model...")
+    with serial.Serial(port_path, 115200, timeout=0.1) as port:
+        # Opening native USB resets the Tracker V2. Drain startup output and
+        # wait until setup() has reached the serial command loop.
+        ready_at = time.monotonic() + 4.0
+        while time.monotonic() < ready_at:
+            port.read(4096)
+        port.write(frame)
+        port.flush()
+        time.sleep(1)
+
 def device_provision(env):
     # Device provision
     print("--- Provisioning Device ---")
@@ -136,6 +154,8 @@ def device_provision(env):
             env.Execute("rnodeconf --product b1 --model b9 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "heltec32v4pa" | "heltec32v4pa_local":
             env.Execute("rnodeconf --product c3 --model c8 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
+        case "heltec_tracker_v2" | "heltec_tracker_v2_local":
+            env.Execute("rnodeconf --product c4 --model cb --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "rak4631" | "rak4631_local":
             env.Execute("rnodeconf --product 10 --model 12 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "rak3401" | "rak3401_local":
@@ -167,14 +187,23 @@ def firmware_hash(source, env):
     else:
         print("source_file:", source_file)
         firmware_data = open(source_file, "rb").read()
-        calc_hash = hashlib.sha256(firmware_data[0:-32]).digest()
-        part_hash = firmware_data[-32:]
-        hex_hash = calc_hash.hex()
-        print("firmware_hash:", hex_hash)
-        if (calc_hash == part_hash):
-            env.Execute("rnodeconf --firmware-hash " + hex_hash + " " + env.subst("$UPLOAD_PORT"))
+        if env.GetProjectOption("custom_variant") in ("heltec_tracker_v2", "heltec_tracker_v2_local"):
+            try:
+                calc_hash = esp_image_sha256(firmware_data)
+            except ValueError as error:
+                print(f"Unable to calculate firmware hash: {error}")
+                return
+            print("firmware_hash:", calc_hash.hex())
+            device_set_firmware_hash(calc_hash, env)
         else:
-            print("Calculated hash does not match!")
+            calc_hash = hashlib.sha256(firmware_data[0:-32]).digest()
+            part_hash = firmware_data[-32:]
+            hex_hash = calc_hash.hex()
+            print("firmware_hash:", hex_hash)
+            if calc_hash == part_hash:
+                env.Execute("rnodeconf --firmware-hash " + hex_hash + " " + env.subst("$UPLOAD_PORT"))
+            else:
+                print("Calculated hash does not match!")
 
 def firmware_package(env):
     # Firmware package
