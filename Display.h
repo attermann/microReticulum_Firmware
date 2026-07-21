@@ -17,14 +17,14 @@
 #include <Adafruit_GFX.h>
 
 #if BOARD_MODEL != BOARD_TECHO
-  #if BOARD_MODEL == BOARD_HELTEC_TRACKER_V2
-    #include <SPI.h>
-    #include <Adafruit_ST7735.h>
-  #elif BOARD_MODEL == BOARD_TDECK
+  #if BOARD_MODEL == BOARD_TDECK
     #include <Adafruit_ST7789.h>
   #elif BOARD_MODEL == BOARD_HELTEC_T114
     #include "ST7789.h"
     #define COLOR565(r, g, b) (((r & 0xF8) << 8) | ((g & 0xFC) << 3) | ((b & 0xF8) >> 3))
+  #elif BOARD_MODEL == BOARD_HELTEC_TRACKER_V2
+    #include <SPI.h>
+    #include <Adafruit_ST7735.h>
   #elif BOARD_MODEL == BOARD_TBEAM_S_V1
     #include <Adafruit_SH110X.h>
   #else
@@ -82,7 +82,7 @@
   #define DISPLAY_MOSI 42
   #define DISPLAY_DC 40
   #define DISPLAY_BL_PIN 21
-#elif BOARD_MODEL == BOARD_RAK4631
+#elif BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401
   // RAK1921/SSD1306
   #define DISP_RST -1
   #define DISP_ADDR 0x3C
@@ -121,19 +121,19 @@
 
 #define SMALL_FONT &Org_01
 
-#if BOARD_MODEL == BOARD_HELTEC_TRACKER_V2
-  // Keep the TFT on the ESP32-S3's second SPI controller. The SX1262 uses
-  // the default controller on GPIO 8-11, while the TFT has its own pin set.
-  SPIClass displaySPI = SPIClass(HSPI);
-  Adafruit_ST7735 display(&displaySPI, DISPLAY_CS, DISPLAY_DC, DISP_RST);
-  #define SSD1306_WHITE ST77XX_WHITE
-  #define SSD1306_BLACK ST77XX_BLACK
-#elif BOARD_MODEL == BOARD_TDECK
+#if BOARD_MODEL == BOARD_TDECK
   Adafruit_ST7789 display = Adafruit_ST7789(DISPLAY_CS, DISPLAY_DC, -1);
   #define SSD1306_WHITE ST77XX_WHITE
   #define SSD1306_BLACK ST77XX_BLACK
 #elif BOARD_MODEL == BOARD_HELTEC_T114
   ST7789Spi display(&SPI1, DISPLAY_RST, DISPLAY_DC, DISPLAY_CS);
+  #define SSD1306_WHITE ST77XX_WHITE
+  #define SSD1306_BLACK ST77XX_BLACK
+#elif BOARD_MODEL == BOARD_HELTEC_TRACKER_V2
+  // Keep the TFT on the ESP32-S3's second SPI controller. The SX1262 uses
+  // the default controller on GPIO 8-11, while the TFT has its own pin set.
+  SPIClass displaySPI = SPIClass(HSPI);
+  Adafruit_ST7735 display(&displaySPI, DISPLAY_CS, DISPLAY_DC, DISP_RST);
   #define SSD1306_WHITE ST77XX_WHITE
   #define SSD1306_BLACK ST77XX_BLACK
 #elif BOARD_MODEL == BOARD_TBEAM_S_V1
@@ -262,6 +262,12 @@ uint8_t display_contrast = 0x00;
   }
 #elif BOARD_MODEL == BOARD_HELTEC_T114
   void set_contrast(ST7789Spi *display, uint8_t value) { }
+#elif BOARD_MODEL == BOARD_HELTEC_TRACKER_V2
+  // The Adafruit_ST7735 display lacks a brightness register.
+  // Control of the LED backlight requires PWM on the backlight pin.
+  void set_contrast(Adafruit_ST7735 *display, uint8_t value) {
+    digitalWrite(DISPLAY_BL_PIN, value == 0 ? LOW : HIGH);
+  }
 #elif BOARD_MODEL == BOARD_TECHO
   void set_contrast(void *display, uint8_t value) {
     if (value == 0) { analogWrite(pin_backlight, 0); }
@@ -291,10 +297,6 @@ uint8_t display_contrast = 0x00;
         digitalWrite(DISPLAY_BL_PIN, 1);
     }
     level = value;
-  }
-#elif BOARD_MODEL == BOARD_HELTEC_TRACKER_V2
-  void set_contrast(Adafruit_ST7735 *display, uint8_t value) {
-    digitalWrite(DISPLAY_BL_PIN, value == 0 ? LOW : HIGH);
   }
 #else
   void set_contrast(Adafruit_SSD1306 *display, uint8_t contrast) {
@@ -413,14 +415,14 @@ bool display_init() {
     #elif BOARD_MODEL == BOARD_TDECK
     display.init(240, 320);
     display.setSPISpeed(80e6);
-    #elif BOARD_MODEL == BOARD_HELTEC_TRACKER_V2
-    displaySPI.begin(DISPLAY_SCLK, -1, DISPLAY_MOSI, DISPLAY_CS);
-    display.initR(INITR_MINI160x80_PLUGIN);
-    if (false) {
     #elif BOARD_MODEL == BOARD_HELTEC_T114
     display.init();
     // set white as default pixel colour for Heltec T114
     display.setRGB(COLOR565(0xFF, 0xFF, 0xFF));
+    if (false) {
+    #elif BOARD_MODEL == BOARD_HELTEC_TRACKER_V2
+    displaySPI.begin(DISPLAY_SCLK, -1, DISPLAY_MOSI, DISPLAY_CS);
+    display.initR(INITR_MINI160x80_PLUGIN);
     if (false) {
     #elif BOARD_MODEL == BOARD_TBEAM_S_V1
     if (!display.begin(display_address, true)) {
@@ -474,7 +476,7 @@ bool display_init() {
         #elif BOARD_MODEL == BOARD_HELTEC_T114
           disp_mode = DISP_MODE_PORTRAIT;
           display.setRotation(1);
-        #elif BOARD_MODEL == BOARD_RAK4631
+        #elif BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401
           disp_mode = DISP_MODE_LANDSCAPE;
           display.setRotation(0);
         #elif BOARD_MODEL == BOARD_TDECK

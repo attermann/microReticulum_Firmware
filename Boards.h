@@ -881,6 +881,11 @@
       #define HAS_LORA_LNA   true
       #define LORA_LNA_GAIN  12
       #define LORA_LNA_GVT   8
+      // LNA_GD_x matching HELTEC32_V4 since both boards run the SX1262,
+      // the gain-drift artifact these macros compensate for is a property
+      // of the SX1262 RX chain's LNA/AGC, not of the external FEM.
+      #define LNA_GD_THRSHLD (-109)
+      #define LNA_GD_LIMIT   (-89)
 
       // SKY66122 FEM is controlled via pin_rxen (WB_IO3) and SX1262 DIO2 (DIO2_AS_RF_SWITCH).
       // Use LORA_PA_UNKNOWN so sx126x model-specific branches are skipped.
