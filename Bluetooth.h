@@ -574,7 +574,19 @@ char bt_devname[11];
       // Use Scan response for Name
       Bluefruit.ScanResponse.addName();
 
-      Bluefruit.Advertising.start(0);
+      /* Start Advertising
+      * - Enable auto advertising if disconnected
+      * - Interval:  fast mode = 200 ms, slow mode = 1000 ms
+      * - Timeout for fast mode is 30 seconds
+      * - Start(timeout) with timeout = 0 will advertise forever (until connected)
+      *
+      * For recommended advertising interval
+      * https://developer.apple.com/library/content/qa/qa1931/_index.html
+      */
+      Bluefruit.Advertising.restartOnDisconnect(true);
+      Bluefruit.Advertising.setInterval(320, 1600); // in unit of 0.625 ms
+      Bluefruit.Advertising.setFastTimeout(30);   // number of seconds in fast mode
+      Bluefruit.Advertising.start(0); // 0 = Don't stop advertising after n seconds.  FIXME, we should stop advertising after X
 
       bt_state = BT_STATE_ON;
      }
