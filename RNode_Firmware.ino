@@ -92,9 +92,11 @@ bool kiss_framed_logs = false;
 #else
 bool kiss_framed_logs = true;
 #endif
+#ifdef HAS_RNS
 bool nomadnet_enabled = true;
 RNS::Destination nomadnet_destination = {RNS::Type::NONE};
 char nomadnet_name[64];
+#endif // HAS_RNS
 
 #if HAS_CONSOLE
   #include "Console.h"
@@ -243,6 +245,7 @@ RNS::Interface udp_interface(RNS::Type::NONE);
     microStore::FileSystem filesystem{microStore::Adapters::NoopFileSystem()};
   #endif // RNS_USE_FS
 #endif  // HAS_RNS
+#ifdef HAS_RNS
 // CBA logger callback
 void on_log(const char* msg, RNS::LogLevel level) {
   if (kiss_framed_logs) {
@@ -353,6 +356,7 @@ void on_transmit_packet(const RNS::Bytes& raw, const RNS::Interface& interface) 
 	}
 #endif
 }
+#endif // HAS_RNS
 
 // For redirecting stdout to KISS framed logs
 #if MCU_VARIANT == MCU_ESP32
@@ -436,7 +440,7 @@ static void install_kiss_stdout(void) {}
 
 #endif
 
-#if defined(RNS_USE_FS)
+#if defined(RNS_USE_FS) && defined(HAS_RNS)
 void dump_filesystem(const char* basepath, uint8_t level = 0, uint8_t max_level = 0) {
   if (max_level > 0 && level > max_level) return;
   char prefix[17] = "";
