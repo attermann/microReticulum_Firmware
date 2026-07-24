@@ -831,6 +831,8 @@
       #define EEPROM_OFFSET EEPROM_SIZE-EEPROM_RESERVED
       #define BLE_MANUFACTURER "RAK Wireless"
       #define BLE_MODEL "RAK4640"
+      
+      #define OCP_TUNED 0x38 // 140mA limit for SX1262 at 22dBm
 
       const int pin_btn_usr1 = 9;
 
@@ -869,6 +871,8 @@
       #define EEPROM_OFFSET EEPROM_SIZE-EEPROM_RESERVED
       #define BLE_MANUFACTURER "RAK Wireless"
       #define BLE_MODEL "RAK3401"
+      
+      #define OCP_TUNED 0x38 // 140mA limit for SX1262 at 22dBm
 
       // RAK13302 SKY66122-11 FEM: +8 dBm PA gain (constant per datasheet),
       // 30 dBm (1 W) max output. Gain values from Meshtastic config.
