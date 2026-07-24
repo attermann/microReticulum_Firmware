@@ -554,6 +554,7 @@ char bt_devname[11];
       // start device information service
       bledis.begin();
       blebas.begin();
+      blebas.write(battery_percent);
 
       // Guard to ensure SerialBT service is not duplicated through BT being power cycled
       if (!SerialBT_init) {
@@ -569,6 +570,9 @@ char bt_devname[11];
 
       // Include bleuart 128-bit uuid
       Bluefruit.Advertising.addService(SerialBT);
+      
+      // Include blebas 16-bit uuid for battery status
+      Bluefruit.Advertising.addService(blebas);
 
       // There is no room for Name in Advertising packet
       // Use Scan response for Name
