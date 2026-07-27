@@ -812,16 +812,20 @@
   #elif MCU_VARIANT == MCU_NRF52
     #if BOARD_MODEL == BOARD_RAK4631
       #define HAS_EEPROM false
+      #undef HAS_DISPLAY
       #define HAS_DISPLAY true
       #define HAS_BLUETOOTH false
+      #undef HAS_BLE
       #define HAS_BLE true
       #define HAS_CONSOLE false
       #define HAS_PMU true
       #define HAS_NP false
       #define HAS_SD false
+      #undef HAS_TCXO
       #define HAS_TCXO true
       #define HAS_RF_SWITCH_RX_TX true
       #define HAS_BUSY true
+      #undef HAS_INPUT
       #define HAS_INPUT true
       #define DIO2_AS_RF_SWITCH true
       #define CONFIG_UART_BUFFER_SIZE 6144
@@ -852,14 +856,17 @@
       #define HAS_EEPROM false
       #define HAS_DISPLAY false      // RAK19007 base board has no display in this kit
       #define HAS_BLUETOOTH false
+      #undef HAS_BLE
       #define HAS_BLE true
       #define HAS_CONSOLE false
       #define HAS_PMU true
       #define HAS_NP false
       #define HAS_SD false
+      #undef HAS_TCXO
       #define HAS_TCXO true
       #define HAS_RF_SWITCH_RX_TX true
       #define HAS_BUSY true
+      #undef HAS_INPUT
       #define HAS_INPUT true
       #define DIO2_AS_RF_SWITCH true   // SKY66122 CTX driven by DIO2 (hardware TX/RX switch)
       #define CONFIG_UART_BUFFER_SIZE 6144
