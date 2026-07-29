@@ -1,0 +1,108 @@
+/*
+ * variant.cpp - Seeed Tracker T1000-E (nRF52840 + LR1110)
+ *
+ * GPIO-to-physical-pin map and board bring-up. Adapted from the MeshCore
+ * t1000-e variant (which is in turn derived from Seeed's official BSP).
+ */
+
+#include "variant.h"
+#include "wiring_constants.h"
+#include "wiring_digital.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// Maps Arduino logical pin numbers (P0.00..P0.31 = 0..31, P1.00..P1.15 = 32..47)
+// to their nRF52840 physical GPIO numbers.
+const uint32_t g_ADigitalPinMap[PINS_COUNT + 1] = {
+  0,  // P0.00
+  1,  // P0.01
+  2,  // P0.02  AIN0  BATTERY_PIN
+  3,  // P0.03
+  4,  // P0.04  SENSOR_EN
+  5,  // P0.05  EXT_PWR_DETECT
+  6,  // P0.06  PIN_BUTTON1
+  7,  // P0.07  LORA_BUSY
+  8,  // P0.08  GPS_VRTC_EN
+  9,  // P0.09
+  10, // P0.10
+  11, // P0.11  PIN_SPI_SCK
+  12, // P0.12  PIN_SPI_NSS
+  13, // P0.13  PIN_SERIAL1_TX
+  14, // P0.14  PIN_SERIAL1_RX
+  15, // P0.15  GPS_RTC_INT
+  16, // P0.16  PIN_SERIAL2_TX
+  17, // P0.17  PIN_SERIAL2_RX
+  18, // P0.18
+  19, // P0.19
+  20, // P0.20
+  21, // P0.21
+  22, // P0.22
+  23, // P0.23
+  24, // P0.24  LED_GREEN
+  25, // P0.25  BUZZER_PIN
+  26, // P0.26  PIN_WIRE_SDA
+  27, // P0.27  PIN_WIRE_SCL
+  28, // P0.28
+  29, // P0.29  AIN5  LUX_SENSOR
+  30, // P0.30
+  31, // P0.31  AIN7  TEMP_SENSOR
+  32, // P1.00
+  33, // P1.01  LORA_DIO_1
+  34, // P1.02  QMA6100P_INT
+  35, // P1.03  EXT_CHRG_DETECT
+  36, // P1.04
+  37, // P1.05  BUZZER_EN
+  38, // P1.06  PIN_3V3_EN
+  39, // P1.07  PIN_3V3_ACC_EN
+  40, // P1.08  PIN_SPI_MISO
+  41, // P1.09  PIN_SPI_MOSI
+  42, // P1.10  LORA_RESET
+  43, // P1.11  GPS_EN
+  44, // P1.12  GPS_SLEEP_INT
+  45, // P1.13  FLASH_ENABLE
+  46, // P1.14  GPS_RESETB
+  47, // P1.15  GPS_RESET
+  255 // not used
+};
+
+void initVariant() {
+  // Configure sensor/battery/GPS pins to safe default levels, mirroring
+  // Seeed's official T1000-E bring-up so the board boots with peripherals
+  // unpowered until the application drives them.
+
+  pinMode(BATTERY_PIN, INPUT);
+  pinMode(TEMP_SENSOR, INPUT);
+  pinMode(LUX_SENSOR, INPUT);
+  pinMode(EXT_CHRG_DETECT, INPUT);
+  pinMode(EXT_PWR_DETECT, INPUT);
+  pinMode(GPS_RESETB, INPUT);
+  pinMode(PIN_BUTTON1, INPUT);
+
+  pinMode(PIN_3V3_EN, OUTPUT);
+  pinMode(PIN_3V3_ACC_EN, OUTPUT);
+  pinMode(BUZZER_EN, OUTPUT);
+  pinMode(SENSOR_EN, OUTPUT);
+  pinMode(GPS_EN, OUTPUT);
+  pinMode(GPS_RESET, OUTPUT);
+  pinMode(GPS_VRTC_EN, OUTPUT);
+  pinMode(GPS_SLEEP_INT, OUTPUT);
+  pinMode(GPS_RTC_INT, OUTPUT);
+  pinMode(LED_PIN, OUTPUT);
+
+  digitalWrite(PIN_3V3_EN, LOW);
+  digitalWrite(PIN_3V3_ACC_EN, LOW);
+  digitalWrite(BUZZER_EN, LOW);
+  digitalWrite(SENSOR_EN, LOW);
+  digitalWrite(GPS_EN, LOW);
+  digitalWrite(GPS_RESET, LOW);
+  digitalWrite(GPS_VRTC_EN, LOW);
+  digitalWrite(GPS_SLEEP_INT, HIGH);
+  digitalWrite(GPS_RTC_INT, LOW);
+  digitalWrite(LED_PIN, LOW);
+}
+
+#ifdef __cplusplus
+}
+#endif

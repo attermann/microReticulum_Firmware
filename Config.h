@@ -69,7 +69,7 @@
 	#define eeprom_addr(a) (a+EEPROM_OFFSET)
 	#define config_addr(a) (a+CONFIG_OFFSET)
 
-    #if (MODEM == SX1262 || MODEM == SX1280) && defined(NRF52840_XXAA)
+    #if (MODEM == SX1262 || MODEM == SX1280 || MODEM == LR1110) && defined(NRF52840_XXAA)
         SPIClass spiModem(NRF_SPIM2, pin_miso, pin_sclk, pin_mosi);
     #endif
 

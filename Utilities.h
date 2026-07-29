@@ -58,6 +58,9 @@ sx127x *LoRa = &sx127x_modem;
 #elif MODEM == SX1280
 #include "sx128x.h"
 sx128x *LoRa = &sx128x_modem;
+#elif MODEM == LR1110
+#include "lr11x0.h"
+lr11x0 *LoRa = &lr11x0_modem;
 #endif
 
 #include "ROM.h"
@@ -414,7 +417,113 @@ extern RNS::Reticulum reticulum;
 		void led_tx_off() { digitalWrite(pin_led_tx, LED_OFF); }
 		void led_id_on()  { }
 		void led_id_off() { }
+  #elif BOARD_MODEL == BOARD_T1000E
+    // T1000-E has a single green LED (P0.24, active high) shared for RX/TX.
+		void led_rx_on()  { digitalWrite(pin_led_rx, HIGH); }
+		void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
+		void led_tx_on()  { digitalWrite(pin_led_tx, HIGH); }
+		void led_tx_off() { digitalWrite(pin_led_tx, LOW); }
+		void led_id_on()  { }
+		void led_id_off() { }
 	#endif
+#endif
+
+// ---------------------------------------------------------------------------
+// T1000-E event-driven single-LED policy.
+//
+// With only one green LED and no display, the T1000-E uses it the way
+// Meshtastic does rather than the firmware's default level-hold semantics:
+//   * USB / external power + idle  -> slow "breathing" pulse (alive & charging)
+//   * battery + idle              -> off (power budget)
+//   * packet received             -> one short dim blip
+//   * packet transmitted          -> two short dim blips
+//
+// Boot / error / warning indications still go through led_tx_on()/led_rx_on()
+// above (direct GPIO): they run as blocking sequences from the main loop at
+// moments when led_update() is not being called, so there is no contention.
+//
+// The normal-operation LED hooks (carrier-detect and TX-duration level-hold)
+// are suppressed for this board in RNode_Firmware.ino; led_update() owns the
+// pin while the radio is online.
+// ---------------------------------------------------------------------------
+#if BOARD_MODEL == BOARD_T1000E
+  #define T1000E_LED_BLIP_LEVEL     48    // dim blip brightness (0-255)
+  #define T1000E_LED_BLIP_ON_MS     45    // blip ON width
+  #define T1000E_LED_BLIP_GAP_MS    45    // OFF gap between blips in a burst
+  #define T1000E_LED_BLIP_REST_MS   220   // pause after a burst before idle
+  #define T1000E_LED_BREATH_MAX     110   // peak breathing brightness
+  #define T1000E_LED_BREATH_STEP_MS 10    // ms between breathing steps
+
+  // Blips requested since last pass (1 per RX, 2 per TX). volatile because
+  // the RX path can run from the deferred-DIO callback context.
+  volatile uint8_t t1000e_led_blips = 0;
+  uint8_t  t1000e_led_state  = 0;          // 0 = idle, 1 = blip ON, 2 = blip gap
+  uint32_t t1000e_led_time   = 0;         // next permitted transition
+  uint16_t t1000e_led_breath = 0;         // current breathing PWM value
+  int16_t  t1000e_led_bdir   = 1;
+  uint32_t t1000e_led_breath_time = 0;    // breathing step throttle
+
+  // Queue N blips. Safe from deferred-RX / ISR context (volatile +=).
+  inline void led_event_blip(uint8_t n) { t1000e_led_blips += n; }
+
+  // Drive the LED. Call every main-loop iteration while the radio is online.
+  inline void led_update() {
+    uint32_t now = millis();
+
+    // (1) If we are mid-burst, finish the current on/gap step first.
+    if (t1000e_led_state) {
+      if ((int32_t)(now - t1000e_led_time) < 0) return;
+      if (t1000e_led_state == 1) {                  // was ON -> start gap
+        analogWrite(pin_led_rx, 0);
+        t1000e_led_state = 2;
+        t1000e_led_time = now + T1000E_LED_BLIP_GAP_MS;
+      } else {                                      // gap done -> next blip or finish
+        if (t1000e_led_blips > 0) t1000e_led_blips--;
+        if (t1000e_led_blips > 0) {
+          analogWrite(pin_led_rx, T1000E_LED_BLIP_LEVEL);
+          t1000e_led_state = 1;
+          t1000e_led_time = now + T1000E_LED_BLIP_ON_MS;
+        } else {
+          analogWrite(pin_led_rx, 0);
+          t1000e_led_state = 0;
+          t1000e_led_time = now + T1000E_LED_BLIP_REST_MS;
+        }
+      }
+      return;
+    }
+
+    // (2) A new burst may have been requested.
+    if (t1000e_led_blips > 0) {
+      t1000e_led_blips--;
+      analogWrite(pin_led_rx, T1000E_LED_BLIP_LEVEL);
+      t1000e_led_state = 1;
+      t1000e_led_time = now + T1000E_LED_BLIP_ON_MS;
+      return;
+    }
+
+    // (3) Post-burst rest: hold the LED idle until it elapses.
+    if ((int32_t)(now - t1000e_led_time) < 0) return;
+
+    // (4) Idle: breathe on external power, dark on battery.
+    if (external_power) {
+      if ((int32_t)(now - t1000e_led_breath_time) >= 0) {
+        t1000e_led_breath_time = now + T1000E_LED_BREATH_STEP_MS;
+        t1000e_led_breath += t1000e_led_bdir;
+        if (t1000e_led_breath >= T1000E_LED_BREATH_MAX) {
+          t1000e_led_breath = T1000E_LED_BREATH_MAX; t1000e_led_bdir = -1;
+        } else if (t1000e_led_breath == 0) {
+          t1000e_led_bdir = 1;
+        }
+        analogWrite(pin_led_rx, t1000e_led_breath);
+      }
+    } else {
+      analogWrite(pin_led_rx, 0);
+    }
+  }
+#else
+  // Boards without the event-LED policy: nothing to do per loop.
+  inline void led_update()             { }
+  inline void led_event_blip(uint8_t)  { }
 #endif
 
 void hard_reset(void) {
@@ -1484,6 +1593,9 @@ void setTXPower() {
 		if (model == MODEL_E3) LoRa->setTxPower(mapped_lora_txp, PA_OUTPUT_PA_BOOST_PIN);
 		if (model == MODEL_E8) LoRa->setTxPower(mapped_lora_txp, PA_OUTPUT_PA_BOOST_PIN);
 
+		if (model == MODEL_18) LoRa->setTxPower(mapped_lora_txp, PA_OUTPUT_PA_BOOST_PIN);
+		if (model == MODEL_19) LoRa->setTxPower(mapped_lora_txp, PA_OUTPUT_PA_BOOST_PIN);
+
 		if (model == MODEL_FE) LoRa->setTxPower(mapped_lora_txp, PA_OUTPUT_PA_BOOST_PIN);
 		if (model == MODEL_FF) LoRa->setTxPower(mapped_lora_txp, PA_OUTPUT_RFO_PIN);
 	}
@@ -1739,7 +1851,7 @@ bool eeprom_product_valid() {
 	#elif PLATFORM == PLATFORM_ESP32
 	if (rval == PRODUCT_RNODE || rval == BOARD_RNODE_NG_20 || rval == BOARD_RNODE_NG_21 || rval == PRODUCT_HMBRW || rval == PRODUCT_TBEAM || rval == PRODUCT_T32_10 || rval == PRODUCT_T32_20 || rval == PRODUCT_T32_21 || rval == PRODUCT_H32_V2 || rval == PRODUCT_H32_V3 || rval == PRODUCT_H32_V4 || rval == PRODUCT_HTRACKER_V2 || rval == PRODUCT_TDECK_V1 || rval == PRODUCT_TBEAM_S_V1  || rval == PRODUCT_XIAO_S3) {
 	#elif PLATFORM == PLATFORM_NRF52
-	if (rval == PRODUCT_RAK4631 || rval == PRODUCT_HELTEC_T114 || rval == PRODUCT_TECHO || rval == PRODUCT_HMBRW) {
+	if (rval == PRODUCT_RAK4631 || rval == PRODUCT_HELTEC_T114 || rval == PRODUCT_TECHO || rval == PRODUCT_T1000E || rval == PRODUCT_HMBRW) {
 	#elif PLATFORM == PLATFORM_NATIVE
 	if (rval == PRODUCT_NATIVE_LINUX) {
 	#else
@@ -1798,6 +1910,8 @@ bool eeprom_model_valid() {
   if (model == MODEL_11 || model == MODEL_12) {
   #elif BOARD_MODEL == BOARD_RAK3401
   if (model == MODEL_13 || model == MODEL_14) {
+  #elif BOARD_MODEL == BOARD_T1000E
+  if (model == MODEL_18 || model == MODEL_19) {
 	#elif BOARD_MODEL == BOARD_HUZZAH32
 	if (model == MODEL_FF) {
 	#elif BOARD_MODEL == BOARD_GENERIC_ESP32

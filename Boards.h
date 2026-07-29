@@ -115,6 +115,11 @@
   #define MODEL_16            0x16 // T-Echo 433 MHz
   #define MODEL_17            0x17 // T-Echo 868/915 MHz
 
+  #define PRODUCT_T1000E      0x16 // Seeed Tracker T1000-E (nRF52840 + LR1110)
+  #define BOARD_T1000E        0x46
+  #define MODEL_18            0x18 // T1000-E, 433 MHz
+  #define MODEL_19            0x19 // T1000-E, 868/915 MHz
+
   #define PRODUCT_RAK4631     0x10
   #define BOARD_RAK4631       0x51
   #define MODEL_11            0x11 // RAK4631, 433 Mhz
@@ -171,6 +176,8 @@
       #define MODEM SX1262
     #elif BOARD_MODEL == BOARD_GENERIC_NRF52
       #define MODEM SX1262
+    #elif BOARD_MODEL == BOARD_T1000E
+      #define MODEM LR1110
     #else
       #define MODEM SX1276
     #endif
@@ -1052,6 +1059,70 @@
       const int DISPLAY_CLK = PIN_T114_TFT_SCK;
       const int DISPLAY_BL_PIN = PIN_T114_TFT_BLGT;
       const int DISPLAY_RST = PIN_T114_TFT_RST;
+
+    #elif BOARD_MODEL == BOARD_T1000E
+      // Seeed Tracker T1000-E: nRF52840 + Semtech LR1110 (LoRa + Wi-Fi/GNSS
+      // geolocation, though only LoRa is used here). The RF front end has an
+      // on-chip RF switch driven by the LR1110's DIO5/DIO6/DIO7/DIO8 pins
+      // (configured via SET_DIO_AS_RF_SWITCH) and a TCXO supplied through DIO3
+      // at 1.6 V. Pin map adapted from the MeshCore t1000-e variant.
+      #define MODEM LR1110
+      #define HAS_EEPROM false
+      #define HAS_DISPLAY false
+      #define HAS_BLUETOOTH false
+      #define HAS_BLE true
+      #define HAS_CONSOLE false
+      #define HAS_PMU true
+      #define HAS_NP false
+      #define HAS_SD false
+      #define HAS_TCXO true
+      #define HAS_BUSY true
+      #define HAS_INPUT true
+      #define CONFIG_UART_BUFFER_SIZE 6144
+      #define CONFIG_QUEUE_SIZE 6144
+      #define CONFIG_QUEUE_MAX_LENGTH 200
+      #define EEPROM_SIZE 296
+      #define EEPROM_OFFSET EEPROM_SIZE-EEPROM_RESERVED
+      #define BLE_MANUFACTURER "Seeed Studio"
+      #define BLE_MODEL "T1000-E"
+
+      // SPI (shares the Arduino SPI instance via Config.h spiModem on SPIM2).
+      const int pin_sclk = 11;   // P0.11
+      const int pin_mosi = 41;   // P1.9
+      const int pin_miso = 40;   // P1.8
+
+      // LR1110 control pins.
+      const int pin_cs    = 12;  // P0.12
+      const int pin_reset = 42;  // P1.10
+      const int pin_busy  = 7;   // P0.7
+      const int pin_dio   = 33;  // P1.1 (LR1110 DIO1 = IRQ line)
+      const int pin_tcxo_enable = -1;  // TCXO powered via DIO3 (SET_TCXO_MODE)
+      const int pin_led_rx = LED_GREEN;  // P0.24
+      const int pin_led_tx = LED_GREEN;
+
+      // User button (P0.6).
+      const int pin_btn_usr1 = 6;
+
+      // TCXO: 1.6 V on DIO3. The LR11x0 TCXO delay register unit is ~30.52 us;
+      // 5000 us -> ~164, matching the RadioLib default wakeup window.
+      #define LR11X0_TCXO_TUNE      0x00   // 1.6 V
+      #define LR11X0_TCXO_DELAY_US  5000
+
+      // On-chip RF switch (DIO5/DIO6/DIO7/DIO8). The 8-byte SET_DIO_AS_RF_SWITCH
+      // payload below is derived from the MeshCore RF-switch table: enable bits
+      // DIO5..DIO8, then a per-mode DIO drive config (which of DIO5..DIO8 are
+      // HIGH) for [stby, rx, tx, tx_hp, tx_hf, gnss, wifi].
+      #define LR11X0_RFSWITCH_ENABLE 0x0F   // DIO5 | DIO6 | DIO7 | DIO8
+      #define LR11X0_RFSW_STBY       0x00
+      #define LR11X0_RFSW_RX         0x09   // DIO5 + DIO8
+      #define LR11X0_RFSW_TX         0x0B   // DIO5 + DIO6 + DIO8
+      #define LR11X0_RFSW_TX_HP      0x0A   // DIO6 + DIO8
+      #define LR11X0_RFSW_TX_HF      0x00
+      #define LR11X0_RFSW_GNSS       0x00   // GNSS switch unused (LoRa only)
+      #define LR11X0_RFSW_WIFI       0x00
+
+      // RX boosted gain improves sensitivity on the T1000-E front end.
+      #define LR11X0_RX_BOOSTED     1
 
     #else
       #error An unsupported nRF board was selected. Cannot compile RNode firmware.

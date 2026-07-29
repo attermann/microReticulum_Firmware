@@ -213,6 +213,24 @@ float pmu_temperature = PMU_TEMP_MIN-1;
   bool bat_voltage_dropping = false;
   float bat_delay_v = 0;
   float bat_state_change_v = 0;
+#elif BOARD_MODEL == BOARD_T1000E
+  // Seeed T1000-E: battery on P0.02/AIN0 via a 1:2 divider, ADC reference
+  // 3.0 V, 12-bit resolution (Seeed datasheet / MeshCore T1000eBoard).
+  #define BAT_V_MIN       3.15
+  #define BAT_V_MAX       4.2
+  #define BAT_V_CHG       4.48
+  #define BAT_V_FLOAT     4.33
+  #define BAT_SAMPLES     7
+  const uint8_t pin_vbat = BATTERY_PIN;   // P0.02
+  float bat_p_samples[BAT_SAMPLES];
+  float bat_v_samples[BAT_SAMPLES];
+  uint8_t bat_samples_count = 0;
+  int bat_discharging_samples = 0;
+  int bat_charging_samples = 0;
+  int bat_charged_samples = 0;
+  bool bat_voltage_dropping = false;
+  float bat_delay_v = 0;
+  float bat_state_change_v = 0;
 #endif
 
 uint32_t last_pmu_update = 0;
@@ -235,7 +253,7 @@ void measure_temperature() {
 }
 
 void measure_battery() {
-  #if BOARD_MODEL == BOARD_RNODE_NG_21 || BOARD_MODEL == BOARD_LORA32_V2_1 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_HELTEC32_V4 || BOARD_MODEL == BOARD_HELTEC_TRACKER_V2 || BOARD_MODEL == BOARD_TDECK || BOARD_MODEL == BOARD_T3S3 || BOARD_MODEL == BOARD_HELTEC_T114 || BOARD_MODEL == BOARD_TECHO || BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401
+  #if BOARD_MODEL == BOARD_RNODE_NG_21 || BOARD_MODEL == BOARD_LORA32_V2_1 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_HELTEC32_V4 || BOARD_MODEL == BOARD_HELTEC_TRACKER_V2 || BOARD_MODEL == BOARD_TDECK || BOARD_MODEL == BOARD_T3S3 || BOARD_MODEL == BOARD_HELTEC_T114 || BOARD_MODEL == BOARD_TECHO || BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401 || BOARD_MODEL == BOARD_T1000E
     battery_installed = true;
     #if BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_HELTEC32_V4 || BOARD_MODEL == BOARD_HELTEC_TRACKER_V2
       battery_indeterminate = false;
@@ -258,6 +276,9 @@ void measure_battery() {
       float battery_measurement = (float)(analogRead(pin_vbat)) * 0.007067;
     #elif BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401
       float battery_measurement = (float)(analogRead(pin_vbat)) * 0.005068;
+    #elif BOARD_MODEL == BOARD_T1000E
+      // 12-bit ADC, 1:2 divider, 3.0 V reference (Seeed T1000-E).
+      float battery_measurement = (float)(analogRead(pin_vbat)) * 3.0f * 2.0f / 4096.0f;
     #else
       float battery_measurement = (float)(analogRead(pin_vbat)) / 4095.0*7.26;
     #endif
@@ -438,6 +459,15 @@ void measure_battery() {
 }
 
 void update_pmu() {
+  #if MCU_VARIANT == MCU_NRF52
+    // The nRF52840 POWER peripheral exposes USB VBUS presence directly.
+    // VBUSDETECT reads true whenever USB power is connected (independent
+    // of enumeration), which is what the LED/battery UX treats as
+    // "external power". Sampled every pass so hot-plug is reflected promptly.
+    #if defined(NRF_POWER) && defined(POWER_USBREGSTATUS_VBUSDETECT_Msk)
+      external_power = (NRF_POWER->USBREGSTATUS & POWER_USBREGSTATUS_VBUSDETECT_Msk) != 0;
+    #endif
+  #endif
   if (millis()-last_pmu_update >= pmu_update_interval) {
     measure_battery();
     measure_temperature();
@@ -450,11 +480,14 @@ bool init_pmu() {
     pmu_temp_sensor_ready = true;
   #endif
 
-  #if BOARD_MODEL == BOARD_RNODE_NG_21 || BOARD_MODEL == BOARD_LORA32_V2_1 || BOARD_MODEL == BOARD_TDECK || BOARD_MODEL == BOARD_T3S3 || BOARD_MODEL == BOARD_TECHO || BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401
+  #if BOARD_MODEL == BOARD_RNODE_NG_21 || BOARD_MODEL == BOARD_LORA32_V2_1 || BOARD_MODEL == BOARD_TDECK || BOARD_MODEL == BOARD_T3S3 || BOARD_MODEL == BOARD_TECHO || BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401 || BOARD_MODEL == BOARD_T1000E
     pinMode(pin_vbat, INPUT);
     #if BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401
       analogReference(AR_INTERNAL_3_0);
       analogReadResolution(10);
+    #elif BOARD_MODEL == BOARD_T1000E
+      analogReference(AR_INTERNAL_3_0);
+      analogReadResolution(12);
     #endif
     return true;
   #elif BOARD_MODEL == BOARD_HELTEC32_V3

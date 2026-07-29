@@ -1,9 +1,11 @@
 import time
 import hashlib
 import shutil
+import os
 import platform as platformlib
 
 from firmware_image import esp_image_sha256, firmware_hash_kiss_frame
+from uf2 import generate_uf2, find_dfu_volume
 
 #
 # Helpier functions
@@ -67,6 +69,27 @@ def target_package(target, source, env):
 #
 # Upload actions
 #
+
+# ---- UF2 (Adafruit/Seeed mass-storage bootloader, e.g. T1000-E) ----
+#
+# Boards such as the Seeed Tracker T1000-E are not flashed over serial
+# DFU. They expose a UF2 mass-storage volume in bootloader (DFU) mode and
+# the firmware is copied there as a .uf2 file. The converter in uf2.py turns
+# the linked .hex into a .uf2 with absolute addresses, so no flash base has
+# to be hardcoded.
+
+def generate_uf2_action(source, target, env):
+    build_dir = env.subst("$BUILD_DIR")
+    progname  = env.subst("$PROGNAME")
+    hex_path  = build_dir + "/" + progname + ".hex"
+    uf2_path  = build_dir + "/" + progname + ".uf2"
+    try:
+        out, blocks = generate_uf2(hex_path, uf2_path)
+        print("*** Generated UF2: %s (%d blocks)" % (out, blocks))
+        return None
+    except Exception as exc:
+        print("*** UF2 generation failed: %s" % exc)
+        return None
 
 def pre_upload(source, target, env):
     print("*** Executing pre_upload steps...")
@@ -162,6 +185,8 @@ def device_provision(env):
             env.Execute("rnodeconf --product 10 --model 14 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "techo" | "techo_local":
             env.Execute("rnodeconf --product 15 --model 17 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
+        case "t1000e":
+            env.Execute("rnodeconf --product 16 --model 19 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "heltec_t114" | "heltec_t114_local":
             env.Execute("rnodeconf --product c2 --model c7 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case _:
@@ -250,7 +275,15 @@ def firmware_package(env):
         zip_cmd += build_dir + "/" + env.subst("$PROGNAME") + ".map "
         env.Execute(zip_cmd)
     elif (platform == "nordicnrf52"):
-        env.Execute("cp " + build_dir + "/" + env.subst("$PROGNAME") + ".zip " + project_dir + "/Release/.")
+        # The T1000-E ships a UF2 image, not an nrfutil DFU .zip (its
+        # upload_protocol is "custom"), so only copy the .zip for the
+        # serial-DFU boards that actually produce one.
+        if variant != "t1000e":
+            env.Execute("cp " + build_dir + "/" + env.subst("$PROGNAME") + ".zip " + project_dir + "/Release/.")
+        # UF2 image for Adafruit/Seeed mass-storage-bootloader boards (T1000-E).
+        uf2_artifact = build_dir + "/" + env.subst("$PROGNAME") + ".uf2"
+        if os.path.exists(uf2_artifact):
+            env.Execute("cp " + uf2_artifact + " " + project_dir + "/Release/.")
     else:
         env.Execute("cp " + build_dir + "/" + env.subst("$PROGNAME") + " " + build_dir + "/rnoded")
         env.Execute("rm -f " + project_dir + "/Release/rnoded-" + get_target() + ".zip")
@@ -299,9 +332,20 @@ elif (platform == "nordicnrf52"):
     # remove --specs=nano.specs to allow exceptions to work
     if '--specs=nano.specs' in env['LINKFLAGS']:
         env['LINKFLAGS'].remove('--specs=nano.specs')
+    # Generate a UF2 image alongside the linked .hex for boards that flash
+    # via the Adafruit/Seeed mass-storage bootloader (e.g. T1000-E). The
+    # .hex is emitted by the Arduino core's objcopy step, so this post-action
+    # fires once it exists. Harmless on boards that never use the .uf2.
+    env.AddPostAction("$BUILD_DIR/${PROGNAME}.hex", generate_uf2_action)
+    # The T1000-E is a UF2 board: with upload_protocol = custom the nrfutil
+    # DFU .zip is never produced, so package the .hex (whose post-action above
+    # also emits the distributable .uf2) instead of the .zip.
+    _package_dep = ("$BUILD_DIR/${PROGNAME}.hex"
+                    if env.GetProjectOption("custom_variant", "") == "t1000e"
+                    else "$BUILD_DIR/${PROGNAME}.zip")
     env.AddCustomTarget(
         name="package",
-        dependencies="$BUILD_DIR/${PROGNAME}.zip",
+        dependencies=_package_dep,
         actions=[
             target_package
         ],
@@ -319,6 +363,36 @@ else:
         description="Package native daemon for delivery"
     )
 
-# Register actions
-env.AddPreAction("upload", pre_upload)
-env.AddPostAction("upload", post_upload)
+# Register upload actions.
+#
+# The T1000-E flashes by dragging a .uf2 onto its DFU mass-storage volume,
+# not over serial DFU, so its `upload` target generates the .uf2 and copies
+# it to the mounted volume (with drag-and-drop instructions as a fallback).
+# The serial-DFU / rnodeconf pre- and post-upload steps are only wired up for
+# the other boards that actually use nrfutil.
+variant = env.GetProjectOption("custom_variant", "")
+if variant == "t1000e":
+    env.AddCustomTarget(
+        name="uf2",
+        dependencies="$BUILD_DIR/${PROGNAME}.hex",
+        actions=[generate_uf2_action],
+        title="Generate UF2",
+        description="Build a .uf2 file for drag-and-drop flashing"
+    )
+    # The T1000-E flashes via UF2 mass storage, not serial DFU. Drive the
+    # platform's own "upload" target (seeed_t1000e sets upload_protocol =
+    # custom) with a UPLOADCMD that converts the linked .hex to UF2 and copies
+    # it onto the mounted DFU volume.
+    #
+    # We deliberately do NOT call env.AddCustomTarget(name="upload", ...):
+    # extra_script.py runs as a `pre:` script, i.e. *before* the nordicnrf52
+    # platform registers its "upload" target in main.py. Registering the same
+    # name twice trips `assert name not in env["__PIO_TARGETS"]` inside PIO's
+    # piotarget.AddTarget and aborts the build.
+    project_dir = env.subst("$PROJECT_DIR")
+    env.Replace(
+        UPLOADCMD='"$PYTHONEXE" "%s/uf2.py" --hex "$SOURCE"' % project_dir
+    )
+else:
+    env.AddPreAction("upload", pre_upload)
+    env.AddPostAction("upload", post_upload)
