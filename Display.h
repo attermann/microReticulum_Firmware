@@ -103,7 +103,7 @@
   #define DISP_ADDR -1
 #elif BOARD_MODEL == BOARD_TBEAM_S_V1
   #define DISP_RST -1
-  #define DISP_ADDR 0x3C
+  #define DISP_ADDR 0x3D
   #define SCL_OLED 18
   #define SDA_OLED 17
   #define DISP_CUSTOM_ADDR false
