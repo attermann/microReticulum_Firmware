@@ -45,6 +45,7 @@
   #define BOARD_XIAO_NRF52840 0x52
   #define BOARD_XIAO_ESP32S3  0x53
   #define BOARD_HWSL_V1       0x43
+   #define BOARD_HELTEC_T114   0x54
 
   #if defined(__AVR_ATmega1284P__)
     #define PLATFORM PLATFORM_AVR
@@ -72,6 +73,10 @@
       #define MODEM SX1262
     #elif BOARD_MODEL == BOARD_GENERIC_NRF52
       #define MODEM SX1262
+
+    #elif BOARD_MODEL == BOARD_HELTEC_T114
+      #define MODEM SX1262
+
     #else
       #define MODEM SX1276
     #endif
@@ -474,11 +479,11 @@
       #define HAS_RF_SWITCH_RX_TX true
       #define HAS_BUSY true
       #define DIO2_AS_RF_SWITCH true
+      #define EEPROM_SIZE 296
+      #define EEPROM_OFFSET EEPROM_SIZE-EEPROM_RESERVED
       #define CONFIG_UART_BUFFER_SIZE 6144
       #define CONFIG_QUEUE_SIZE 6144
       #define CONFIG_QUEUE_MAX_LENGTH 200
-      #define EEPROM_SIZE 296
-      #define EEPROM_OFFSET EEPROM_SIZE-EEPROM_RESERVED
       #define BLE_MANUFACTURER "RAK Wireless"
       #define BLE_MODEL "RAK4640"
 
@@ -546,6 +551,47 @@
       const int pin_dio = 1;       // D1 → P0.03 (DIO1/IRQ)
       const int pin_led_rx = LED_RED;
       const int pin_led_tx = LED_RED;
+      const int pin_tcxo_enable = -1;
+
+      #elif BOARD_MODEL == BOARD_HELTEC_T114
+      #define HAS_DISPLAY false
+      #undef HAS_BLE
+      #define HAS_BLE false
+      #define HAS_BLUETOOTH false
+      #define HAS_EEPROM false
+      #define HAS_PMU false
+      #define HAS_NP false
+      #undef HAS_TCXO
+      #define HAS_TCXO true
+      #define DIO2_AS_RF_SWITCH true
+      #undef HAS_BUSY
+      #define HAS_BUSY true
+
+      #define CONFIG_UART_BUFFER_SIZE 6144
+      #define CONFIG_QUEUE_SIZE 6144
+      #define CONFIG_QUEUE_MAX_LENGTH 200
+      #define HAS_CONSOLE false
+      #define HAS_SD false
+      #define HAS_INPUT false
+      #define HAS_SLEEP false
+      #define VALIDATE_FIRMWARE false
+      #define LED_ON HIGH
+      #define LED_OFF LOW
+
+
+      #define EEPROM_SIZE 296
+      #define EEPROM_OFFSET EEPROM_SIZE-EEPROM_RESERVED
+      #define BLE_MANUFACTURER "Heltec"
+      #define BLE_MODEL "T114"
+      const int pin_reset = SX126X_RESET;
+      const int pin_cs = SX126X_CS;
+      const int pin_sclk = PIN_SPI_SCK;
+      const int pin_mosi = PIN_SPI_MOSI;
+      const int pin_miso = PIN_SPI_MISO;
+      const int pin_busy = SX126X_BUSY;
+      const int pin_dio = SX126X_DIO1;
+      const int pin_led_rx = LED_BLUE;
+      const int pin_led_tx = LED_BLUE;
       const int pin_tcxo_enable = -1;
 
     #else

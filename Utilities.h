@@ -411,7 +411,7 @@ extern RNS::Reticulum reticulum;
 		void led_tx_off() { digitalWrite(pin_led_tx, LOW); }
 	#endif
 #elif MCU_VARIANT == MCU_NRF52
-    #if BOARD_MODEL == BOARD_RAK4631
+    #if BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_HELTEC_T114
 		void led_rx_on()  { digitalWrite(pin_led_rx, HIGH); }
 		void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
 		void led_tx_on()  { digitalWrite(pin_led_tx, HIGH); }
@@ -1735,7 +1735,7 @@ bool eeprom_model_valid() {
 	if (model == MODEL_C5 || model == MODEL_CA) {
 	#elif BOARD_MODEL == BOARD_HWSL_V1
 	if (model == MODEL_CB || model == MODEL_CC) {
-    #elif BOARD_MODEL == BOARD_RAK4631
+    #elif BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_HELTEC_T114
     if (model == MODEL_11 || model == MODEL_12) {
     #elif BOARD_MODEL == BOARD_XIAO_NRF52840
     if (model == MODEL_11 || model == MODEL_12) {

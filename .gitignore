@@ -9,3 +9,4 @@ Console/build
 build/*
 .venv
 .pio
+*.bak*
