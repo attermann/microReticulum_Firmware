@@ -2,6 +2,7 @@ import time
 import hashlib
 import shutil
 import platform as platformlib
+from pathlib import Path
 
 from firmware_image import esp_image_sha256, firmware_hash_kiss_frame
 
@@ -106,10 +107,13 @@ def pre_clean(env):
     print("Variant:", env.GetProjectOption("custom_variant"))
     project_dir = env.subst("$PROJECT_DIR")
     print("project_dir:", project_dir)
-    env.Execute("rm -f " + project_dir + "/Release/" + env.subst("$PROGNAME") + ".zip")
-    env.Execute("rm -f " + project_dir + "/Debug/" + env.subst("$PROGNAME") + ".elf")
-    env.Execute("rm -f " + project_dir + "/Debug/" + env.subst("$PROGNAME") + ".map")
-    env.Execute("rm -f " + project_dir + "/Release/" + env.subst("$PROGNAME") + "_debug.zip")
+    program_name = env.subst("$PROGNAME")
+    Execute([
+        Delete(Path(project_dir, "Release", f"{program_name}.zip")),
+        Delete(Path(project_dir, "Debug", f"{program_name}.elf")),
+        Delete(Path(project_dir, "Debug", f"{program_name}.map")),
+        Delete(Path(project_dir, "Release", f"{program_name}_debug.zip"))
+    ])
 
 def full_clean(env):
     print("*** Executing full_clean steps...")
@@ -225,8 +229,10 @@ def firmware_package(env):
     #build_dir = env.subst("$BUILD_DIR").get_abspath()
     build_dir = env.subst("$BUILD_DIR")
     print("build_dir:", build_dir)
-    env.Execute("mkdir -p " + project_dir + "/Release")
-    env.Execute("mkdir -p " + project_dir + "/Debug")
+    Execute([
+        Mkdir(Path(project_dir, "Release")),
+        Mkdir(Path(project_dir, "Debug"))
+    ])
     if (platform == "espressif32"):
         #env.Execute("cp " + packages_dir + "/framework-arduinoespressif32/tools/partitions/boot_app0.bin " + build_dir + "/rnode_firmware_" + variant + ".boot_app0")
         env.Execute("cp ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin " + build_dir + "/rnode_firmware_" + variant + ".boot_app0")
@@ -250,7 +256,7 @@ def firmware_package(env):
         zip_cmd += build_dir + "/" + env.subst("$PROGNAME") + ".map "
         env.Execute(zip_cmd)
     elif (platform == "nordicnrf52"):
-        env.Execute("cp " + build_dir + "/" + env.subst("$PROGNAME") + ".zip " + project_dir + "/Release/.")
+        env.Execute(Copy(Path(project_dir, "Release"), Path(build_dir, f"{env.subst('$PROGNAME')}.zip"))) # dest-source-convention!
     else:
         env.Execute("cp " + build_dir + "/" + env.subst("$PROGNAME") + " " + build_dir + "/rnoded")
         env.Execute("rm -f " + project_dir + "/Release/rnoded-" + get_target() + ".zip")
@@ -261,7 +267,7 @@ def firmware_package(env):
         zip_cmd += project_dir + "/rnoded.example.service "
         env.Execute(zip_cmd)
         get_target()
-    env.Execute("python3 " + project_dir + "/release_hashes.py > " + project_dir + "/Release/release.json")
+    env.Execute(f"$PYTHONEXE {Path(project_dir, 'release_hashes.py')} > {Path(project_dir, 'Release/release.json')}")
 
 #
 # Main script
