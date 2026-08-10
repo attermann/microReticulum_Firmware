@@ -388,7 +388,7 @@ void setup() {
   #endif
   randomSeed(seed_val);
 
-  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_RNODE_NG_22 && BOARD_MODEL != BOARD_XIAO_NRF52840
+  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_RNODE_NG_22 && BOARD_MODEL != BOARD_XIAO_NRF52840 && BOARD_MODEL != BOARD_HELTEC_T114
   // Some boards need to wait until the hardware UART is set up before booting
   // the full firmware. In the case of the RAK4631 and XIAO nRF52840, the line
   // below will wait until a serial connection is actually established with a
@@ -1840,7 +1840,20 @@ void loop() {
 		  ((FileSystem*)filesystem.get())->prune_cache();
 		  last_cache_prune = millis();
 	  }
-  }
+// Heartbeat: lampeggio breve ogni 5s per segnalare che il nodo RNS è vivo
+  static uint32_t last_hb = 0;
+  static bool hb_on = false;
+  uint32_t hb_now = millis();
+  if (!hb_on && hb_now - last_hb > 5000) {
+    digitalWrite(pin_led_rx, LED_ON);
+    hb_on = true;
+    last_hb = hb_now;
+  } else if (hb_on && hb_now - last_hb > 50) {
+    digitalWrite(pin_led_rx, LED_OFF);
+    hb_on = false;
+    last_hb = hb_now;
+  }  
+}
 #endif
 
   // GPIO Control: periodic announces, message handling
