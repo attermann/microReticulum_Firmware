@@ -108,9 +108,6 @@ void wifi_remote_start_sta() {
   }
 
   WiFi.setMinSecurity(WIFI_AUTH_WPA2_PSK);
-#if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
-  WiFi.setPmf(true, false);   // capable, not required
-#endif
 
   //WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
   //  printf("[WiFi] event=%d\n", event);
