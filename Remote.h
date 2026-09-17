@@ -55,6 +55,9 @@ RNS::Bytes udp_buffer;
 extern RNS::Interface udp_interface;
 #endif
 #endif
+#if defined(TCP_TRANSPORT) && defined(HAS_RNS)
+extern RNS::Interface tcp_interface;
+#endif
 
 uint8_t wifi_mode = WIFI_OFF;
 bool wifi_init_ran = false;
@@ -152,11 +155,17 @@ void wifi_remote_start() {
 #if defined(UDP_TRANSPORT)
     udp.begin(udp_port);
 #endif
+#if defined(TCP_TRANSPORT) && defined(HAS_RNS)
+    if (tcp_interface) { tcp_interface.start(); }
+#endif
   } else {
     remote_listener.end();
     wr_state = WR_STATE_OFF;
 #if defined(UDP_TRANSPORT)
     udp.stop();
+#endif
+#if defined(TCP_TRANSPORT) && defined(HAS_RNS)
+    if (tcp_interface) { tcp_interface.stop(); }
 #endif
   }
 }
@@ -247,6 +256,11 @@ void wifi_update_status() {
 }
 
 void update_wifi() {
+#if defined(TCP_TRANSPORT) && defined(HAS_RNS)
+  if (wifi_initialized && tcp_interface) {
+    tcp_interface.loop();
+  }
+#endif
 #if defined(UDP_TRANSPORT)
   if (wifi_initialized) {
     if (udp.parsePacket() > 0) {

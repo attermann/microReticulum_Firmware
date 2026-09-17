@@ -23,6 +23,9 @@
 #if defined(UDP_TRANSPORT)
 #include "UDPInterface.h"
 #endif
+#if defined(TCP_TRANSPORT)
+#include "TCPInterface.h"
+#endif
 #ifdef URTN_STATS_PAGES
 #include "Pages.h"
 #endif
@@ -59,6 +62,12 @@ SPIClass SDSPI(HSPI);
 
 // WDT timeout
 #define WDT_TIMEOUT 60  // seconds
+
+// Runtime RNS log level applied at startup (override with a build flag,
+// e.g. -DRNS_DEFAULT_LOGLEVEL=RNS::LOG_INFO). Bounded by RNS_LOG_LEVEL.
+#ifndef RNS_DEFAULT_LOGLEVEL
+  #define RNS_DEFAULT_LOGLEVEL RNS::LOG_TRACE
+#endif
 
 FIFOBuffer serialFIFO;
 uint8_t serialBuffer[CONFIG_UART_BUFFER_SIZE+1];
@@ -215,6 +224,9 @@ RNS::Reticulum reticulum(RNS::Type::NONE);
 RNS::Interface lora_interface(RNS::Type::NONE);
 #if defined(UDP_TRANSPORT)
 RNS::Interface udp_interface(RNS::Type::NONE);
+#endif
+#if defined(TCP_TRANSPORT)
+RNS::Interface tcp_interface(RNS::Type::NONE);
 #endif
 #if defined(RNS_USE_FS)
   // CBA microStore
@@ -791,6 +803,12 @@ void setup() {
       if (EEPROM.read(eeprom_addr(ADDR_CONF_BT)) == 0xFF) {
         eeprom_update(eeprom_addr(ADDR_CONF_BT), BT_ENABLE_BYTE);
       }
+    #endif
+    // An erased WiFi mode byte (0xFF) is neither STA nor AP, so WiFi never
+    // starts, but it is also != WR_WIFI_OFF, which used to let the WiFi
+    // interfaces be created and registered with Transport in a dead state.
+    // Normalize it to OFF on every board that has EEPROM and WiFi.
+    #if HAS_WIFI && HAS_EEPROM
       if (EEPROM.read(eeprom_addr(ADDR_CONF_WIFI)) == 0xFF) {
         eeprom_update(eeprom_addr(ADDR_CONF_WIFI), WR_WIFI_OFF);
       }
@@ -1021,10 +1039,18 @@ void setup() {
       lora_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
 #endif
 #if HAS_WIFI && defined(UDP_TRANSPORT)
-      if (wifi_mode != WR_WIFI_OFF) {
+      if (wifi_mode == WR_WIFI_STA || wifi_mode == WR_WIFI_AP) {
         udp_interface = new UDPInterface();
         // Provisioning default
         udp_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
+      }
+#endif
+#if HAS_WIFI && defined(TCP_TRANSPORT)
+      if (wifi_mode == WR_WIFI_STA || wifi_mode == WR_WIFI_AP) {
+        tcp_impl = new TCPInterface();
+        tcp_interface = tcp_impl;
+        // Provisioning default
+        tcp_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
       }
 #endif
 
@@ -1059,7 +1085,9 @@ void setup() {
 #if defined(RNS_MEM_LOG)
       RNS::loglevel(RNS::LOG_MEM);
 #else
-      RNS::loglevel(RNS::LOG_TRACE);
+      // Runtime level; the compile-time ceiling is RNS_LOG_LEVEL. A quiet
+      // build sets both (see the *-quiet envs in platformio.ini).
+      RNS::loglevel(RNS_DEFAULT_LOGLEVEL);
 #endif
 
 #if defined(LORA_TRANSPORT)
@@ -1068,10 +1096,17 @@ void setup() {
       TRACEF("LoRaInterface hash: %s", lora_interface.get_hash().toHex().c_str());
 #endif
 #if HAS_WIFI && defined(UDP_TRANSPORT)
-      if (wifi_mode != WR_WIFI_OFF) {
+      if (udp_interface) {
         HEAD("Registering UDP Interface...", RNS::LOG_TRACE);
         RNS::Transport::register_interface(udp_interface);
         TRACEF("UDPInterface hash: %s", udp_interface.get_hash().toHex().c_str());
+      }
+#endif
+#if HAS_WIFI && defined(TCP_TRANSPORT)
+      if (tcp_interface) {
+        HEAD("Registering TCP Interface...", RNS::LOG_TRACE);
+        RNS::Transport::register_interface(tcp_interface);
+        TRACEF("TCPInterface hash: %s", tcp_interface.get_hash().toHex().c_str());
       }
 #endif
 
@@ -1085,6 +1120,16 @@ printf("[init] op_mode: %U\n", op_mode);
         reticulum.transport_enabled(false);
       }
       reticulum.start();
+
+#if HAS_WIFI && defined(TCP_TRANSPORT)
+      // WiFi came up in wifi_remote_init() before this interface existed, so
+      // wifi_remote_start() could not start it. Provisioning has now loaded
+      // tcp_mode/tcp_host/tcp_port, so start it here; start() is idempotent
+      // and wifi_remote_start() handles later WiFi restarts.
+      if (tcp_interface && wifi_initialized) {
+        tcp_interface.start();
+      }
+#endif
 
       // Set loop callback only after the Reticulum instance is started
       // (to avoid looping without a completely initialized instance)

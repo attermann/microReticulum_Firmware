@@ -49,6 +49,7 @@ Instructions for command line builds and packaging for firmware distribution.
 
 - `-DHAS_RNS` Used to enable the microReticulum RNS stack and transport node.
 - `-DUDP_TRANSPORT` Used to enable WiFi connection (when configured through `rnodeconf` as an additional transport medium (currently hard-coded to use port 4242).
+- `-DTCP_TRANSPORT` Adds a Reticulum TCP interface over the same WiFi connection; setup walkthrough in [docs/Setup.md](docs/Setup.md). Defaults to client mode, dialling out to the host/port set in the `RNode Network Config` Provisioning namespace (`TCP Mode`, `TCP Host`, `TCP Port`); with an empty host it stays idle. Server mode listens on `TCP Port` for inbound `TCPClientInterface` peers. Frames use the HDLC framing spoken by Python RNS TCP interfaces.
 
 ## PlatformIO Command Line
 
