@@ -783,11 +783,13 @@ void setup() {
       pmu_ready = init_pmu();
     #endif
 
-    // Seed only erased Tracker V2 settings. Explicit user choices (including
-    // disabling BLE) are represented by non-0xFF values and remain intact.
+    // Seed only erased Tracker V2 and Wireless Paper settings. Explicit user
+    // choices (including disabling BLE) are represented by non-0xFF values and
+    // remain intact. BLE must be on for device_init() to succeed, otherwise a
+    // freshly provisioned board keeps reporting a missing configuration.
     // Radio parameters intentionally remain unset because frequency and power
     // require a region-appropriate choice during onboarding.
-    #if BOARD_MODEL == BOARD_HELTEC_TRACKER_V2 && HAS_EEPROM
+    #if (BOARD_MODEL == BOARD_HELTEC_TRACKER_V2 || BOARD_MODEL == BOARD_HELTEC_WIRELESS_PAPER) && HAS_EEPROM
       if (EEPROM.read(eeprom_addr(ADDR_CONF_BT)) == 0xFF) {
         eeprom_update(eeprom_addr(ADDR_CONF_BT), BT_ENABLE_BYTE);
       }
@@ -2812,6 +2814,12 @@ void sleep_now() {
           digitalWrite(LORA_PA_CTX, LOW);
           digitalWrite(LORA_PA_CSD, LOW);
           digitalWrite(LORA_PA_PWR_EN, LOW);
+          digitalWrite(Vext, VEXT_OFF);
+      #endif
+      #if BOARD_MODEL == BOARD_HELTEC_WIRELESS_PAPER
+          #if HAS_DISPLAY
+            if (disp_ready) display.hibernate();
+          #endif
           digitalWrite(Vext, VEXT_OFF);
       #endif
       #if PIN_DISP_SLEEP >= 0
