@@ -53,6 +53,7 @@ prep-nrf:
 	arduino-cli lib install "GxEPD2"
 	arduino-cli config set library.enable_unsafe_install true
 	arduino-cli lib install --git-url https://github.com/liamcottle/esp8266-oled-ssd1306#e16cee124fe26490cb14880c679321ad8ac89c95
+	arduino-cli lib install --git-url https://github.com/RAKWireless/RAK13800-W5100S
 	pip install adafruit-nrfutil --upgrade
 
 console-site:
