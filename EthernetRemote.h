@@ -44,6 +44,8 @@
 #define ETH_TX_FLUSH_MS        20     // flush partial output that is not FEND-terminated
 #define ETH_RX_BUF_SIZE        512
 #define ETH_TX_BUF_SIZE        1024   // holds a fully escaped maximum-length KISS frame
+#define ETH_RAIL_SETTLE_MS     100    // 3V3_S switch-on to first reset pulse
+#define ETH_PROBE_ATTEMPTS     3      // failed chip probes before the module is declared absent
 
 uint32_t eth_last_read        = 0;
 uint32_t eth_last_poll        = 0;
@@ -53,6 +55,7 @@ uint32_t eth_last_chip_check  = 0;
 bool     eth_initialized      = false;
 bool     eth_hw_detected      = false; // W5100S answered at least once
 bool     eth_hw_absent        = false; // W5100S confirmed absent; never touch the library again
+uint8_t  eth_probe_failures   = 0;
 
 // Bytes read from the socket in bulk and handed out one at a time by
 // eth_remote_read(). Refilled only when empty, so a plain linear buffer
@@ -194,10 +197,6 @@ void eth_power_on() {
   digitalWrite(ETH_PWR_PIN, HIGH);
 }
 
-static void eth_power_off() {
-  digitalWrite(ETH_PWR_PIN, LOW);
-}
-
 static void eth_hw_reset() {
   pinMode(ETH_RST_PIN, OUTPUT);
   digitalWrite(ETH_RST_PIN, LOW);  delay(100);
@@ -212,8 +211,13 @@ static bool eth_start() {
   if (eth_hw_detected && Ethernet.linkStatus() != LinkON) { return false; }
   int status = Ethernet.begin(eth_mac, ETH_DHCP_TIMEOUT_MS, ETH_DHCP_RESPONSE_MS);
   if (status == 0) {
-    if (Ethernet.hardwareStatus() == EthernetNoHardware) { eth_hw_absent = true; }
-    else                                                  { eth_hw_detected = true; }
+    if (Ethernet.hardwareStatus() == EthernetNoHardware) {
+      // A chip that was slow to come up must not be written off for good:
+      // give it a few tries (30 s apart, from update_eth) before giving up.
+      if (++eth_probe_failures >= ETH_PROBE_ATTEMPTS) { eth_hw_absent = true; }
+    } else {
+      eth_hw_detected = true;
+    }
     return false;
   }
   eth_hw_detected = true;
@@ -251,6 +255,7 @@ void update_eth() {
   if (!eth_initialized) {
     if (now - eth_last_retry >= ETH_RETRY_MS && eth_radio_quiet()) {
       eth_last_retry = now;
+      if (!eth_hw_detected) { eth_hw_reset(); } // still probing: start each attempt from a clean chip
       if (eth_start()) { eth_initialized = true; eth_last_chip_check = now; }
     }
     return;
@@ -272,10 +277,12 @@ void update_eth() {
   }
 }
 
-// Called once from setup(), after the external-flash probe: the RAK15001
-// probe drives the same chip select, and the reset pulse below returns the
-// chip to a clean state afterwards. Expects eth_power_on() to have run
-// early enough for the 3V3_S rail to be stable.
+// Called once at the very end of setup(). The RAK15001 probe earlier in
+// setup() drives the same chip select, so the chip is reset here before
+// first use. The rail itself is switched on at the top of setup(): on PoE
+// the switch drops the port unless the board keeps drawing its minimum
+// "maintain power signature" current, and only the W5100S gets a bare
+// nRF52 with the radio off above that threshold.
 bool eth_init() {
   if (spi_ss_in_use) {
     printf("[ETH] IO-slot chip select is used by external flash, Ethernet disabled\n");
@@ -284,12 +291,13 @@ bool eth_init() {
   }
 
   eth_get_mac(eth_mac);
+  eth_power_on(); // already on since the top of setup(); harmless to repeat
+  delay(ETH_RAIL_SETTLE_MS);
   eth_hw_reset();
 
   if (!eth_start()) {
-    if (eth_hw_absent) {
-      printf("[ETH] no W5100S module found\n");
-      eth_power_off(); // leave the switched rail as it was on boards without the module
+    if (Ethernet.hardwareStatus() == EthernetNoHardware) {
+      printf("[ETH] no W5100S module found, will probe again\n");
     } else if (Ethernet.linkStatus() == LinkOFF) {
       printf("[ETH] cable not connected, will retry\n");
     } else {

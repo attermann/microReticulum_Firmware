@@ -471,6 +471,15 @@ void dump_filesystem(const char* basepath, uint8_t level = 0, uint8_t max_level 
 
 void setup() {
 
+  #if HAS_ETHERNET == true
+    // Power the Ethernet module before anything else. A PoE switch drops the
+    // port when the powered device stops drawing its minimum "maintain power
+    // signature" current, and a bare nRF52 with the radio off sits below that
+    // threshold; the W5100S keeps the board above it while the rest of setup()
+    // runs.
+    eth_power_on();
+  #endif
+
   // Initialise serial communication
   memset(serialBuffer, 0, sizeof(serialBuffer));
   fifo_init(&serialFIFO, serialBuffer, CONFIG_UART_BUFFER_SIZE);
@@ -558,12 +567,6 @@ void setup() {
   #endif
 
   #if MCU_VARIANT == MCU_NRF52
-    #if HAS_ETHERNET == true
-      // Switched 3V3_S rail for the WisBlock IO slot. eth_init() runs at the
-      // end of setup() and turns it off again if no Ethernet module answers.
-      eth_power_on();
-    #endif
-
     #if BOARD_MODEL == BOARD_TECHO
       delay(200);
       pinMode(PIN_VEXT_EN, OUTPUT);
@@ -1188,8 +1191,9 @@ printf("[init] op_mode: %U\n", op_mode);
 #endif  // HAS_RNS
 
   #if HAS_ETHERNET == true
-    // Deliberately after the external-flash probe above, which drives the
-    // same IO-slot chip select as the Ethernet module.
+    // Deliberately last: the external-flash probe above drives the same
+    // IO-slot chip select, and the reset pulse in eth_init() returns the chip
+    // to a clean state afterwards.
     if (!console_active) { eth_init(); }
   #endif
 }
