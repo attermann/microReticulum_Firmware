@@ -75,6 +75,8 @@ extern bool kiss_framed_logs;
 extern bool nomadnet_enabled;
 extern RNS::Destination nomadnet_destination;
 extern char nomadnet_name[64];
+extern char lora_ifac_netname[64];
+extern char lora_ifac_netkey[64];
 extern float battery_voltage;
 extern float battery_percent;
 extern uint8_t battery_state;
@@ -214,7 +216,27 @@ static void register_provisioning_namespaces() {
           /* getter   */ []() {
             return static_cast<fint_t>(lora_interface.mode());
           }
-      );
+      )
+      // Interface access code of the LoRa interface, as the ifac_netname /
+      // ifac_netkey (passphrase) of a Python RNS interface: both empty =
+      // off. Applied when the persisted values are loaded at boot.
+      .field_string("LoRa IFAC Network Name", PROV_GENERAL_LORA_IFAC_NAME, FF_REBOOT_REQUIRED,
+          lora_ifac_netname, sizeof(lora_ifac_netname)-1,
+          [](const Value& v) {
+            strncpy(lora_ifac_netname, v.as_string().c_str(), sizeof(lora_ifac_netname)-1);
+            lora_interface.setup_ifac(lora_ifac_netname, lora_ifac_netkey);
+            return true;
+          },
+          []() { return lora_ifac_netname; })
+      .field_string("LoRa IFAC Passphrase", PROV_GENERAL_LORA_IFAC_KEY,
+          FF_REBOOT_REQUIRED | FF_SECRET,
+          lora_ifac_netkey, sizeof(lora_ifac_netkey)-1,
+          [](const Value& v) {
+            strncpy(lora_ifac_netkey, v.as_string().c_str(), sizeof(lora_ifac_netkey)-1);
+            lora_interface.setup_ifac(lora_ifac_netname, lora_ifac_netkey);
+            return true;
+          },
+          []() { return ""; });
   }
 #endif
 

@@ -95,6 +95,9 @@ bool kiss_framed_logs = true;
 bool nomadnet_enabled = true;
 RNS::Destination nomadnet_destination = {RNS::Type::NONE};
 char nomadnet_name[64];
+// LoRa interface access code (IFAC), set through Provisioning; empty = off.
+char lora_ifac_netname[64] = "";
+char lora_ifac_netkey[64] = "";
 
 #if HAS_CONSOLE
   #include "Console.h"

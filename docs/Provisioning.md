@@ -21,6 +21,7 @@ This guide walks through using the **RNode Console** (the single-page web app sh
   - [Node Config](#node-config)
   - [Transport Config](#transport-config)
   - [Logs](#logs)
+- [LoRa interface access code (IFAC)](#lora-interface-access-code-ifac)
 - [Caveats and pitfalls](#caveats-and-pitfalls)
   - [RNS over LoRa](#rns-over-lora)
   - [Security and exposure](#security-and-exposure)
@@ -201,6 +202,32 @@ Visible only when the firmware advertises any Provisioning namespace with id < 1
 ### Logs
 
 Visible on Serial / BLE / WebSocket connections. Streams KISS `CMD_LOG` frames from the device. Use the toolbar to clear, pause / resume follow, and download. Hidden on RNS connections.
+
+## LoRa interface access code (IFAC)
+
+An interface access code lets several networks share a LoRa channel: every packet carries a code derived from a network name and/or passphrase, and nodes drop packets whose code doesn't match. It is the same mechanism as `network_name` / `passphrase` on a Python RNS interface — all nodes on the channel must use the same values.
+
+The LoRa interface's IFAC is set with two fields of the **General** namespace (**Transport Config** tab):
+
+| Field | Id | Flags | Notes |
+|---|---|---|---|
+| `LoRa IFAC Network Name` | 8 | `REBOOT_REQUIRED` | Readable. |
+| `LoRa IFAC Passphrase` | 9 | `REBOOT_REQUIRED`, `SECRET` | Persisted, never returned by `GET_STATE`. |
+
+Both empty (the default) = IFAC off. Commit, then reboot: the values are applied at boot. `ifac_size` is 8 bytes, the RNode/LoRa default of Python RNS.
+
+From a script, `rnode_ifac.py` (repository root) sets them over USB and reboots the node, reading the passphrase from a file rather than the command line:
+
+```
+$ cat ifac.json
+{"network_name": "my-network", "passphrase": "my passphrase"}
+$ ./rnode_ifac.py /dev/ttyACM0 set ifac.json
+$ ./rnode_ifac.py /dev/ttyACM0 get        # after the reboot
+IFAC network name: 'my-network'
+$ ./rnode_ifac.py /dev/ttyACM0 off
+```
+
+Changing the IFAC of a node you manage over LoRa cuts it off from nodes that don't share the new values: change the other nodes first, or do it over USB.
 
 ## Caveats and pitfalls
 
