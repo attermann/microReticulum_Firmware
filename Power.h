@@ -19,6 +19,17 @@
 bool pmu_temp_sensor_ready = false;
 float pmu_temperature = PMU_TEMP_MIN-1;
 
+#if PLATFORM == PLATFORM_ESP32 && IS_ESP32S3
+  #include <esp_wifi.h>
+  // Temperature read schedule (ESP32-S3), see measure_temperature().
+  #define PMU_TEMP_INTERVAL_MS 60000
+  #define PMU_TEMP_SETTLE_MS   500
+  uint32_t pmu_temp_last_read = 0;   // 0 = never read
+  uint32_t pmu_temp_awake_since = 0; // 0 = not waiting for the modem
+  bool pmu_temp_ps_changed = false;
+  wifi_ps_type_t pmu_temp_prev_ps = WIFI_PS_NONE;
+#endif
+
 #if BOARD_MODEL == BOARD_TBEAM || BOARD_MODEL == BOARD_TBEAM_S_V1
   #include <XPowersLib.h>
   XPowersLibInterface* PMU = NULL;
@@ -230,7 +241,46 @@ void kiss_indicate_temperature();
 
 void measure_temperature() {
   #if PLATFORM == PLATFORM_ESP32
-    if (pmu_temp_sensor_ready) { pmu_temperature = temperatureRead(); } else { pmu_temperature = PMU_TEMP_MIN-1; }
+    if (!pmu_temp_sensor_ready) { pmu_temperature = PMU_TEMP_MIN-1; return; }
+    #if IS_ESP32S3
+      // ESP32-S3: temperatureRead() busy-waits on the SAR temperature
+      // sensor inside a critical section, while the Wi-Fi task powers that
+      // sensor down when the PHY goes to modem sleep (esp_phy_disable ->
+      // temperature_sensor_power_release, same spinlock): the two cores
+      // deadlock and the interrupt watchdog resets the board (Core 1 in
+      // temperatureRead via update_pmu, Core 0 in
+      // ppTask/pm_sleep/esp_phy_disable). With a read every second it hits
+      // about once a day while Wi-Fi is on.
+      // So: read once a minute, and only with Wi-Fi power save off — the
+      // PHY then isn't powered down — restoring the previous mode right
+      // after. The wait for the modem to wake is spread over later calls
+      // (update_pmu runs every second): the loop is never blocked.
+      uint32_t now = millis();
+      if (pmu_temp_awake_since == 0) {
+        if (pmu_temp_last_read != 0 && now - pmu_temp_last_read < PMU_TEMP_INTERVAL_MS) return;
+        wifi_ps_type_t ps;
+        // No power save to worry about when the Wi-Fi driver isn't running.
+        if (esp_wifi_get_ps(&ps) == ESP_OK && ps != WIFI_PS_NONE) {
+          if (esp_wifi_set_ps(WIFI_PS_NONE) != ESP_OK) {
+            pmu_temp_last_read = now | 1; // can't make it safe: skip this round
+            return;
+          }
+          pmu_temp_prev_ps = ps;
+          pmu_temp_ps_changed = true;
+          pmu_temp_awake_since = now | 1;
+          return;
+        }
+      } else if (now - pmu_temp_awake_since < PMU_TEMP_SETTLE_MS) {
+        return;
+      }
+      pmu_temperature = temperatureRead();
+      if (pmu_temp_ps_changed) { esp_wifi_set_ps(pmu_temp_prev_ps); }
+      pmu_temp_ps_changed = false;
+      pmu_temp_awake_since = 0;
+      pmu_temp_last_read = now | 1;
+    #else
+      pmu_temperature = temperatureRead();
+    #endif
   #endif
 }
 
