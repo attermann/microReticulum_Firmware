@@ -10,3 +10,4 @@ build/*
 .venv
 .pio
 *.bak*
+local_config.h

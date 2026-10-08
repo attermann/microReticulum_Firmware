@@ -575,8 +575,8 @@
       #define HAS_INPUT false
       #define HAS_SLEEP false
       #define VALIDATE_FIRMWARE false
-      #define LED_ON HIGH
-      #define LED_OFF LOW
+      #define LED_ON LOW   // T114 green LED is active-low
+      #define LED_OFF HIGH
 
 
       #define EEPROM_SIZE 296

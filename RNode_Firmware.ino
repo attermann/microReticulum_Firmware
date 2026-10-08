@@ -93,7 +93,9 @@ char sbuf[128];
   // at least every 10 min, so 15 min is a safe upper bound.
   volatile unsigned long last_rx_millis = 0;
   volatile unsigned long last_tx_millis = 0;
+  #ifndef NO_ACTIVITY_RESET_MS
   #define NO_ACTIVITY_RESET_MS (15UL * 60UL * 1000UL)
+  #endif
 #endif
 
 #ifdef HAS_RNS
@@ -262,7 +264,27 @@ RNS::FileSystem filesystem(RNS::Type::NONE);
 // Transport node periodic announce destination
 RNS::Destination probe_destination(RNS::Type::NONE);
 unsigned long last_transport_announce = 0;
-unsigned long transport_announce_interval = 600000;  // 10 minutes default
+// Per-user overrides live in local_config.h (git-ignored), e.g.:
+//   #define LXMF_NODE_NAME "MyNode-"
+//   #define LXMF_ANNOUNCE_INTERVAL 1800000UL
+//   #define HEARTBEAT_PERIOD_MS 2000UL
+#if __has_include("local_config.h")
+#include "local_config.h"
+#endif
+#ifndef LXMF_NODE_NAME
+#define LXMF_NODE_NAME "RTransport-"
+#endif
+#ifndef LXMF_ANNOUNCE_INTERVAL
+#define LXMF_ANNOUNCE_INTERVAL 600000UL  // 10 minutes default
+#endif
+#ifndef HEARTBEAT_ON_MS
+#define HEARTBEAT_ON_MS 80UL
+#endif
+#ifndef HEARTBEAT_PERIOD_MS
+#define HEARTBEAT_PERIOD_MS 5000UL
+#endif
+unsigned long transport_announce_interval = LXMF_ANNOUNCE_INTERVAL;
+bool hb_on = false;  // heartbeat LED state, read by updateModemStatus()
 
 // Compile-time random node ID (changes every build via __TIME__)
 #define COMPILE_SEED ((__TIME__[0]-'0')*36000 + (__TIME__[1]-'0')*3600 + (__TIME__[3]-'0')*600 + (__TIME__[4]-'0')*60 + (__TIME__[6]-'0')*10 + (__TIME__[7]-'0'))
@@ -706,7 +728,8 @@ void setup() {
               lxmf_identity.to_file(lxmf_id_path.c_str());
               Serial.println("[LXMF] New identity saved");
           }
-          gpio_control.init(lxmf_identity, (std::string("RTransport-") + std::to_string(NODE_ID)).c_str());
+          gpio_control.init(lxmf_identity, (std::string(LXMF_NODE_NAME) + std::to_string(NODE_ID)).c_str());
+          if (g_lxmf) g_lxmf->set_announce_interval(LXMF_ANNOUNCE_INTERVAL);
       }
       #endif
 
@@ -1658,7 +1681,11 @@ void updateModemStatus() {
     if (airtime_lock) {
       led_indicate_airtime_lock();
     } else {
+#ifdef HAS_RNS
+      if (!hb_on) led_rx_off();   // don't cancel the heartbeat pulse
+#else
       led_rx_off();
+#endif
     }
   }
 }
@@ -1842,13 +1869,12 @@ void loop() {
 	  }
 // Heartbeat: lampeggio breve ogni 5s per segnalare che il nodo RNS è vivo
   static uint32_t last_hb = 0;
-  static bool hb_on = false;
   uint32_t hb_now = millis();
-  if (!hb_on && hb_now - last_hb > 5000) {
+  if (!hb_on && hb_now - last_hb > HEARTBEAT_PERIOD_MS) {
     digitalWrite(pin_led_rx, LED_ON);
     hb_on = true;
     last_hb = hb_now;
-  } else if (hb_on && hb_now - last_hb > 50) {
+  } else if (hb_on && hb_now - last_hb > HEARTBEAT_ON_MS) {
     digitalWrite(pin_led_rx, LED_OFF);
     hb_on = false;
     last_hb = hb_now;
