@@ -307,6 +307,49 @@ After boot, the LXMF address will appear in the serial output. Send commands fro
 
 ---
 
+## Board 5: Heltec Mesh Node T114 (nRF52840 + SX1262)
+
+PlatformIO environment: `heltec_t114`. Tested on the 868 MHz T114 without display.
+
+### Build & Flash
+
+```bash
+uv run pio run -e heltec_t114
+# Enter the bootloader (or double-tap RESET): a port named
+# usb-Heltec_AutoMation_HT-n5262_<serial>-if00 appears
+stty -F /dev/serial/by-id/usb-Heltec_HT-n5262_<serial>-if00 1200
+adafruit-nrfutil dfu serial -pkg .pio/build/heltec_t114/rnode_firmware_heltec_t114.zip \
+  -p /dev/serial/by-id/usb-Heltec_AutoMation_HT-n5262_<serial>-if00 -b 115200 --singlebank
+```
+
+`pio run -t upload` only works when starting from the application port. It fails
+if the board is already in the bootloader, or if another program keeps the serial
+port open.
+
+### Provisioning
+
+The T114 is provisioned as a RAK4631 (product 0x10, model 0x12 for 868/915 MHz,
+hwrev 1), because the nRF52 code path only accepts products 0x10, 0x11 and 0xF0.
+After every flash, set the firmware hash:
+
+```bash
+HASH=$(unzip -p .pio/build/heltec_t114/rnode_firmware_heltec_t114.zip rnode_firmware_heltec_t114.bin | sha256sum | cut -d' ' -f1)
+rnodeconf /dev/serial/by-id/usb-Heltec_HT-n5262_<serial>-if00 --firmware-hash $HASH
+```
+
+TNC mode example: `rnodeconf <port> --tnc --freq 869525000 --bw 250000 --sf 8 --cr 5 --txp 20`
+
+### Preamble length (important)
+
+Until October 2026 this firmware used an 18-symbol preamble at SF8/250 kHz
+(`LORA_PREAMBLE_TARGET_MS 15` minus `LORA_PREAMBLE_SYMBOLS_HW`, clamped to
+`LORA_PREAMBLE_SYMBOLS_MIN 18`). Current official RNode firmware (tested: 1.86
+on a Heltec V4) transmits 24 symbols. With the receiver set to 18, the SX1262
+detected the preamble but never decoded a header: the T114 transmitted normally
+but never received anything from current RNodes (no replies, no delivery proofs).
+Raising `LORA_PREAMBLE_SYMBOLS_MIN` to 24 fixed it. The opposite direction
+(receiver 24, transmitter 18) works, so older nodes are still received.
+
 ## LXMF Remote Control — General Information
 
 The firmware runs a minimal LXMF endpoint alongside the RNode TNC, allowing remote management via [Sideband](https://github.com/markqvist/Sideband) or MeshChat. When a message arrives, it parses the text command, performs the operation, and sends a reply. The node announces its LXMF address on boot, so apps can discover it automatically.

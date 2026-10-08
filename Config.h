@@ -71,7 +71,12 @@
 	const int lora_post_tx_yield_slots = 6;
 	uint32_t post_tx_yield_timeout = 0;
 	#define LORA_PREAMBLE_SYMBOLS_HW  4
-	#define LORA_PREAMBLE_SYMBOLS_MIN 18
+	// 24 symbols (was 18). Current official RNode firmware (tested: 1.86 on a
+	// Heltec V4) transmits a 24-symbol preamble at SF8/250 kHz. With the
+	// receiver set to 18, the SX1262 detected the preamble but never decoded a
+	// header: the node transmitted fine but received nothing from current
+	// RNodes. Raising the minimum to 24 fixed it (Heltec T114, 2026-10-08).
+	#define LORA_PREAMBLE_SYMBOLS_MIN 24
 	#define LORA_PREAMBLE_TARGET_MS   15
 	#define LORA_CAD_SYMBOLS 3
 	int csma_slot_ms = 50;
