@@ -13,6 +13,58 @@ using namespace RNS;
 using namespace RNS::Type::Destination;
 using namespace RNS::Utilities;
 
+// Announce emission timebase
+//
+// Reticulum stores the emission time in the last 5 bytes of the 10-byte
+// announce random blob (Python: random[0:5] + int(time.time()).to_bytes(5)).
+// For a destination it already knows, rnsd only accepts a new announce if
+// this value is larger than every one it has seen before. Filling all 10
+// bytes at random makes most announces look older than a previous one, so
+// they are silently dropped until the path expires (up to a week).
+//
+// Embedded nodes have no real-time clock, and only the ordering matters, so
+// use a strictly increasing counter that survives reboots: it is kept in
+// flash in blocks of ANNOUNCE_TB_BLOCK (one write per boot plus one every
+// 256 announces). It starts near the top of the 40-bit range so it is also
+// newer than the random values other nodes may have stored from older
+// firmware.
+static const char*    ANNOUNCE_TB_PATH  = "/announce_tb";
+static const uint64_t ANNOUNCE_TB_BASE  = 0xFFFF000000ULL;
+static const uint64_t ANNOUNCE_TB_BLOCK = 256;
+static uint64_t announce_tb_next     = 0;
+static uint64_t announce_tb_reserved = 0;
+static bool     announce_tb_loaded   = false;
+
+static uint64_t next_announce_timebase() {
+	if (!announce_tb_loaded) {
+		announce_tb_loaded = true;
+		try {
+			Bytes data;
+			if (OS::file_exists(ANNOUNCE_TB_PATH) && OS::read_file(ANNOUNCE_TB_PATH, data) == 8) {
+				uint64_t saved = 0;
+				for (size_t i = 0; i < 8; i++) saved = (saved << 8) | data[i];
+				announce_tb_next     = saved;
+				announce_tb_reserved = saved;
+			}
+		}
+		catch (const std::exception& e) {
+			ERRORF("announce timebase: could not load: %s", e.what());
+		}
+	}
+	if (announce_tb_next >= announce_tb_reserved) {
+		announce_tb_reserved = announce_tb_next + ANNOUNCE_TB_BLOCK;
+		uint8_t buf[8];
+		for (int i = 0; i < 8; i++) buf[i] = (uint8_t)(announce_tb_reserved >> (8 * (7 - i)));
+		try {
+			OS::write_file(ANNOUNCE_TB_PATH, Bytes(buf, 8));
+		}
+		catch (const std::exception& e) {
+			ERRORF("announce timebase: could not save: %s", e.what());
+		}
+	}
+	return ANNOUNCE_TB_BASE + (announce_tb_next++ & 0xFFFFFFULL);
+}
+
 Destination::Destination(const Identity& identity, const directions direction, const types type, const char* app_name, const char* aspects) : _object(new Object(identity)) {
 	assert(_object);
 	MEMF("Destination object creating..., this: %p, data: %p", (void*)this, (void*)_object.get());
@@ -254,8 +306,10 @@ Packet Destination::announce(const Bytes& app_data, bool path_response, const In
 		else {
 			Bytes destination_hash = _object->_hash;
 			//p random_hash = Identity::get_random_hash()[0:5] << int(time.time()).to_bytes(5, "big")
-			// CBA TODO add in time to random hash
-			Bytes random_hash = Cryptography::random(Type::Identity::RANDOM_HASH_LENGTH/8);
+			// 5 random bytes + 5-byte emission timebase (see next_announce_timebase)
+			Bytes random_hash = Cryptography::random(Type::Identity::RANDOM_HASH_LENGTH/8 - 5);
+			uint64_t emitted = next_announce_timebase();
+			for (int i = 4; i >= 0; i--) random_hash.append((uint8_t)(emitted >> (8 * i)));
 
 			Bytes new_app_data(app_data);
 			if (new_app_data.empty() && !_object->_default_app_data.empty()) {

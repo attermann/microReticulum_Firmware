@@ -350,6 +350,21 @@ but never received anything from current RNodes (no replies, no delivery proofs)
 Raising `LORA_PREAMBLE_SYMBOLS_MIN` to 24 fixed it. The opposite direction
 (receiver 24, transmitter 18) works, so older nodes are still received.
 
+### Announce emission time (all boards)
+
+Reticulum puts the emission time in the last 5 bytes of the announce random
+blob, and `rnsd` only accepts a new announce for a destination it already
+knows if that value is larger than every one it has seen. The bundled
+microReticulum used to fill all 10 bytes at random, so most announces looked
+older than an earlier one and were dropped until the path expired (up to a
+week): the node kept working, but its announces stopped showing up.
+`Destination.cpp` now writes 5 random bytes plus a strictly increasing
+counter kept in flash (`/announce_tb`, one write per boot plus one every 256
+announces). It starts at `0xFFFF000000`, near the top of the 40-bit range, so
+it is also newer than random values other nodes stored from older firmware.
+If a node still ignores the announces after the update, drop the stale path
+there once with `rnpath -d <destination hash>`.
+
 ### Battery sensing
 
 `HAS_PMU` is enabled for the T114 and `Power.h` reads the battery divider on
