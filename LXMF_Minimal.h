@@ -304,6 +304,10 @@ public:
         return true;
     }
 
+    // ---- Display name (shown in the announce) ----
+    void set_display_name(const std::string& name) { _display_name = name; }
+    const std::string& get_display_name() const { return _display_name; }
+
     // ---- Set message handler ----
     void set_message_handler(MessageHandler handler) {
         _handler = handler;

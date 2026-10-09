@@ -274,6 +274,7 @@ unsigned long last_transport_announce = 0;
 //   #define LXMF_NODE_NAME "MyNode-"
 //   #define LXMF_ANNOUNCE_INTERVAL 1800000UL
 //   #define HEARTBEAT_PERIOD_MS 2000UL
+//   #define ADMIN_PASSWORD "change-me"   // enables NAME/ANNOUNCE/DUTY changes over LXMF
 #if __has_include("local_config.h")
 #include "local_config.h"
 #endif
@@ -292,9 +293,6 @@ unsigned long last_transport_announce = 0;
 unsigned long transport_announce_interval = LXMF_ANNOUNCE_INTERVAL;
 bool hb_on = false;  // heartbeat LED state, read by updateModemStatus()
 
-// Compile-time random node ID (changes every build via __TIME__)
-#define COMPILE_SEED ((__TIME__[0]-'0')*36000 + (__TIME__[1]-'0')*3600 + (__TIME__[3]-'0')*600 + (__TIME__[4]-'0')*60 + (__TIME__[6]-'0')*10 + (__TIME__[7]-'0'))
-#define NODE_ID (((unsigned long)COMPILE_SEED * 1103515245UL + 12345UL) % 9000UL + 1000UL)
 
 void transport_announce_loop() {
     if (!probe_destination) return;
@@ -734,7 +732,10 @@ void setup() {
               lxmf_identity.to_file(lxmf_id_path.c_str());
               Serial.println("[LXMF] New identity saved");
           }
-          gpio_control.init(lxmf_identity, (std::string(LXMF_NODE_NAME) + std::to_string(NODE_ID)).c_str());
+          // Default name: LXMF_NODE_NAME + first 4 hex digits of the LXMF address.
+          // Stable across builds; the NAME command can override it at runtime.
+          std::string lxmf_suffix = RNS::Destination::hash(lxmf_identity, "lxmf", "delivery").toHex().substr(0, 4);
+          gpio_control.init(lxmf_identity, (std::string(LXMF_NODE_NAME) + lxmf_suffix).c_str());
           if (g_lxmf) g_lxmf->set_announce_interval(LXMF_ANNOUNCE_INTERVAL);
       }
       #endif

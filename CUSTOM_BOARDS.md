@@ -373,10 +373,19 @@ Always use **opportunistic** delivery in Sideband. Direct delivery requires a fu
 
 The same command set is supported on every board that has `HAS_GPIO_CONTROL` enabled (XIAO nRF52840, XIAO ESP32-S3, Heltec WSL V1, TTGO LoRa32 V1). Commands are case-insensitive; short aliases are noted in parentheses.
 
+Commands that **change** a setting (`NAME`, `ANNOUNCE` or `DUTY` with arguments) require the admin password as the first word, e.g. `pw ANNOUNCE 60`. Set it in the git-ignored `local_config.h`:
+
+```c
+#define ADMIN_PASSWORD "change-me"
+```
+
+Without `ADMIN_PASSWORD`, changes are disabled and only the read-only forms work. The password is case-sensitive, must not be a command name, and travels inside the end-to-end encrypted LXMF message. After 5 wrong passwords, changes are locked for 10 minutes. The serial log masks it as `***`. To recover a forgotten password, change it in `local_config.h` and reflash over USB.
+
 | Command | Example | Description |
 |---------|---------|-------------|
 | `STATUS` (`STATO`) | `STATUS` | One-line summary: battery, uptime, packets received/sent since boot, current RSSI (noise floor when the channel is idle). Example: `Batt 3.92V 70% discharging \| up 2d 4h 13m \| rx 1532 tx 1490 \| rssi -105 dBm` |
 | `BATTERY` (`BAT`) | `BATTERY` | Battery voltage, percent, and charging state. Replies `Battery: not available` on boards without a battery-sensing branch (e.g. XIAO ESP32-S3). |
+| `NAME [new \| RESET]` (`NOME`) | `NAME`, `pw NAME Hilltop repeater`, `pw NAME RESET` | Show the announced node name, or change it. The new name (1–32 characters) is saved in flash (`/lxmf_name`), announced immediately and kept across reboots and firmware updates. `RESET` returns to the default `LXMF_NODE_NAME` + first 4 hex digits of the LXMF address. |
 | `ANNOUNCE [min]` (`ANN`) | `ANNOUNCE 30` | Show or set both the LXMF endpoint and transport-probe announce intervals (1–1440 min). Session-only — does not persist across reboots. |
 | `DUTY [ON [pct] \| OFF]` (`DC`) | `DUTY ON 1`, `DUTY OFF`, `DUTY` | Enable or disable the EU duty-cycle airtime limit, or report current state. `DUTY ON` enables with 1% long-term default (EU 868 MHz baseline); supply a percentage to override. `DUTY OFF` removes both short-term and long-term enforcement. Session-only. **Caveat:** running with `OFF` in EU regulatory territory is on you. |
 | `HELP` (`?`) | `HELP` | Show command list |
@@ -387,7 +396,7 @@ Earlier revisions also exposed `SET`/`GET`/`MODE`/`PINS`/`STATUS` for direct GPI
 
 | File | Purpose |
 |------|---------|
-| `GPIO_Control.h` | LXMF text-command parser (STATUS, BATTERY, ANNOUNCE, DUTY, HELP) — name is historical; no GPIO pin toggling code remains |
+| `GPIO_Control.h` | LXMF text-command parser (STATUS, BATTERY, NAME, ANNOUNCE, DUTY, HELP) and admin password check — name is historical; no GPIO pin toggling code remains |
 | `LXMF_Minimal.h` | Lightweight LXMF send/receive |
 | `FileSystem.cpp` | Patched filesystem layer (ESP32 only — see below) |
 
