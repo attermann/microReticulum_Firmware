@@ -559,7 +559,7 @@
       #define HAS_BLE false
       #define HAS_BLUETOOTH false
       #define HAS_EEPROM false
-      #define HAS_PMU false
+      #define HAS_PMU true   // battery ADC on P0.04, see Power.h
       #define HAS_NP false
       #undef HAS_TCXO
       #define HAS_TCXO true

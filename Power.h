@@ -54,6 +54,33 @@
   uint8_t bat_samples_count = 0;
   bool bat_voltage_dropping = false;
   float bat_delay_v = 0;
+#elif BOARD_MODEL == BOARD_HELTEC_T114
+  // Battery divider on P0.04 (AIN2), enabled by ADC_CTRL (P0.06) HIGH.
+  // Pin numbers and ADC_MULTIPLIER come from variants/heltec_mesh_node_t114/variant.h
+  #define BAT_V_FULL      4.15   // with USB: at or above this, report "charged"
+  #define BAT_V_ABSENT    2.50   // below this, no battery is connected
+  #define BAT_SAMPLES     5
+  float bat_v_samples[BAT_SAMPLES];
+  uint8_t bat_samples_count = 0;
+
+  // Approximate LiPo resting curve (voltage -> percent)
+  static float t114_lipo_percent(float v) {
+    static const float curve[][2] = {
+      {4.20, 100}, {4.10, 90}, {4.00, 80}, {3.92, 70}, {3.86, 60}, {3.80, 50},
+      {3.75, 40},  {3.70, 30}, {3.65, 20}, {3.55, 10}, {3.40, 5},  {3.30, 0}
+    };
+    const int n = sizeof(curve) / sizeof(curve[0]);
+    if (v >= curve[0][0]) return 100.0;
+    if (v <= curve[n-1][0]) return 0.0;
+    for (int i = 1; i < n; i++) {
+      if (v >= curve[i][0]) {
+        float v_hi = curve[i-1][0], p_hi = curve[i-1][1];
+        float v_lo = curve[i][0],   p_lo = curve[i][1];
+        return p_lo + (v - v_lo) * (p_hi - p_lo) / (v_hi - v_lo);
+      }
+    }
+    return 0.0;
+  }
 #endif
 
 uint32_t last_pmu_update = 0;
@@ -183,6 +210,40 @@ void measure_battery() {
       external_power = usb_present;
     }
 
+  #elif BOARD_MODEL == BOARD_HELTEC_T114
+    // Enable the divider only while sampling, so it does not drain the battery
+    digitalWrite(ADC_CTRL, ADC_CTRL_ENABLED);
+    delay(1);
+    uint32_t raw = analogRead(BATTERY_PIN);
+    digitalWrite(ADC_CTRL, !ADC_CTRL_ENABLED);
+
+    bat_v_samples[bat_samples_count % BAT_SAMPLES] =
+      (float)raw * AREF_VOLTAGE / BATTERY_SENSE_RESOLUTION * ADC_MULTIPLIER;
+    bat_samples_count++;
+
+    if (bat_samples_count >= BAT_SAMPLES) {
+      battery_voltage = 0;
+      for (uint8_t bi = 0; bi < BAT_SAMPLES; bi++) battery_voltage += bat_v_samples[bi];
+      battery_voltage = battery_voltage / BAT_SAMPLES;
+      bat_samples_count = BAT_SAMPLES;  // keep the ring full, avoid overflow
+
+      bool usb_present = (NRF_POWER->USBREGSTATUS & 0x01);  // VBUS detected
+      external_power = usb_present;
+      battery_installed = (battery_voltage >= BAT_V_ABSENT);
+      battery_indeterminate = false;
+
+      if (!battery_installed) {
+        battery_percent = 0.0;
+        battery_state = 0x00;
+      } else {
+        battery_percent = t114_lipo_percent(battery_voltage);
+        if (!usb_present) battery_state = BATTERY_STATE_DISCHARGING;
+        else if (battery_voltage >= BAT_V_FULL) battery_state = BATTERY_STATE_CHARGED;
+        else battery_state = BATTERY_STATE_CHARGING;
+      }
+      battery_ready = true;
+    }
+
   #elif BOARD_MODEL == BOARD_TBEAM
     if (PMU) {
       float discharge_current = 0;
@@ -290,6 +351,12 @@ bool init_pmu() {
     // Configure ADC for battery reading
     analogReference(AR_INTERNAL_3_0);
     analogReadResolution(12);
+    return true;
+  #elif BOARD_MODEL == BOARD_HELTEC_T114
+    pinMode(ADC_CTRL, OUTPUT);
+    digitalWrite(ADC_CTRL, !ADC_CTRL_ENABLED);
+    analogReference(VBAT_AR_INTERNAL);
+    analogReadResolution(BATTERY_SENSE_RESOLUTION_BITS);
     return true;
   #elif BOARD_MODEL == BOARD_TBEAM
     Wire.begin(I2C_SDA, I2C_SCL);

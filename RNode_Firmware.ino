@@ -182,8 +182,13 @@ void on_log(const char* msg, RNS::LogLevel level) {
 #endif  // HAS_SDCARD
 }
 
+// Packet counters, reported by the LXMF STATUS command (GPIO_Control.h)
+uint32_t radio_rx_packets = 0;
+uint32_t radio_tx_packets = 0;
+
 // CBA receive packet callback
 void on_receive_packet(const RNS::Bytes& raw, const RNS::Interface& interface) {
+  radio_rx_packets++;
 #ifdef DEBUG_TRANSPORT
   Serial.print("[RX ] ");
   Serial.print(raw.size());
@@ -221,6 +226,7 @@ void on_receive_packet(const RNS::Bytes& raw, const RNS::Interface& interface) {
 
 // CBA transmit packet callback
 void on_transmit_packet(const RNS::Bytes& raw, const RNS::Interface& interface) {
+  radio_tx_packets++;
 #ifdef DEBUG_TRANSPORT
   Serial.print("[TX ] ");
   Serial.print(raw.size());

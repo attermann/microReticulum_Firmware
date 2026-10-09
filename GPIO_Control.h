@@ -2,6 +2,7 @@
 // Receives text commands via LXMF messages, returns status.
 //
 // Commands (case-insensitive):
+//   STATUS (STATO)       — Battery, uptime, packet counters, current RSSI
 //   BATTERY              — Report battery voltage, percent, and charging state
 //   ANNOUNCE [min]       — Show or set announce interval (1-1440 min)
 //   HELP                 — Show command list
@@ -22,8 +23,33 @@ extern bool    battery_ready;
 extern float   battery_voltage;
 extern float   battery_percent;
 extern uint8_t battery_state;
+extern bool    battery_installed;
+extern bool    external_power;
+
+// Radio/modem globals (Config.h) and packet counters (RNode_Firmware.ino)
+extern int      current_rssi;
+extern uint32_t radio_rx_packets;
+extern uint32_t radio_tx_packets;
 
 // ─── Helpers ────────────────────────────────────────────────────
+
+// Uptime that survives the 49.7-day millis() rollover.
+// uptime_tick() is called every loop by GPIOControl::loop().
+static uint32_t up_last_ms = 0;
+static uint32_t up_wraps   = 0;
+static uint64_t uptime_tick() {
+    uint32_t now = millis();
+    if (now < up_last_ms) up_wraps++;
+    up_last_ms = now;
+    return ((uint64_t)up_wraps << 32) | now;
+}
+
+static const char* battery_state_str() {
+    if (battery_state == 0x01) return "discharging";
+    if (battery_state == 0x02) return "charging";
+    if (battery_state == 0x03) return "charged";
+    return "unknown";
+}
 
 static std::string str_upper(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), ::toupper);
@@ -65,22 +91,55 @@ static std::string handle_command(const std::string& raw_command) {
     // ── HELP ──
     if (verb == "HELP" || verb == "?") {
         return "Commands:\n"
+               "STATUS (STATO)\n"
                "BATTERY\n"
                "ANNOUNCE [min]\n"
                "DUTY [ON [pct] | OFF]\n"
                "HELP";
     }
 
+    // ── STATUS ──
+    if (verb == "STATUS" || verb == "STATO") {
+        char bat[48];
+        if (!battery_ready) {
+            snprintf(bat, sizeof(bat), "Batt n/a");
+        } else if (!battery_installed) {
+            snprintf(bat, sizeof(bat), "Batt none%s", external_power ? " (USB)" : "");
+        } else {
+            int mv = (int)(battery_voltage * 1000.0f + 0.5f);
+            snprintf(bat, sizeof(bat), "Batt %d.%02dV %d%% %s",
+                     mv / 1000, (mv % 1000) / 10, (int)(battery_percent + 0.5f),
+                     battery_state_str());
+        }
+
+        uint64_t secs = uptime_tick() / 1000;
+        unsigned long d = (unsigned long)(secs / 86400);
+        unsigned int  h = (unsigned int)((secs % 86400) / 3600);
+        unsigned int  m = (unsigned int)((secs % 3600) / 60);
+
+        char rssi[24];
+        if (current_rssi <= -292) snprintf(rssi, sizeof(rssi), "rssi n/a");
+        else snprintf(rssi, sizeof(rssi), "rssi %d dBm", current_rssi);
+
+        char buf[160];
+        snprintf(buf, sizeof(buf), "%s | up %lud %uh %um | rx %lu tx %lu | %s",
+                 bat, d, h, m,
+                 (unsigned long)radio_rx_packets, (unsigned long)radio_tx_packets,
+                 rssi);
+        return std::string(buf);
+    }
+
     // ── BATTERY ──
     if (verb == "BATTERY" || verb == "BAT") {
         if (!battery_ready) return "Battery: not available";
-        const char* state_str = "unknown";
-        if (battery_state == 0x01) state_str = "discharging";
-        else if (battery_state == 0x02) state_str = "charging";
-        else if (battery_state == 0x03) state_str = "charged";
+        if (!battery_installed) return external_power ? "Battery: none (USB powered)"
+                                                      : "Battery: none";
+        // integer formatting: float printf may be disabled in newlib-nano
+        int mv = (int)(battery_voltage * 1000.0f + 0.5f);
         char buf[64];
-        snprintf(buf, sizeof(buf), "Battery: %.2fV  %.1f%%  %s",
-                 battery_voltage, battery_percent, state_str);
+        snprintf(buf, sizeof(buf), "Battery: %d.%02dV  %d%%  %s",
+                 mv / 1000, (mv % 1000) / 10, (int)(battery_percent + 0.5f),
+                 battery_state_str());
         return std::string(buf);
     }
 
@@ -188,6 +247,7 @@ public:
     }
 
     void loop() {
+        uptime_tick();  // keep the rollover counter current
         if (!_initialized) return;
         _lxmf.loop();
     }

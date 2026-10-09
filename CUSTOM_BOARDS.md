@@ -350,6 +350,17 @@ but never received anything from current RNodes (no replies, no delivery proofs)
 Raising `LORA_PREAMBLE_SYMBOLS_MIN` to 24 fixed it. The opposite direction
 (receiver 24, transmitter 18) works, so older nodes are still received.
 
+### Battery sensing
+
+`HAS_PMU` is enabled for the T114 and `Power.h` reads the battery divider on
+P0.04 (AIN2), switching it on through `ADC_CTRL` (P0.06) only while sampling.
+Voltage = raw × 3.0 V / 4096 × 4.916 (values from the Meshtastic T114 variant),
+averaged over 5 samples taken once per second. The percentage follows an
+approximate LiPo resting curve, so it reads high while charging and low under
+load. With USB present the state is `charging`, or `charged` at 4.15 V and
+above; below 2.5 V the board reports no battery. Query it remotely with the
+`BATTERY` or `STATUS` LXMF commands.
+
 ## LXMF Remote Control — General Information
 
 The firmware runs a minimal LXMF endpoint alongside the RNode TNC, allowing remote management via [Sideband](https://github.com/markqvist/Sideband) or MeshChat. When a message arrives, it parses the text command, performs the operation, and sends a reply. The node announces its LXMF address on boot, so apps can discover it automatically.
@@ -364,18 +375,19 @@ The same command set is supported on every board that has `HAS_GPIO_CONTROL` ena
 
 | Command | Example | Description |
 |---------|---------|-------------|
+| `STATUS` (`STATO`) | `STATUS` | One-line summary: battery, uptime, packets received/sent since boot, current RSSI (noise floor when the channel is idle). Example: `Batt 3.92V 70% discharging \| up 2d 4h 13m \| rx 1532 tx 1490 \| rssi -105 dBm` |
 | `BATTERY` (`BAT`) | `BATTERY` | Battery voltage, percent, and charging state. Replies `Battery: not available` on boards without a battery-sensing branch (e.g. XIAO ESP32-S3). |
 | `ANNOUNCE [min]` (`ANN`) | `ANNOUNCE 30` | Show or set both the LXMF endpoint and transport-probe announce intervals (1–1440 min). Session-only — does not persist across reboots. |
 | `DUTY [ON [pct] \| OFF]` (`DC`) | `DUTY ON 1`, `DUTY OFF`, `DUTY` | Enable or disable the EU duty-cycle airtime limit, or report current state. `DUTY ON` enables with 1% long-term default (EU 868 MHz baseline); supply a percentage to override. `DUTY OFF` removes both short-term and long-term enforcement. Session-only. **Caveat:** running with `OFF` in EU regulatory territory is on you. |
 | `HELP` (`?`) | `HELP` | Show command list |
 
-Earlier revisions also exposed `SET`/`GET`/`MODE`/`PINS`/`STATUS` for direct GPIO pin toggling. Those were removed in commit `4a0df60` because they were too easy to misuse remotely — every transport node now exposes the same query/control surface.
+Earlier revisions also exposed `SET`/`GET`/`MODE`/`PINS`/`STATUS` for direct GPIO pin toggling. Those were removed in commit `4a0df60` because they were too easy to misuse remotely — every transport node now exposes the same query/control surface. The `STATUS` name was later reused for the read-only summary above.
 
 ### Required Files
 
 | File | Purpose |
 |------|---------|
-| `GPIO_Control.h` | LXMF text-command parser (BATTERY, ANNOUNCE, DUTY, HELP) — name is historical; no GPIO pin toggling code remains |
+| `GPIO_Control.h` | LXMF text-command parser (STATUS, BATTERY, ANNOUNCE, DUTY, HELP) — name is historical; no GPIO pin toggling code remains |
 | `LXMF_Minimal.h` | Lightweight LXMF send/receive |
 | `FileSystem.cpp` | Patched filesystem layer (ESP32 only — see below) |
 
