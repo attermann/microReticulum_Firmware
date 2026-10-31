@@ -1,4 +1,4 @@
-// MASN V1.2 / HT-RA62: diagnostic suite, KISS CMD_DETECT subcommands 0x60..0x6B.
+// MASN V1.2 / HT-RA62: diagnostic suite, KISS CMD_DETECT subcommands 0x60..0x6C.
 // GPL-3.0-or-later, intended for integration in microReticulum_Firmware.
 // Only compiled for BOARD_MASN_HTRA62; included after lora_receive() is defined.
 #ifndef MASN_DIAGNOSTICS_H
@@ -7,6 +7,7 @@
 #if BOARD_MODEL == BOARD_MASN_HTRA62
 
 extern SPIClass spiModem;             // The same bus used in sx126x.cpp.
+#include "MASN_Power.h"
 static volatile uint32_t masn_diag_rx_callbacks = 0;
 static volatile uint32_t masn_diag_rx_bytes = 0;
 static uint32_t masn_diag_tx_ok = 0;
@@ -303,10 +304,55 @@ static void masn_diag_busy_scan(uint8_t op) {
   masn_diag_reply(op, out);
 }
 
+// 0x6C: power probe. Reports the nRF52840 supply rails (VDDH is the
+// battery/regulator input on the nice!nano, VDD the 3.3 V rail), every
+// device that answers on the I2C bus, and the three INA3221 channels if
+// one is found (bus voltage in mV, shunt voltage in uV).
+static void masn_diag_power(uint8_t op) {
+  char out[224];
+  uint32_t vddh = masn_read_vddh_mv();
+  uint32_t vdd = 0;
+  analogReference(AR_INTERNAL);
+  analogReadResolution(12);
+  vdd = analogReadVDD() * 3600UL / 4095UL;
+  analogReference(AR_DEFAULT);
+  analogReadResolution(10);
+  int len = snprintf(out, sizeof(out), "VDDH=%lu;VDD=%lu;I2C=", (unsigned long)vddh, (unsigned long)vdd);
+
+  masn_wire_begin();
+  uint8_t ina = 0;
+  bool any = false;
+  for (uint8_t a = 0x08; a < 0x78 && len < (int)sizeof(out) - 8; a++) {
+    Wire.beginTransmission(a);
+    if (Wire.endTransmission() == 0) {
+      len += snprintf(out + len, sizeof(out) - len, "%s%02X", any ? "," : "", a);
+      any = true;
+      if (!ina && a >= 0x40 && a <= 0x43) {
+        bool ok = true;
+        if (masn_ina_reg(a, 0xFE, ok) == 0x5449 && ok) ina = a;  // INA3221 manufacturer ID "TI"
+      }
+    }
+  }
+  if (!any) len += snprintf(out + len, sizeof(out) - len, "none");
+  if (ina) {
+    len += snprintf(out + len, sizeof(out) - len, ";INA=%02X", ina);
+    for (uint8_t ch = 0; ch < 3; ch++) {
+      bool ok = true;
+      int16_t shunt = masn_ina_reg(ina, 1 + ch * 2, ok);
+      int16_t bus = masn_ina_reg(ina, 2 + ch * 2, ok);
+      // LSBs: shunt 40 uV, bus 8 mV; the low 3 bits are unused.
+      len += snprintf(out + len, sizeof(out) - len, ";CH%u=%d,%ld", ch + 1,
+                      ok ? (int)(bus >> 3) * 8 : -1, ok ? (long)(shunt >> 3) * 40L : -1L);
+    }
+  }
+  masn_diag_reply(op, out);
+}
+
 static void masn_diag_command(uint8_t op) {
   char out[224];
   if (op >= 0x68 && op <= 0x6A) { masn_diag_osc_trace(op); return; }
   if (op == 0x6B) { masn_diag_busy_scan(op); return; }
+  if (op == 0x6C) { masn_diag_power(op); return; }
   if (op == 0x60) {
     snprintf(out, sizeof(out),
              "V=1;BOARD=MASN_HTRA62;ONLINE=%d;HW=%d;LOCK=%d;FREQ=%lu;"

@@ -22,8 +22,8 @@ This firmware targets **V1.2 with the Heltec HT-RA62 module**. The Waveshare Cor
 | Solar charger | CN3791 MPPT | Not controlled by firmware |
 | Battery | 3.7 V LiPo with BMS (e.g. 4400 mAh) | — |
 | Solar panel | 5–6 V | — |
-| Current/voltage monitor | INA3221 | **Not used yet** |
-| Environment sensor | BME280 | **Not used yet** |
+| Current/voltage monitor | INA3221 (I2C 0x40) | Battery, solar and node current on the NomadNet page and `masn_setup.py power` |
+| Environment sensor | BME280 (I2C 0x76) | Detected, **not used yet** |
 | Antenna | 868 MHz, UFL→SMA pigtail | — |
 
 ### Pinout (verified on hardware)
@@ -85,6 +85,7 @@ Sub-commands for scripting:
 | `show` | Stored node configuration (name, page, location, discovery) and the node's addresses |
 | `hash` | Writes the hash of `.pio/build/masn-ht-ra62/*.bin` (only if you flashed without `pio … -t upload`) |
 | `tnc` / `rnode` | Switch mode, with radio options `--freq --bw --sf --cr --txp` |
+| `power` | Battery, solar panel and node current from the INA3221 (diagnostic `0x6C`) |
 
 Common options: `--port` (default: auto-detect the nice!nano) and `--profile`. The interface language follows `LANG` (Spanish or English).
 
@@ -197,7 +198,7 @@ They need the board in RNode mode (`masn_setup.py rnode`). The commands that tra
 
 Expected `masn_osc_test.py 1v8` result: `XOSC … mode=STDBY_XOSC errors=OK` and `FS … mode=FS errors=OK`. The `XOSC_START` shown at `POR`/`END` is the power-on error from before the TCXO is configured, and is normal.
 
-The firmware diagnostic suite (`MASN_Diagnostics.h`) answers `CMD_DETECT` (`0x08`) sub-commands `0x60`–`0x6B`:
+The firmware diagnostic suite (`MASN_Diagnostics.h`) answers `CMD_DETECT` (`0x08`) sub-commands `0x60`–`0x6C`:
 
 | Code | What it does |
 |---|---|
@@ -209,6 +210,7 @@ The firmware diagnostic suite (`MASN_Diagnostics.h`) answers `CMD_DETECT` (`0x08
 | `0x67` | RF registers |
 | `0x68`–`0x6A` | Oscillator trace (1.8 V TCXO / 3.3 V TCXO / crystal) |
 | `0x6B` | Find the GPIO that follows BUSY |
+| `0x6C` | Supply rails, I2C scan and raw INA3221 channels |
 
 ## Problems solved while porting
 
@@ -229,7 +231,7 @@ In case you hit the same symptoms on another board:
 
 ## To do
 
-- Read battery and panel (INA3221) and environment (BME280) and publish them as telemetry.
+- Read the environment sensor (BME280) and publish battery and environment as telemetry.
 - Test MASN V2.0 and the Core1262 variant.
 - Add model `0x53` to `rnodeconf`, so that `--autoinstall` works.
 - Measure power draw in node mode and tune power management.

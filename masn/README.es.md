@@ -22,8 +22,8 @@ Este firmware es para la **V1.2 con módulo Heltec HT-RA62**. Las variantes con 
 | Cargador solar | CN3791 MPPT | No lo controla el firmware |
 | Batería | LiPo 3,7 V con BMS (p. ej. 4400 mAh) | — |
 | Panel solar | 5–6 V | — |
-| Sensor de corriente/tensión | INA3221 | **Todavía no se usa** |
-| Sensor ambiental | BME280 | **Todavía no se usa** |
+| Sensor de corriente/tensión | INA3221 (I2C 0x40) | Batería, placa solar y consumo en la página NomadNet y en `masn_setup.py power` |
+| Sensor ambiental | BME280 (I2C 0x76) | Detectado, **todavía no se usa** |
 | Antena | 868 MHz, con cable UFL→SMA | — |
 
 ### Pines (verificados en hardware)
@@ -85,6 +85,7 @@ Subcomandos para usar desde scripts:
 | `show` | Configuración guardada del nodo (nombre, página, ubicación, discovery) y sus direcciones |
 | `hash` | Graba el hash de `.pio/build/masn-ht-ra62/*.bin` (solo si flasheas sin `pio … -t upload`) |
 | `tnc` / `rnode` | Cambia de modo, con las opciones de radio `--freq --bw --sf --cr --txp` |
+| `power` | Batería, placa solar y consumo del nodo según el INA3221 (diagnóstico `0x6C`) |
 
 Opciones comunes: `--port` (por defecto detecta la nice!nano) y `--profile`. El idioma de la interfaz sigue a `LANG` (español o inglés).
 
@@ -197,7 +198,7 @@ Necesitan la placa en modo RNode (`masn_setup.py rnode`). Las pruebas que emiten
 
 Resultado esperado de `masn_osc_test.py 1v8`: `XOSC … mode=STDBY_XOSC errors=OK` y `FS … mode=FS errors=OK`. El `XOSC_START` que aparece en `POR`/`END` es el de encendido, antes de configurar el TCXO, y es normal.
 
-La suite de diagnóstico del firmware (`MASN_Diagnostics.h`) responde a `CMD_DETECT` (`0x08`) con subcomandos `0x60`–`0x6B`:
+La suite de diagnóstico del firmware (`MASN_Diagnostics.h`) responde a `CMD_DETECT` (`0x08`) con subcomandos `0x60`–`0x6C`:
 
 | Código | Qué hace |
 |---|---|
@@ -209,6 +210,7 @@ La suite de diagnóstico del firmware (`MASN_Diagnostics.h`) responde a `CMD_DET
 | `0x67` | Registros RF |
 | `0x68`–`0x6A` | Traza del oscilador (TCXO 1,8 V / 3,3 V / cristal) |
 | `0x6B` | Detecta qué GPIO sigue a BUSY |
+| `0x6C` | Tensiones de alimentación, escaneo I2C y canales del INA3221 en bruto |
 
 ## Problemas resueltos durante la adaptación
 
@@ -229,7 +231,7 @@ Por si te encuentras los mismos síntomas en otra placa:
 
 ## Pendiente
 
-- Leer la batería y el panel (INA3221) y el ambiente (BME280), y publicarlos como telemetría.
+- Leer el sensor ambiental (BME280) y publicar la batería y el ambiente como telemetría.
 - Probar la MASN V2.0 y la variante con Core1262.
 - Añadir el modelo `0x53` a `rnodeconf`, para poder usar `--autoinstall`.
 - Medir el consumo en modo nodo y ajustar la gestión de energía.
