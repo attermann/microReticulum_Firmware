@@ -95,6 +95,24 @@ bool kiss_framed_logs = true;
 bool nomadnet_enabled = true;
 RNS::Destination nomadnet_destination = {RNS::Type::NONE};
 char nomadnet_name[64];
+// Site information shown on the NomadNet page (set through Provisioning)
+char site_description[161] = "";
+char site_contact[65] = "";
+double site_latitude = 0.0;
+double site_longitude = 0.0;
+double site_altitude = 0.0;
+bool site_location_public = false;
+// Interface discovery (rnstransport.discovery.interface). The app_data is
+// built by the host because its proof-of-work stamp is too costly here.
+bool discovery_enabled = false;
+RNS::Bytes discovery_app_data;
+RNS::Destination discovery_destination = {RNS::Type::NONE};
+// Periodic re-announce of the NomadNet site and the discovery destination.
+// Keep it low: public maps flag nodes announcing more than ~3 times/hour.
+uint32_t announce_interval_min = 360;
+uint32_t last_site_announce = 0;
+uint32_t last_discovery_announce = 0;
+bool discovery_announced = false;
 
 #if HAS_CONSOLE
   #include "Console.h"
@@ -1142,9 +1160,24 @@ printf("[init] op_mode: %U\n", op_mode);
         {
           NOTICEF("Announcing NomadNet site \"%s\" at destination <%s>", nomadnet_name, nomadnet_destination.hash().toHex().c_str());
           nomadnet_destination.announce(nomadnet_name);
+          last_site_announce = millis();
         }
       }
 #endif // URTN_STATS_PAGES
+
+      // Interface discovery destination, announced from loop() (see
+      // site_announce_job) so that a node stuck in a reboot loop does not
+      // flood the network with discovery announces.
+      if (discovery_enabled && discovery_app_data.size() > 0) {
+        discovery_destination = RNS::Destination(
+          RNS::Transport::identity(),
+          RNS::Type::Destination::IN,
+          RNS::Type::Destination::SINGLE,
+          "rnstransport",
+          "discovery.interface"
+        );
+        NOTICEF("Interface discovery enabled at destination <%s>", discovery_destination.hash().toHex().c_str());
+      }
 
       HEAD("RNS is READY!", RNS::LOG_TRACE);
       if (op_mode == MODE_TNC) {
@@ -2643,6 +2676,33 @@ void tx_queue_handler() {
 
 void work_while_waiting() { loop(); }
 
+#ifdef HAS_RNS
+// Re-announce the NomadNet site every announce_interval_min, and send the
+// interface discovery announce 2 minutes after boot and then on the same
+// interval.
+void site_announce_job() {
+  const uint32_t interval_ms = announce_interval_min * 60UL * 1000UL;
+#ifdef URTN_STATS_PAGES
+  if (nomadnet_destination && (uint32_t)(millis() - last_site_announce) >= interval_ms) {
+    NOTICEF("Re-announcing NomadNet site \"%s\"", nomadnet_name);
+    nomadnet_destination.announce(nomadnet_name);
+    last_site_announce = millis();
+  }
+#endif
+  if (discovery_destination) {
+    const bool due = discovery_announced
+      ? (uint32_t)(millis() - last_discovery_announce) >= interval_ms
+      : millis() >= 120000UL;
+    if (due) {
+      NOTICEF("Sending interface discovery announce (%u bytes)", (unsigned)discovery_app_data.size());
+      discovery_destination.announce(discovery_app_data);
+      last_discovery_announce = millis();
+      discovery_announced = true;
+    }
+  }
+}
+#endif
+
 void loop() {
 
   #if MCU_VARIANT == MCU_NATIVE
@@ -2661,6 +2721,7 @@ void loop() {
   if (reticulum) {
     try {
       reticulum.loop();
+      site_announce_job();
     }
     catch (const std::bad_alloc&) {
       ERROR("RNS loop failed: bad_alloc - out of memory");

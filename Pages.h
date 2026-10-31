@@ -40,6 +40,53 @@ extern uint8_t wifi_mode;
 extern char wr_ssid[];
 #endif
 extern RNS::Destination nomadnet_destination;
+extern char nomadnet_name[];
+extern char site_description[];
+extern char site_contact[];
+extern double site_latitude;
+extern double site_longitude;
+extern double site_altitude;
+extern bool site_location_public;
+#if defined(LORA_TRANSPORT)
+extern uint32_t lora_freq;
+extern uint32_t lora_bw;
+extern int lora_sf;
+extern int lora_cr;
+extern int lora_txp;
+#endif
+
+// Operator-supplied text goes into Micron markup: neutralise the backtick
+// (Micron's formatting escape) and line breaks.
+static std::string micron_safe(const char* text) {
+  std::string out(text);
+  for (auto& c : out) {
+    if (c == '`') c = '\'';
+    else if (c == '\n' || c == '\r') c = ' ';
+  }
+  return out;
+}
+
+// Site header for the index page: name, description, contact, location,
+// radio parameters and uptime.
+static void add_site_header(RNS::Bytes& content) {
+  char line[96];
+  content << "> " << micron_safe(nomadnet_name) << "\n\n";
+  if (site_description[0]) content << micron_safe(site_description) << "\n\n";
+  if (site_contact[0]) content << "Contact: " << micron_safe(site_contact) << "\n";
+  if (site_location_public) {
+    snprintf(line, sizeof(line), "Location: %.5f, %.5f  (%.0f m)\n", site_latitude, site_longitude, site_altitude);
+    content << line;
+  }
+#if defined(LORA_TRANSPORT)
+  snprintf(line, sizeof(line), "Radio: %.3f MHz, BW %.1f kHz, SF%d, CR4/%d, %d dBm\n",
+           lora_freq / 1e6, lora_bw / 1e3, lora_sf, lora_cr, lora_txp);
+  content << line;
+#endif
+  const uint32_t up = millis() / 1000;
+  snprintf(line, sizeof(line), "Uptime: %lud %02luh %02lum\n\n",
+           (unsigned long)(up / 86400), (unsigned long)(up / 3600 % 24), (unsigned long)(up / 60 % 60));
+  content << line;
+}
 
 void add_interface_details(RNS::Bytes& content, const RNS::Interface& interface) {
   content << "    \"mode\": \"";
@@ -116,7 +163,8 @@ RNS::Bytes serve_page(
   {
     RNS::Bytes content;
     if (path == "/page/index.mu") {
-      content = "> microReticulum Stats\n\n";
+      add_site_header(content);
+      content << "> microReticulum Stats\n\n";
       content << ">> Memory\n";
       content << "`!`[• Heap Memory`:/page/stack.mu`c=heap]`\n";
       content << "`!`[• Memory Pools`:/page/stack.mu`c=pool]`\n";
