@@ -325,6 +325,34 @@ else:
         description="Package native daemon for delivery"
     )
 
+# Apply local fixes to fetched libraries (patches/<library>/*.patch).
+# lib_deps track upstream HEAD, so fixes not yet merged upstream are kept
+# as patches and applied idempotently on every build.
+def apply_library_patches(env):
+    import glob
+    import os
+    import subprocess
+    project_dir = env.subst("$PROJECT_DIR")
+    libdeps_dir = os.path.join(env.subst("$PROJECT_LIBDEPS_DIR"), env.subst("$PIOENV"))
+    for patch_dir in sorted(glob.glob(os.path.join(project_dir, "patches", "*"))):
+        lib_dir = os.path.join(libdeps_dir, os.path.basename(patch_dir))
+        if not os.path.isdir(lib_dir):
+            continue
+        for patch in sorted(glob.glob(os.path.join(patch_dir, "*.patch"))):
+            name = os.path.relpath(patch, project_dir)
+            git = ["git", "apply", "--whitespace=nowarn"]
+            if subprocess.run(git + ["--reverse", "--check", patch], cwd=lib_dir,
+                              capture_output=True).returncode == 0:
+                continue  # already applied
+            if subprocess.run(git + ["--check", patch], cwd=lib_dir,
+                              capture_output=True).returncode != 0:
+                print(f"*** WARNING: {name} does not apply (merged upstream or code changed?)")
+                continue
+            subprocess.run(git + [patch], cwd=lib_dir, check=True)
+            print(f"*** Applied {name}")
+
+apply_library_patches(env)
+
 # Register actions
 env.AddPreAction("upload", pre_upload)
 env.AddPostAction("upload", post_upload)
