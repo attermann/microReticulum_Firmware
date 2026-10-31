@@ -1,4 +1,4 @@
-// MASN V1.2 / HT-RA62: diagnostic suite, KISS CMD_DETECT subcommands 0x60..0x6C.
+// MASN V1.2 / HT-RA62: diagnostic suite, KISS CMD_DETECT subcommands 0x60..0x6E.
 // GPL-3.0-or-later, intended for integration in microReticulum_Firmware.
 // Only compiled for BOARD_MASN_HTRA62; included after lora_receive() is defined.
 #ifndef MASN_DIAGNOSTICS_H
@@ -353,6 +353,29 @@ static void masn_diag_command(uint8_t op) {
   if (op >= 0x68 && op <= 0x6A) { masn_diag_osc_trace(op); return; }
   if (op == 0x6B) { masn_diag_busy_scan(op); return; }
   if (op == 0x6C) { masn_diag_power(op); return; }
+  if (op == 0x6D) {
+    // Backup copy outside the filesystem (MASN_Backup.h): newest sequence
+    // number, file count and size; SEQ=0 means there is no valid copy.
+    uint32_t seq;
+    uint32_t addr = masn_bk_latest(seq);
+    masn_bk_header_t h = {};
+    if (addr) masn_bk_load(addr, h);
+    snprintf(out, sizeof(out), "BK_SEQ=%lu;BK_FILES=%u;BK_LEN=%u;BK_PAGE=%05lX;FS_EEPROM=%d;FS_ID=%d",
+             (unsigned long)seq, h.count, h.len, (unsigned long)addr,
+             (int)InternalFS.exists(EEPROM_FILE), (int)InternalFS.exists("./transport_identity"));
+    masn_diag_reply(op, out);
+    return;
+  }
+  if (op == 0x6E) {
+    // Simulate a corrupted filesystem: format it (the backup pages are
+    // outside) and reboot, as InternalFileSystem::begin() does after a
+    // failed mount. Used to test the restore path.
+    masn_diag_reply(op, "FORMAT_AND_REBOOT");
+    delay(100);
+    file.close();
+    InternalFS.format();
+    NVIC_SystemReset();
+  }
   if (op == 0x60) {
     snprintf(out, sizeof(out),
              "V=1;BOARD=MASN_HTRA62;ONLINE=%d;HW=%d;LOCK=%d;FREQ=%lu;"
