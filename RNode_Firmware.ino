@@ -2007,7 +2007,7 @@ void serial_callback(uint8_t sbyte) {
       kiss_indicate_random(getRandom());
     } else if (command == CMD_DETECT) {
       #if BOARD_MODEL == BOARD_MASN_HTRA62
-      if (sbyte >= 0x60 && sbyte <= 0x6B) {
+      if (sbyte >= 0x60 && sbyte <= 0x6E) {
         masn_diag_command(sbyte);  // MASN_Diagnostics.h
       } else
       #endif
@@ -2695,6 +2695,18 @@ void work_while_waiting() { loop(); }
 // Re-announce the NomadNet site every announce_interval_min, and send the
 // interface discovery announce 2 minutes after boot and then on the same
 // interval.
+#if BOARD_MODEL == BOARD_MASN_HTRA62
+// Refresh the out-of-filesystem copy of the identity and configuration
+// (MASN_Backup.h) 90 s after boot and then every 10 minutes; a page is only
+// written when the files changed.
+void masn_backup_job() {
+  static uint32_t next_check = 90000;
+  if ((int32_t)(millis() - next_check) < 0) return;
+  next_check = millis() + 600000;
+  masn_backup_save(file);
+}
+#endif
+
 void site_announce_job() {
   const uint32_t interval_ms = announce_interval_min * 60UL * 1000UL;
 #ifdef URTN_STATS_PAGES
@@ -2737,6 +2749,9 @@ void loop() {
     try {
       reticulum.loop();
       site_announce_job();
+#if BOARD_MODEL == BOARD_MASN_HTRA62
+      masn_backup_job();
+#endif
     }
     catch (const std::bad_alloc&) {
       ERROR("RNS loop failed: bad_alloc - out of memory");

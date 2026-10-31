@@ -636,7 +636,7 @@ def apply_config(board, cfg, transport_id):
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("action", nargs="?", default="wizard",
-                   choices=["wizard", "status", "show", "hash", "rnode", "tnc"])
+                   choices=["wizard", "status", "show", "hash", "rnode", "tnc", "power"])
     p.add_argument("--port", help="serial port (default: auto-detect nice!nano)")
     p.add_argument("--profile", help="JSON profile to pre-fill the wizard and save to")
     for k, v in DEFAULT_RADIO.items():
@@ -655,6 +655,22 @@ def main():
         board.wait_ready()
     if a.action == "status":
         print(board.status() or t("no_reply"))
+    elif a.action == "power":
+        board.send(CMD_DETECT, b"\x6c")
+        for cmd, data in board.frames(3.0):
+            if cmd == 0x6C:
+                raw = data.decode(errors="replace")
+                kv = dict(x.split("=", 1) for x in raw.split(";") if "=" in x)
+                print(raw)
+                if "INA" in kv:
+                    # INA3221 channels "bus_mV,shunt_uV"; 0.1 ohm shunts -> mA = uV / 100.
+                    ch = {k: [int(v) for v in kv[k].split(",")] for k in ("CH1", "CH2", "CH3")}
+                    print(f"  battery {ch['CH2'][0] / 1000:.2f} V, node {ch['CH1'][1] / 100:.0f} mA, "
+                          f"charging {ch['CH2'][1] / 100:.0f} mA, "
+                          f"solar {ch['CH3'][0] / 1000:.2f} V {ch['CH3'][1] / 100:.0f} mA")
+                break
+        else:
+            print(t("no_reply"))
     elif a.action == "show":
         state = board.get_state([NS_GENERAL, NS_ADDRS])
         for ns, fields in state.items():

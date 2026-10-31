@@ -31,6 +31,8 @@
 
 #include <string>
 
+#include "MASN_Power.h"
+
 extern RNS::Interface lora_interface;
 #if HAS_WIFI && defined(UDP_TRANSPORT)
 extern RNS::Interface udp_interface;
@@ -66,6 +68,7 @@ static std::string micron_safe(const char* text) {
   return out;
 }
 
+#if BOARD_MODEL != BOARD_MASN_HTRA62
 // Site header for the index page: name, description, contact, location,
 // radio parameters and uptime.
 static void add_site_header(RNS::Bytes& content) {
@@ -87,6 +90,7 @@ static void add_site_header(RNS::Bytes& content) {
            (unsigned long)(up / 86400), (unsigned long)(up / 3600 % 24), (unsigned long)(up / 60 % 60));
   content << line;
 }
+#endif
 
 void add_interface_details(RNS::Bytes& content, const RNS::Interface& interface) {
   content << "    \"mode\": \"";
@@ -123,6 +127,57 @@ void add_interface_details(RNS::Bytes& content, const RNS::Interface& interface)
   content << "    \"bytes_received\": " << std::to_string(interface.rxbytes()) << ",\n";
   content << "    \"queued_announces\": " << std::to_string(interface.announce_queue().size()) << ",\n";
 }
+
+#if BOARD_MODEL == BOARD_MASN_HTRA62
+// MASN: a short index page for people checking on the node over LoRa
+// (battery first), with the technical menu moved to /page/stats.mu.
+static void add_masn_index(RNS::Bytes& content) {
+  char line[112];
+  content << "> " << micron_safe(nomadnet_name) << "\n\n";
+  if (site_description[0]) content << micron_safe(site_description) << "\n\n";
+
+  content << ">> Battery\n";
+  const masn_power_t pw = masn_power_read();
+  if (!pw.ok) {
+    content << "No reading (INA3221 not found)\n\n";
+  } else {
+    char bar[11 * 3 + 1];
+    int filled = (pw.battery_pct + 5) / 10, pos = 0;
+    for (int i = 0; i < 10; i++) pos += snprintf(bar + pos, sizeof(bar) - pos, "%s", i < filled ? "\xE2\x96\x88" : "\xE2\x96\x91");
+    snprintf(line, sizeof(line), "%d.%02d V  %s  %d %%\n",
+             pw.battery_mv / 1000, pw.battery_mv % 1000 / 10, bar, pw.battery_pct);
+    content << line;
+    if (pw.load_ma < -10) {
+      snprintf(line, sizeof(line), "Charging from USB (%d mA)\n", -pw.load_ma);
+    } else if (pw.charge_ma > 2) {
+      snprintf(line, sizeof(line), "Charging from solar: %d mA in, node uses %d mA\n", pw.charge_ma, pw.load_ma);
+    } else {
+      snprintf(line, sizeof(line), "On battery: node uses %d mA\n", pw.load_ma);
+    }
+    content << line;
+    snprintf(line, sizeof(line), "Solar panel: %d.%02d V, %d mA\n\n",
+             pw.solar_mv / 1000, pw.solar_mv % 1000 / 10, pw.solar_ma);
+    content << line;
+  }
+
+  content << ">> Node\n";
+  const uint32_t up = millis() / 1000;
+  snprintf(line, sizeof(line), "Uptime: %lud %02luh %02lum\n",
+           (unsigned long)(up / 86400), (unsigned long)(up / 3600 % 24), (unsigned long)(up / 60 % 60));
+  content << line;
+#if defined(LORA_TRANSPORT)
+  snprintf(line, sizeof(line), "Radio: %.3f MHz, SF%d, %.1f kHz, %d dBm\n",
+           lora_freq / 1e6, lora_sf, lora_bw / 1e3, lora_txp);
+  content << line;
+#endif
+  if (site_location_public) {
+    snprintf(line, sizeof(line), "Location: %.5f, %.5f (%.0f m)\n", site_latitude, site_longitude, site_altitude);
+    content << line;
+  }
+  if (site_contact[0]) content << "Contact: " << micron_safe(site_contact) << "\n";
+  content << "\n`[Technical details`:/page/stats.mu]\n";
+}
+#endif
 
 // Request handler for NomadNet pages. Signature is fixed by
 // RNS::RequestHandler::response_generator (see src/Destination.h).
@@ -162,8 +217,15 @@ RNS::Bytes serve_page(
 	MsgPack::Packer packer;
   {
     RNS::Bytes content;
+#if BOARD_MODEL == BOARD_MASN_HTRA62
+    if (path == "/page/index.mu") {
+      add_masn_index(content);
+    }
+    else if (path == "/page/stats.mu") {
+#else
     if (path == "/page/index.mu") {
       add_site_header(content);
+#endif
       content << "> microReticulum Stats\n\n";
       content << ">> Memory\n";
       content << "`!`[• Heap Memory`:/page/stack.mu`c=heap]`\n";

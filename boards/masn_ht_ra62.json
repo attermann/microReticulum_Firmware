@@ -42,7 +42,7 @@
     "name": "MASN V1.2 nice!nano HT-RA62",
     "upload": {
         "maximum_ram_size": 248832,
-        "maximum_size": 815104,
+        "maximum_size": 806912,
         "speed": 115200,
         "protocol": "nrfutil",
         "protocols": [

@@ -1538,11 +1538,20 @@ void promisc_disable() {
 }
 
 #if !HAS_EEPROM && MCU_VARIANT == MCU_NRF52
+    #include "MASN_Backup.h"
+
     bool eeprom_begin() {
         if (!InternalFS.begin()) {
             // FileSystem couldn't be initialized so fail
 			return false;
 		}
+
+        #if BOARD_MODEL == BOARD_MASN_HTRA62
+            // A missing EEPROM file after the first provisioning means the
+            // filesystem was formatted (see MASN_Backup.h): bring the
+            // identity and configuration back before anything reads them.
+            if (!InternalFS.exists(EEPROM_FILE)) masn_backup_restore();
+        #endif
 
 		if (InternalFS.exists(EEPROM_FILE)) {
 			if (file.open(EEPROM_FILE, FILE_O_WRITE)) {
@@ -1713,6 +1722,9 @@ void eeprom_write(uint8_t addr, uint8_t byte) {
 
 void eeprom_erase() {
 	#if !HAS_EEPROM && MCU_VARIANT == MCU_NRF52
+		#if BOARD_MODEL == BOARD_MASN_HTRA62
+			masn_backup_erase();
+		#endif
 		InternalFS.format();
 	#else
 		for (int addr = 0; addr < EEPROM_RESERVED; addr++) {

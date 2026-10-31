@@ -35,10 +35,10 @@ static const uint8_t MOSI = PIN_SPI_MOSI;
 static const uint8_t MISO = PIN_SPI_MISO;
 static const uint8_t SCK = PIN_SPI_SCK;
 
-// I2C: provisional, pending schematic verification
+// I2C: INA3221 (0x40) and BME280 (0x76), verified on hardware
 #define WIRE_INTERFACES_COUNT 1
-#define PIN_WIRE_SDA (38)
-#define PIN_WIRE_SCL (11)
+#define PIN_WIRE_SDA (36)  // P1.04 (schematic V1.2)
+#define PIN_WIRE_SCL (11)  // P0.11
 // Unused analog pins
 #define PIN_A0 (0xff)
 #define PIN_A1 (0xff)

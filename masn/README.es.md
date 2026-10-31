@@ -22,8 +22,8 @@ Este firmware es para la **V1.2 con módulo Heltec HT-RA62**. Las variantes con 
 | Cargador solar | CN3791 MPPT | No lo controla el firmware |
 | Batería | LiPo 3,7 V con BMS (p. ej. 4400 mAh) | — |
 | Panel solar | 5–6 V | — |
-| Sensor de corriente/tensión | INA3221 | **Todavía no se usa** |
-| Sensor ambiental | BME280 | **Todavía no se usa** |
+| Sensor de corriente/tensión | INA3221 (I2C 0x40) | Batería, placa solar y consumo en la página NomadNet y en `masn_setup.py power` |
+| Sensor ambiental | BME280 (I2C 0x76) | Detectado, **todavía no se usa** |
 | Antena | 868 MHz, con cable UFL→SMA | — |
 
 ### Pines (verificados en hardware)
@@ -85,6 +85,7 @@ Subcomandos para usar desde scripts:
 | `show` | Configuración guardada del nodo (nombre, página, ubicación, discovery) y sus direcciones |
 | `hash` | Graba el hash de `.pio/build/masn-ht-ra62/*.bin` (solo si flasheas sin `pio … -t upload`) |
 | `tnc` / `rnode` | Cambia de modo, con las opciones de radio `--freq --bw --sf --cr --txp` |
+| `power` | Batería, placa solar y consumo del nodo según el INA3221 (diagnóstico `0x6C`) |
 
 Opciones comunes: `--port` (por defecto detecta la nice!nano) y `--profile`. El idioma de la interfaz sigue a `LANG` (español o inglés).
 
@@ -197,7 +198,7 @@ Necesitan la placa en modo RNode (`masn_setup.py rnode`). Las pruebas que emiten
 
 Resultado esperado de `masn_osc_test.py 1v8`: `XOSC … mode=STDBY_XOSC errors=OK` y `FS … mode=FS errors=OK`. El `XOSC_START` que aparece en `POR`/`END` es el de encendido, antes de configurar el TCXO, y es normal.
 
-La suite de diagnóstico del firmware (`MASN_Diagnostics.h`) responde a `CMD_DETECT` (`0x08`) con subcomandos `0x60`–`0x6B`:
+La suite de diagnóstico del firmware (`MASN_Diagnostics.h`) responde a `CMD_DETECT` (`0x08`) con subcomandos `0x60`–`0x6E`:
 
 | Código | Qué hace |
 |---|---|
@@ -209,6 +210,9 @@ La suite de diagnóstico del firmware (`MASN_Diagnostics.h`) responde a `CMD_DET
 | `0x67` | Registros RF |
 | `0x68`–`0x6A` | Traza del oscilador (TCXO 1,8 V / 3,3 V / cristal) |
 | `0x6B` | Detecta qué GPIO sigue a BUSY |
+| `0x6C` | Tensiones de alimentación, escaneo I2C y canales del INA3221 en bruto |
+| `0x6D` | Estado de la copia de seguridad de la identidad y la configuración |
+| `0x6E` | **Formatea el sistema de ficheros y reinicia**, para probar la restauración desde la copia |
 
 ## Problemas resueltos durante la adaptación
 
@@ -222,14 +226,15 @@ Por si te encuentras los mismos síntomas en otra placa:
 
 ## Limitaciones conocidas
 
-- **Capacidad de la tabla de rutas.** La tabla de rutas se guarda en el sistema de ficheros interno del nRF52, de 28 KB (6 segmentos de 2 KB, igual que en la RAK4631). En una red con mucho tráfico se llena con unos 40 destinos, y los nuevos aparecen como `Failed to add destination … to path table!` hasta que caducan los antiguos. El encaminamiento hacia los destinos conocidos sigue funcionando.
-- **Los cambios de aprovisionamiento pueden perderse al reiniciar (de forma intermitente).** En el nRF52 el EEPROM de RNode se emula con un fichero que se mantiene abierto en el mismo sistema de ficheros interno; se ha visto que un commit de aprovisionamiento seguido poco después de guardar la configuración de radio y reiniciar vuelve con los valores anteriores. `masn_setup.py` graba primero la radio, hace el commit al final y, tras el reinicio, relee y vuelve a grabar la configuración hasta que se conserva. Si configuras a mano, compruébalo con `masn_setup.py show` después de reiniciar.
+- **Las rutas se guardan en RAM.** Las rutas, los destinos conocidos y la lista de paquetes no se escriben en la flash (`RNS_PERSIST_*=0`), porque eso suponía una escritura casi por cada anuncio recibido. Tras un reinicio el nodo las vuelve a aprender de los anuncios. La tabla de rutas admite 25 destinos (`URTN_PATH_TABLE_MAX_RECS`).
+- **Cortes de corriente y sistema de ficheros.** Un corte mientras LittleFS escribe puede dejarlo sin poder montarse; el núcleo de Adafruit lo formatea entonces, y eso borraba el aprovisionamiento, la configuración y la identidad del nodo. Ahora el firmware guarda una copia de esos ficheros en dos páginas de flash fuera del sistema de ficheros (`MASN_Backup.h`, se actualiza 90 s después de arrancar y cada 10 minutos si algo cambió) y la restaura al arrancar. Los cambios hechos en los 10 minutos anteriores a un corte pueden perderse.
+- **Los cambios de aprovisionamiento pueden perderse al reiniciar (de forma intermitente).** Se ha visto que un commit de aprovisionamiento seguido poco después de guardar la configuración de radio y reiniciar vuelve con los valores anteriores. `masn_setup.py` graba primero la radio, hace el commit al final y, tras el reinicio, relee y vuelve a grabar la configuración hasta que se conserva. Si configuras a mano, compruébalo con `masn_setup.py show` después de reiniciar.
 - **Un ordenador que deja el puerto USB abierto sin leerlo reinicia el nodo.** El firmware escribe su log por USB; cuando el búfer se llena se bloquea, y el watchdog de 60 s reinicia la placa. Lee o cierra el puerto; `masn_setup.py` hace ambas cosas. A un nodo sin nada conectado por USB no le afecta.
 - El aprovisionamiento de una placa nueva, la MASN V2.0 y la variante Core1262 no están verificados.
 
 ## Pendiente
 
-- Leer la batería y el panel (INA3221) y el ambiente (BME280), y publicarlos como telemetría.
+- Leer el sensor ambiental (BME280) y publicar la batería y el ambiente como telemetría.
 - Probar la MASN V2.0 y la variante con Core1262.
 - Añadir el modelo `0x53` a `rnodeconf`, para poder usar `--autoinstall`.
 - Medir el consumo en modo nodo y ajustar la gestión de energía.
