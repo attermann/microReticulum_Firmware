@@ -151,6 +151,18 @@ bool sx126x::preInit() {
     // defensive and documents intent; SPI.begin() would work without it.
     SPI.setPins(pin_miso, pin_sclk, pin_mosi); // P0: MISO=29, SCK=3, MOSI=30
     SPI.begin();
+  #elif BOARD_MODEL == BOARD_MASN_HTRA62
+    // nice!nano: P0.13 drives the MOSFET switching the external VCC rail
+    // that powers the HT-RA62. Left floating it only half-conducts: enough
+    // for RX, but the SX1262 browns out (full POR) as soon as the PA turns
+    // on. Same as Meshtastic nrf52_promicro_diy_tcxo (PIN_3V3_EN). Done here
+    // rather than in the variant's initVariant(), which is never linked
+    // (the framework's weak definition wins).
+    pinMode(pin_vext_en, OUTPUT);
+    digitalWrite(pin_vext_en, HIGH);
+    delay(10);
+    SPI.setPins(pin_miso, pin_sclk, pin_mosi);
+    SPI.begin();
   #else
     SPI.begin();
   #endif
@@ -450,9 +462,18 @@ int sx126x::begin(uint32_t frequency) {
   if (!_preinit_done) { if (!preInit()) { return false; } }
   if (_rxen != -1) { pinMode(_rxen, OUTPUT); }
 
-  calibrate();
-  calibrate_image(frequency);
-  enableTCXO();
+  #if BOARD_MODEL == BOARD_MASN_HTRA62
+    // Semtech DS_SX1261-2 13.3.6: configure the DIO3 TCXO before
+    // calibrating, otherwise calibration runs without a reference clock
+    // (XOSC_START_ERR) and the chip cannot leave STDBY_RC.
+    enableTCXO();
+    calibrate();
+    calibrate_image(frequency);
+  #else
+    calibrate();
+    calibrate_image(frequency);
+    enableTCXO();
+  #endif
   loraMode();
   standby();
 
@@ -838,6 +859,8 @@ void sx126x::enableTCXO() {
           mode = MODE_TCXO_1_8V_6X;
         #elif BOARD_MODEL == BOARD_HELTEC_T114
           mode = MODE_TCXO_1_8V_6X;
+        #elif BOARD_MODEL == BOARD_MASN_HTRA62
+          mode = MODE_TCXO_1_8V_6X;  // HT-RA62 TCXO, verified on hardware
         #elif BOARD_MODEL == BOARD_TECHO
           mode = MODE_TCXO_1_8V_6X;
         #elif BOARD_MODEL == BOARD_HELTEC32_V4

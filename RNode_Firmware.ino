@@ -617,7 +617,7 @@ void setup() {
     boot_seq();
   #endif
 
-  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_RAK3401 && BOARD_MODEL != BOARD_HELTEC_T114 && BOARD_MODEL != BOARD_TECHO && BOARD_MODEL != BOARD_T3S3 && BOARD_MODEL != BOARD_TBEAM_S_V1 && BOARD_MODEL != BOARD_HELTEC32_V4 && BOARD_MODEL != BOARD_HELTEC_TRACKER_V2
+  #if BOARD_MODEL != BOARD_MASN_HTRA62 && BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_RAK3401 && BOARD_MODEL != BOARD_HELTEC_T114 && BOARD_MODEL != BOARD_TECHO && BOARD_MODEL != BOARD_T3S3 && BOARD_MODEL != BOARD_TBEAM_S_V1 && BOARD_MODEL != BOARD_HELTEC32_V4 && BOARD_MODEL != BOARD_HELTEC_TRACKER_V2
     // Some boards need to wait until the hardware UART is set up before booting
     // the full firmware. In the case of the RAK4631, RAK3401, and Heltec T114,
     // the line below will wait until a serial connection is actually established
@@ -1277,7 +1277,15 @@ inline void getPacketData(uint16_t len) {
   #endif
 }
 
+#if BOARD_MODEL == BOARD_MASN_HTRA62
+#include "MASN_Diagnostics.h"
+#endif
+
 void ISR_VECT receive_callback(int packet_size) {
+#if BOARD_MODEL == BOARD_MASN_HTRA62
+  masn_diag_rx_callbacks++;
+  if (packet_size > 0) masn_diag_rx_bytes += (uint32_t)packet_size;
+#endif
   #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
     BaseType_t int_mask;
   #endif
@@ -1996,6 +2004,11 @@ void serial_callback(uint8_t sbyte) {
     } else if (command == CMD_RANDOM) {
       kiss_indicate_random(getRandom());
     } else if (command == CMD_DETECT) {
+      #if BOARD_MODEL == BOARD_MASN_HTRA62
+      if (sbyte >= 0x60 && sbyte <= 0x6B) {
+        masn_diag_command(sbyte);  // MASN_Diagnostics.h
+      } else
+      #endif
       if (sbyte == DETECT_REQ) {
         if (bt_state != BT_STATE_CONNECTED) cable_state = CABLE_STATE_CONNECTED;
         kiss_indicate_detect();

@@ -15,3 +15,6 @@ eeprom
 state/*
 docker/workspace/*
 !docker/workspace/build
+
+# MASN node profiles written by masn/masn_setup.py (contain node location)
+masn-*.json
