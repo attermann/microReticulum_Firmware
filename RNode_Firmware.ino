@@ -666,7 +666,9 @@ void setup() {
       // accepts (see sx126x.cpp MODE_TCXO_*_6X defines).
       uint8_t mode;
       if      (v >= 3.15f) mode = 0x07; // 3.3 V
-      else if (v >= 2.30f) mode = 0x06; // 2.4 / 2.7 / 3.0 V
+      else if (v >= 2.85f) mode = 0x06; // 3.0 V
+      else if (v >= 2.55f) mode = 0x05; // 2.7 V
+      else if (v >= 2.30f) mode = 0x04; // 2.4 V
       else if (v >= 2.00f) mode = 0x03; // 2.2 V
       else if (v >= 1.75f) mode = 0x02; // 1.8 V
       else if (v >= 1.65f) mode = 0x01; // 1.7 V
