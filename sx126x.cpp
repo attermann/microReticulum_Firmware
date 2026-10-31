@@ -72,8 +72,8 @@
 
 #define MODE_TCXO_3_3V_6X           0x07
 #define MODE_TCXO_3_0V_6X           0x06
-#define MODE_TCXO_2_7V_6X           0x06
-#define MODE_TCXO_2_4V_6X           0x06
+#define MODE_TCXO_2_7V_6X           0x05
+#define MODE_TCXO_2_4V_6X           0x04
 #define MODE_TCXO_2_2V_6X           0x03
 #define MODE_TCXO_1_8V_6X           0x02
 #define MODE_TCXO_1_7V_6X           0x01
