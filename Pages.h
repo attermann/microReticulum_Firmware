@@ -94,6 +94,16 @@ static void add_site_header(RNS::Bytes& content) {
            lora_freq / 1e6, lora_bw / 1e3, lora_sf, lora_cr, lora_txp);
   content << line;
 #endif
+  // Battery, on boards whose power code measures it (Power.h).
+  if (battery_installed && battery_ready && !battery_indeterminate) {
+    const char* state = "";
+    if (battery_state == BATTERY_STATE_CHARGING) state = ", charging";
+    else if (battery_state == BATTERY_STATE_CHARGED) state = ", charged";
+    else if (battery_state == BATTERY_STATE_DISCHARGING) state = ", on battery";
+    snprintf(line, sizeof(line), "Battery: %.2f V (~%u %%)%s\n",
+             battery_voltage, (unsigned)battery_percent, state);
+    content << line;
+  }
   const uint32_t up = millis() / 1000;
   snprintf(line, sizeof(line), "Uptime: %lud %02luh %02lum\n\n",
            (unsigned long)(up / 86400), (unsigned long)(up / 3600 % 24), (unsigned long)(up / 60 % 60));
