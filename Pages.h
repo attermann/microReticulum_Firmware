@@ -40,6 +40,18 @@ extern uint8_t wifi_mode;
 extern char wr_ssid[];
 #endif
 extern RNS::Destination nomadnet_destination;
+
+// Announces sent in answer to a path request carry the destination's default
+// app_data. Without it, a client that learns the NomadNet node that way lists
+// it without a name ("Peer <hash>"). Destination::set_default_app_data() is
+// new in microReticulum, so it is only called when the library provides it.
+template <typename D>
+static auto set_default_app_data_if_supported(D& destination, const RNS::Bytes& app_data, int)
+    -> decltype(destination.set_default_app_data(app_data), void()) {
+  destination.set_default_app_data(app_data);
+}
+template <typename D>
+static void set_default_app_data_if_supported(D&, const RNS::Bytes&, long) {}
 extern char nomadnet_name[];
 extern char site_description[];
 extern char site_contact[];

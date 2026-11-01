@@ -1139,6 +1139,8 @@ printf("[init] op_mode: %U\n", op_mode);
           "nomadnetwork",
           "node"
         );
+        // Also send the node name in announces that answer path requests.
+        set_default_app_data_if_supported(nomadnet_destination, RNS::Bytes(nomadnet_name), 0);
 
         // Register the page handler. ALLOW_ALL because page browsing is open
         // to anyone who can reach the node, just like a Python NomadNet
