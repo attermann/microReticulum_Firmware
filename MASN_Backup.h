@@ -6,7 +6,7 @@
 // erases and rewrites a whole 4 KB page for every block), the filesystem
 // may no longer mount. InternalFileSystem::begin() then erases and formats
 // the whole region, losing the emulated EEPROM (provisioning, firmware hash,
-// radio config), the provisioning namespaces and the transport identity, so
+// radio config), the provisioning namespaces and the node identities, so
 // the node comes back unconfigured, radio off and with a new address.
 //
 // This module keeps those files in two raw flash pages just below the
@@ -99,8 +99,9 @@ static bool masn_bk_build(Adafruit_LittleFS_Namespace::File &eeprom_file, masn_b
   if (!masn_bk_add(payload, pos, count, EEPROM_FILE, eeprom_file)) return false;
 
   char path[32];
-  for (int i = -1; i <= 9; i++) {
-    if (i < 0) strcpy(path, "./transport_identity");
+  for (int i = -2; i <= 9; i++) {
+    if (i == -2) strcpy(path, "./nomadnet_identity");
+    else if (i == -1) strcpy(path, "./transport_identity");
     else snprintf(path, sizeof(path), "./config/ns%d.msgpack", 100 + i);
     Adafruit_LittleFS_Namespace::File f(InternalFS);
     if (!f.open(path, Adafruit_LittleFS_Namespace::FILE_O_READ)) continue;

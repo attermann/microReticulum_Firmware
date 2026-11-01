@@ -1132,8 +1132,27 @@ printf("[init] op_mode: %U\n", op_mode);
         // Create an IN/SINGLE destination on the NomadNet aspect, so
         // clients (like a Python NomadNet browser) can find
         // us by aspect/announce and open a Link.
+#ifdef NOMADNET_OWN_IDENTITY
+        // Give the site its own identity instead of the transport identity.
+        // Maps such as rmap.world place a service at the interface announced
+        // with the same identity, so with a shared identity the site shows up
+        // as a second marker next to the node.
+        RNS::Identity nomadnet_identity = {RNS::Type::NONE};
+        {
+          const std::string path = std::string(RNS::Reticulum::storagepath()) + "/nomadnet_identity";
+          if (RNS::Utilities::OS::file_exists(path.c_str())) {
+            nomadnet_identity = RNS::Identity::from_file(path.c_str());
+          }
+          if (!nomadnet_identity) {
+            nomadnet_identity = RNS::Identity();
+            nomadnet_identity.to_file(path.c_str());
+          }
+        }
+#else
+        const RNS::Identity& nomadnet_identity = RNS::Transport::identity();
+#endif
         nomadnet_destination = RNS::Destination(
-          RNS::Transport::identity(),
+          nomadnet_identity,
           RNS::Type::Destination::IN,
           RNS::Type::Destination::SINGLE,
           "nomadnetwork",
