@@ -1166,6 +1166,10 @@ printf("[init] op_mode: %U\n", op_mode);
         // node's default policy.
         //nomadnet_destination.register_request_handler("/page/index.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
         nomadnet_destination.register_request_handler("/page/index.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
+#ifdef NOMADNET_SIMPLE_INDEX
+        // The technical menu that the full index page shows.
+        nomadnet_destination.register_request_handler("/page/stats.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
+#endif
         nomadnet_destination.register_request_handler("/page/stack.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
         nomadnet_destination.register_request_handler("/page/device.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
 #ifdef HAS_BME
