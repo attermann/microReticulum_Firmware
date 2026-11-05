@@ -2030,7 +2030,7 @@ void serial_callback(uint8_t sbyte) {
       kiss_indicate_random(getRandom());
     } else if (command == CMD_DETECT) {
       #if BOARD_MODEL == BOARD_MASN_HTRA62
-      if (sbyte >= 0x60 && sbyte <= 0x6E) {
+      if (sbyte >= 0x60 && sbyte <= 0x6F) {
         masn_diag_command(sbyte);  // MASN_Diagnostics.h
       } else
       #endif
@@ -2765,6 +2765,10 @@ void loop() {
     extern void native_reboot_perform();
     if (native_reboot_pending()) native_reboot_perform();
   #endif
+
+#if BOARD_MODEL == BOARD_MASN_HTRA62
+  masn_radio_watchdog();  // MASN_Diagnostics.h
+#endif
 
 #ifdef HAS_RNS
   // CBA

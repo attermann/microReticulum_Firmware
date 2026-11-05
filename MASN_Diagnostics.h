@@ -1,4 +1,4 @@
-// MASN V1.2 / HT-RA62: diagnostic suite, KISS CMD_DETECT subcommands 0x60..0x6E.
+// MASN V1.2 / HT-RA62: diagnostic suite, KISS CMD_DETECT subcommands 0x60..0x6F.
 // GPL-3.0-or-later, intended for integration in microReticulum_Firmware.
 // Only compiled for BOARD_MASN_HTRA62; included after lora_receive() is defined.
 #ifndef MASN_DIAGNOSTICS_H
@@ -348,6 +348,46 @@ static void masn_diag_power(uint8_t op) {
   masn_diag_reply(op, out);
 }
 
+// Radio watchdog. After several days outdoors the node was found deaf: the
+// SX1262 sat in STBY_RC and nothing put it back into RX, so the node neither
+// received nor relayed anything until it was rebooted. Every 5 s check:
+// * the packet type: anything but LoRa means the SX1262 was reset (e.g. a
+//   power glitch) and lost its configuration, so even RX or TX would be on
+//   the wrong settings; re-run the radio setup at once;
+// * the chip mode: standby three times in a row (RX, TX and FS are normal)
+//   means nothing will put it back into RX; re-run the radio setup.
+// The packet type found is kept for the next diagnosis (0 GFSK = chip reset,
+// 1 LoRa = left in standby).
+static uint32_t masn_radio_recoveries = 0;
+static uint8_t masn_radio_last_ptype = 0xFF;
+static uint32_t masn_radio_last_recovery = 0;
+
+static void masn_radio_watchdog() {
+  static uint32_t next_check = 0;
+  static uint8_t standby_count = 0;
+  if ((int32_t)(millis() - next_check) < 0) return;
+  next_check = millis() + 5000;
+  if (!radio_online) { standby_count = 0; return; }
+
+  uint8_t st;
+  if (!masn_diag_status(st)) return;            // BUSY: chip is working
+  const uint8_t mode = (st >> 4) & 7;           // 2 STBY_RC, 3 STBY_XOSC
+  uint8_t d[3] = {0x11, 0x00, 0x00};            // GetPacketType
+  if (!masn_diag_spi(d, sizeof(d))) return;
+  const bool lost_config = d[2] != 0x01;        // 0x01 = LoRa
+  if (!lost_config) {
+    if (mode != 2 && mode != 3) { standby_count = 0; return; }
+    if (++standby_count < 3) return;
+  }
+  standby_count = 0;
+  masn_radio_last_ptype = d[2];
+  const bool ok = masn_diag_restore_radio();
+  masn_radio_recoveries++;
+  masn_radio_last_recovery = millis();
+  NOTICEF("Radio watchdog: SX1262 stuck in standby (mode %u, packet type %u), radio reinitialised (%s), recovery #%lu",
+          mode, masn_radio_last_ptype, ok ? "ok" : "failed", (unsigned long)masn_radio_recoveries);
+}
+
 static void masn_diag_command(uint8_t op) {
   char out[224];
   if (op >= 0x68 && op <= 0x6A) { masn_diag_osc_trace(op); return; }
@@ -364,6 +404,17 @@ static void masn_diag_command(uint8_t op) {
              (unsigned long)seq, h.count, h.len, (unsigned long)addr,
              (int)InternalFS.exists(EEPROM_FILE), (int)InternalFS.exists("./transport_identity"));
     masn_diag_reply(op, out);
+    return;
+  }
+  if (op == 0x6F) {
+    // Reset the SX1262 through its NRESET pin, like a power glitch on the
+    // radio would, to test the radio watchdog: the chip comes back in
+    // STBY_RC with its default (GFSK) configuration, and the watchdog
+    // should restore it within about 5 s.
+    digitalWrite(pin_reset, LOW);
+    delay(2);
+    digitalWrite(pin_reset, HIGH);
+    masn_diag_reply(op, "SX1262_RESET=1");
     return;
   }
   if (op == 0x6E) {
@@ -403,14 +454,18 @@ static void masn_diag_command(uint8_t op) {
     bool c = masn_diag_word(0x17, err);
     snprintf(out, sizeof(out),
              "SPI=%d%d%d;STATUS=%02X;MODE=%u;IRQ=%04X;ERRORS=%04X;BUSY=%d;"
-             "DIO1=%d;RXEN=%d;RXCB=%lu;RXBYTES=%lu;TXOK=%lu;TXFAIL=%lu",
+             "DIO1=%d;RXEN=%d;RXCB=%lu;RXBYTES=%lu;TXOK=%lu;TXFAIL=%lu;"
+             "RECOV=%lu;RECOV_PT=%u;RECOV_AGO=%lu;UP=%lu",
              (int)a, (int)b, (int)c, (unsigned)st,
              a ? (unsigned)((st >> 4) & 7) : 255U,
              (unsigned)irq, (unsigned)err, digitalRead(pin_busy),
              digitalRead(pin_dio), pin_rxen >= 0 ? digitalRead(pin_rxen) : -1,
              (unsigned long)masn_diag_rx_callbacks,
              (unsigned long)masn_diag_rx_bytes,
-             (unsigned long)masn_diag_tx_ok, (unsigned long)masn_diag_tx_fail);
+             (unsigned long)masn_diag_tx_ok, (unsigned long)masn_diag_tx_fail,
+             (unsigned long)masn_radio_recoveries, (unsigned)masn_radio_last_ptype,
+             masn_radio_recoveries ? (unsigned long)((millis() - masn_radio_last_recovery) / 1000) : 0UL,
+             (unsigned long)(millis() / 1000));
     masn_diag_reply(op, out);
   } else if (op == 0x63) {
     masn_diag_cw(op, false);

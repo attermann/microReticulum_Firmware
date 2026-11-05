@@ -198,12 +198,12 @@ Necesitan la placa en modo RNode (`masn_setup.py rnode`). Las pruebas que emiten
 
 Resultado esperado de `masn_osc_test.py 1v8`: `XOSC … mode=STDBY_XOSC errors=OK` y `FS … mode=FS errors=OK`. El `XOSC_START` que aparece en `POR`/`END` es el de encendido, antes de configurar el TCXO, y es normal.
 
-La suite de diagnóstico del firmware (`MASN_Diagnostics.h`) responde a `CMD_DETECT` (`0x08`) con subcomandos `0x60`–`0x6E`:
+La suite de diagnóstico del firmware (`MASN_Diagnostics.h`) responde a `CMD_DETECT` (`0x08`) con subcomandos `0x60`–`0x6F`:
 
 | Código | Qué hace |
 |---|---|
 | `0x60` | Configuración |
-| `0x61` / `0x62` | Estado del SX1262, IRQ, errores y contadores |
+| `0x61` / `0x62` | Estado del SX1262, IRQ, errores y contadores; `0x62` da también los contadores del vigilante de radio (`RECOV`, `RECOV_PT`, `RECOV_AGO`) y el tiempo encendido (`UP`, en segundos) |
 | `0x63` / `0x64` | CW de 600 ms (`0x64` con RXEN en LOW) |
 | `0x65` | Paquete LoRa de prueba |
 | `0x66` | Borra errores e IRQ |
@@ -213,6 +213,7 @@ La suite de diagnóstico del firmware (`MASN_Diagnostics.h`) responde a `CMD_DET
 | `0x6C` | Tensiones de alimentación, escaneo I2C y canales del INA3221 en bruto |
 | `0x6D` | Estado de la copia de seguridad de la identidad y la configuración |
 | `0x6E` | **Formatea el sistema de ficheros y reinicia**, para probar la restauración desde la copia |
+| `0x6F` | Reinicia el SX1262 por su pin de reset, para probar el vigilante de radio |
 
 ## Problemas resueltos durante la adaptación
 
@@ -228,6 +229,7 @@ Por si te encuentras los mismos síntomas en otra placa:
 
 - **Las rutas se guardan en RAM.** Las rutas, los destinos conocidos y la lista de paquetes no se escriben en la flash (`RNS_PERSIST_*=0`), porque eso suponía una escritura casi por cada anuncio recibido. Tras un reinicio el nodo las vuelve a aprender de los anuncios. La tabla de rutas admite 25 destinos (`URTN_PATH_TABLE_MAX_RECS`).
 - **Cortes de corriente y sistema de ficheros.** Un corte mientras LittleFS escribe puede dejarlo sin poder montarse; el núcleo de Adafruit lo formatea entonces, y eso borraba el aprovisionamiento, la configuración y la identidad del nodo. Ahora el firmware guarda una copia de esos ficheros en dos páginas de flash fuera del sistema de ficheros (`MASN_Backup.h`, se actualiza 90 s después de arrancar y cada 10 minutos si algo cambió) y la restaura al arrancar. Los cambios hechos en los 10 minutos anteriores a un corte pueden perderse.
+- **Vigilante de radio.** Tras varios días a la intemperie un nodo apareció sordo: el SX1262 estaba en reposo y nada lo devolvía a recepción. Ahora el firmware revisa el chip cada 5 s y repite la configuración de la radio si la ha perdido (el tipo de paquete ya no es LoRa, es decir, el chip se reinició) o si sigue en reposo 15 s. `RECOV_PT` en el diagnóstico `0x62` indica qué caso fue (0 = reinicio del chip, 1 = se quedó en reposo). La causa de fondo (probablemente una bajada de tensión en la radio) no está confirmada.
 - **Los cambios de aprovisionamiento pueden perderse al reiniciar (de forma intermitente).** Se ha visto que un commit de aprovisionamiento seguido poco después de guardar la configuración de radio y reiniciar vuelve con los valores anteriores. `masn_setup.py` graba primero la radio, hace el commit al final y, tras el reinicio, relee y vuelve a grabar la configuración hasta que se conserva. Si configuras a mano, compruébalo con `masn_setup.py show` después de reiniciar.
 - **Un ordenador que deja el puerto USB abierto sin leerlo reinicia el nodo.** El firmware escribe su log por USB; cuando el búfer se llena se bloquea, y el watchdog de 60 s reinicia la placa. Lee o cierra el puerto; `masn_setup.py` hace ambas cosas. A un nodo sin nada conectado por USB no le afecta.
 - El aprovisionamiento de una placa nueva, la MASN V2.0 y la variante Core1262 no están verificados.
