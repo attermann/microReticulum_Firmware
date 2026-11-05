@@ -80,7 +80,7 @@ static std::string micron_safe(const char* text) {
   return out;
 }
 
-#if BOARD_MODEL != BOARD_MASN_HTRA62
+#ifndef NOMADNET_SIMPLE_INDEX
 // Site header for the index page: name, description, contact, location,
 // radio parameters and uptime.
 static void add_site_header(RNS::Bytes& content) {
@@ -150,25 +150,30 @@ void add_interface_details(RNS::Bytes& content, const RNS::Interface& interface)
   content << "    \"queued_announces\": " << std::to_string(interface.announce_queue().size()) << ",\n";
 }
 
-#if BOARD_MODEL == BOARD_MASN_HTRA62
-// MASN: a short index page for people checking on the node over LoRa
-// (battery first), with the technical menu moved to /page/stats.mu.
-static void add_masn_index(RNS::Bytes& content) {
+#ifdef NOMADNET_SIMPLE_INDEX
+// Short index page for people checking on a node over LoRa (battery
+// first), with the technical menu moved to /page/stats.mu.
+static void add_battery_bar(RNS::Bytes& content, unsigned mv, unsigned pct) {
+  char bar[10 * 3 + 1], line[96];
+  int filled = (pct + 5) / 10, pos = 0;
+  for (int i = 0; i < 10; i++) pos += snprintf(bar + pos, sizeof(bar) - pos, "%s", i < filled ? "\xE2\x96\x88" : "\xE2\x96\x91");
+  snprintf(line, sizeof(line), "%u.%02u V  %s  %u %%\n", mv / 1000, mv % 1000 / 10, bar, pct);
+  content << line;
+}
+
+static void add_simple_index(RNS::Bytes& content) {
   char line[112];
   content << "> " << micron_safe(nomadnet_name) << "\n\n";
   if (site_description[0]) content << micron_safe(site_description) << "\n\n";
 
   content << ">> Battery\n";
+#if BOARD_MODEL == BOARD_MASN_HTRA62
+  // MASN: battery, node load and solar panel from the INA3221.
   const masn_power_t pw = masn_power_read();
   if (!pw.ok) {
     content << "No reading (INA3221 not found)\n\n";
   } else {
-    char bar[11 * 3 + 1];
-    int filled = (pw.battery_pct + 5) / 10, pos = 0;
-    for (int i = 0; i < 10; i++) pos += snprintf(bar + pos, sizeof(bar) - pos, "%s", i < filled ? "\xE2\x96\x88" : "\xE2\x96\x91");
-    snprintf(line, sizeof(line), "%d.%02d V  %s  %d %%\n",
-             pw.battery_mv / 1000, pw.battery_mv % 1000 / 10, bar, pw.battery_pct);
-    content << line;
+    add_battery_bar(content, pw.battery_mv, pw.battery_pct);
     if (pw.load_ma < -10) {
       snprintf(line, sizeof(line), "Charging from USB (%d mA)\n", -pw.load_ma);
     } else if (pw.charge_ma > 2) {
@@ -181,6 +186,18 @@ static void add_masn_index(RNS::Bytes& content) {
              pw.solar_mv / 1000, pw.solar_mv % 1000 / 10, pw.solar_ma);
     content << line;
   }
+#else
+  // Other boards: the battery measurement of Power.h.
+  if (battery_installed && battery_ready && !battery_indeterminate) {
+    add_battery_bar(content, (unsigned)(battery_voltage * 1000.0f + 0.5f), (unsigned)battery_percent);
+    if (battery_state == BATTERY_STATE_CHARGING) content << "Charging\n\n";
+    else if (battery_state == BATTERY_STATE_CHARGED) content << "Charged\n\n";
+    else if (battery_state == BATTERY_STATE_DISCHARGING) content << "On battery\n\n";
+    else content << "\n";
+  } else {
+    content << "No battery reading\n\n";
+  }
+#endif
 
   content << ">> Node\n";
   const uint32_t up = millis() / 1000;
@@ -239,9 +256,9 @@ RNS::Bytes serve_page(
 	MsgPack::Packer packer;
   {
     RNS::Bytes content;
-#if BOARD_MODEL == BOARD_MASN_HTRA62
+#ifdef NOMADNET_SIMPLE_INDEX
     if (path == "/page/index.mu") {
-      add_masn_index(content);
+      add_simple_index(content);
     }
     else if (path == "/page/stats.mu") {
 #else

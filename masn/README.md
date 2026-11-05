@@ -198,12 +198,12 @@ They need the board in RNode mode (`masn_setup.py rnode`). The commands that tra
 
 Expected `masn_osc_test.py 1v8` result: `XOSC … mode=STDBY_XOSC errors=OK` and `FS … mode=FS errors=OK`. The `XOSC_START` shown at `POR`/`END` is the power-on error from before the TCXO is configured, and is normal.
 
-The firmware diagnostic suite (`MASN_Diagnostics.h`) answers `CMD_DETECT` (`0x08`) sub-commands `0x60`–`0x6E`:
+The firmware diagnostic suite (`MASN_Diagnostics.h`) answers `CMD_DETECT` (`0x08`) sub-commands `0x60`–`0x6F`:
 
 | Code | What it does |
 |---|---|
 | `0x60` | Configuration |
-| `0x61` / `0x62` | SX1262 status, IRQ, errors and counters |
+| `0x61` / `0x62` | SX1262 status, IRQ, errors and counters; `0x62` also gives the radio watchdog counters (`RECOV`, `RECOV_PT`, `RECOV_AGO`) and the uptime (`UP`, seconds) |
 | `0x63` / `0x64` | 600 ms CW (`0x64` with RXEN low) |
 | `0x65` | LoRa test packet |
 | `0x66` | Clear errors and IRQ |
@@ -213,6 +213,7 @@ The firmware diagnostic suite (`MASN_Diagnostics.h`) answers `CMD_DETECT` (`0x08
 | `0x6C` | Supply rails, I2C scan and raw INA3221 channels |
 | `0x6D` | State of the identity/configuration backup |
 | `0x6E` | **Formats the filesystem and reboots**, to test the restore from the backup |
+| `0x6F` | Resets the SX1262 through its reset pin, to test the radio watchdog |
 
 ## Problems solved while porting
 
@@ -228,6 +229,7 @@ In case you hit the same symptoms on another board:
 
 - **Paths are kept in RAM.** Paths, known destinations and the packet hashlist are not written to flash (`RNS_PERSIST_*=0`), because that meant a flash write for almost every received announce. After a reboot the node relearns them from announces. The path table holds 25 destinations (`URTN_PATH_TABLE_MAX_RECS`).
 - **Power cuts and the filesystem.** A power cut while LittleFS is writing can leave it unmountable; the Adafruit core then formats it, which used to erase the provisioning, the configuration and the node identity. The firmware now keeps a copy of those files in two flash pages outside the filesystem (`MASN_Backup.h`, refreshed 90 s after boot and every 10 minutes when something changed) and restores them at boot. Changes made in the last 10 minutes before a cut can still be lost.
+- **Radio watchdog.** After several days outdoors a node was found deaf: the SX1262 sat in standby and nothing put it back into RX. The firmware now checks the chip every 5 s and re-runs the radio setup if it lost its configuration (packet type no longer LoRa, i.e. the chip was reset) or stays in standby for 15 s. `RECOV_PT` in diagnostic `0x62` records which case it was (0 = chip reset, 1 = left in standby). The root cause (most likely a supply glitch on the radio) is not confirmed.
 - **Provisioning changes can be lost on reboot (intermittent).** A provisioning commit followed shortly by a radio configuration save and a reboot has been seen to come back with the previous values. `masn_setup.py` writes the radio first, commits last, and re-reads and re-writes the configuration after the reboot until it sticks. If you configure by hand, check with `masn_setup.py show` after rebooting.
 - **A USB host that keeps the port open without reading it reboots the node.** The firmware logs over USB; once the buffer is full it blocks, and the 60 s watchdog resets the board. Read or close the port; `masn_setup.py` does both. A node with nothing attached to USB is not affected.
 - Provisioning a blank board, MASN V2.0 and the Core1262 variant are not verified.

@@ -1168,6 +1168,10 @@ printf("[init] op_mode: %U\n", op_mode);
         // node's default policy.
         //nomadnet_destination.register_request_handler("/page/index.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
         nomadnet_destination.register_request_handler("/page/index.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
+#ifdef NOMADNET_SIMPLE_INDEX
+        // The technical menu that the full index page shows.
+        nomadnet_destination.register_request_handler("/page/stats.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
+#endif
         nomadnet_destination.register_request_handler("/page/stack.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
         nomadnet_destination.register_request_handler("/page/device.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
 #ifdef HAS_BME
@@ -2028,7 +2032,7 @@ void serial_callback(uint8_t sbyte) {
       kiss_indicate_random(getRandom());
     } else if (command == CMD_DETECT) {
       #if BOARD_MODEL == BOARD_MASN_HTRA62
-      if (sbyte >= 0x60 && sbyte <= 0x6E) {
+      if (sbyte >= 0x60 && sbyte <= 0x6F) {
         masn_diag_command(sbyte);  // MASN_Diagnostics.h
       } else
       #endif
@@ -2763,6 +2767,10 @@ void loop() {
     extern void native_reboot_perform();
     if (native_reboot_pending()) native_reboot_perform();
   #endif
+
+#if BOARD_MODEL == BOARD_MASN_HTRA62
+  masn_radio_watchdog();  // MASN_Diagnostics.h
+#endif
 
 #ifdef HAS_RNS
   // CBA
