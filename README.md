@@ -28,6 +28,15 @@ When in `Transport Mode`, the device will display "TRANSPORT" across the top of 
 
 Note that at the present time, when in TNC mode this firmware does not operate like a regular RNode does when in TNC mode due to logging from the embedded RNS that is output on the serial port. This can clobber KISS communication from the attached machine so do not attempt to attach another RNS to the device while in this mode. On the plus side, there is extensive logging available on the serial port to observe the embedded RNS in action and to aid in troubleshooting.
 
+## MASN Solar Node
+
+Support for the [MASN](https://github.com/danielcharrua/masn-meshtastic-autonomous-solar-node) V1.2 autonomous solar node (nice!nano nRF52840 + Heltec HT-RA62) is provided by the `masn-ht-ra62` environment. See [masn/README.md](masn/README.md) ([Spanish](masn/README.es.md)) for components, pinout, build, configuration and verification tools.
+
+```
+pio run -e masn-ht-ra62
+pio run -e masn-ht-ra62 -t upload
+```
+
 ## Build Dependencies
 
 Build environment is configured for use in [VSCode](https://code.visualstudio.com/) and [PlatformIO](https://platformio.org/).

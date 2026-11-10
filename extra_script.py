@@ -162,6 +162,8 @@ def device_provision(env):
             env.Execute("rnodeconf --product 10 --model 14 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "techo" | "techo_local":
             env.Execute("rnodeconf --product 15 --model 17 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
+        case "masn_ht_ra62":
+            env.Execute("rnodeconf --product 53 --model 53 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "heltec_t114" | "heltec_t114_local":
             env.Execute("rnodeconf --product c2 --model c7 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case _:
@@ -183,7 +185,11 @@ def firmware_hash(source, env):
         calc_hash = hashlib.sha256(firmware_data).digest()
         hex_hash = calc_hash.hex()
         print("firmware_hash:", hex_hash)
-        env.Execute("rnodeconf --firmware-hash " + hex_hash + " " + env.subst("$UPLOAD_PORT"))
+        if env.GetProjectOption("custom_variant") == "masn_ht_ra62":
+            # rnodeconf --firmware-hash aborts on model 0x53 (KeyError)
+            device_set_firmware_hash(calc_hash, env)
+        else:
+            env.Execute("rnodeconf --firmware-hash " + hex_hash + " " + env.subst("$UPLOAD_PORT"))
     else:
         print("source_file:", source_file)
         firmware_data = open(source_file, "rb").read()
