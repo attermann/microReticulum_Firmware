@@ -162,6 +162,8 @@ def device_provision(env):
             env.Execute("rnodeconf --product 10 --model 14 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "techo" | "techo_local":
             env.Execute("rnodeconf --product 15 --model 17 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
+        case "masn_ht_ra62":
+            env.Execute("rnodeconf --product 53 --model 53 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "heltec_t114" | "heltec_t114_local":
             env.Execute("rnodeconf --product c2 --model c7 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case _:
@@ -183,7 +185,11 @@ def firmware_hash(source, env):
         calc_hash = hashlib.sha256(firmware_data).digest()
         hex_hash = calc_hash.hex()
         print("firmware_hash:", hex_hash)
-        env.Execute("rnodeconf --firmware-hash " + hex_hash + " " + env.subst("$UPLOAD_PORT"))
+        if env.GetProjectOption("custom_variant") == "masn_ht_ra62":
+            # rnodeconf --firmware-hash aborts on model 0x53 (KeyError)
+            device_set_firmware_hash(calc_hash, env)
+        else:
+            env.Execute("rnodeconf --firmware-hash " + hex_hash + " " + env.subst("$UPLOAD_PORT"))
     else:
         print("source_file:", source_file)
         firmware_data = open(source_file, "rb").read()
@@ -318,6 +324,34 @@ else:
         title="Package",
         description="Package native daemon for delivery"
     )
+
+# Apply local fixes to fetched libraries (patches/<library>/*.patch).
+# lib_deps track upstream HEAD, so fixes not yet merged upstream are kept
+# as patches and applied idempotently on every build.
+def apply_library_patches(env):
+    import glob
+    import os
+    import subprocess
+    project_dir = env.subst("$PROJECT_DIR")
+    libdeps_dir = os.path.join(env.subst("$PROJECT_LIBDEPS_DIR"), env.subst("$PIOENV"))
+    for patch_dir in sorted(glob.glob(os.path.join(project_dir, "patches", "*"))):
+        lib_dir = os.path.join(libdeps_dir, os.path.basename(patch_dir))
+        if not os.path.isdir(lib_dir):
+            continue
+        for patch in sorted(glob.glob(os.path.join(patch_dir, "*.patch"))):
+            name = os.path.relpath(patch, project_dir)
+            git = ["git", "apply", "--whitespace=nowarn"]
+            if subprocess.run(git + ["--reverse", "--check", patch], cwd=lib_dir,
+                              capture_output=True).returncode == 0:
+                continue  # already applied
+            if subprocess.run(git + ["--check", patch], cwd=lib_dir,
+                              capture_output=True).returncode != 0:
+                print(f"*** WARNING: {name} does not apply (merged upstream or code changed?)")
+                continue
+            subprocess.run(git + [patch], cwd=lib_dir, check=True)
+            print(f"*** Applied {name}")
+
+apply_library_patches(env)
 
 # Register actions
 env.AddPreAction("upload", pre_upload)

@@ -95,6 +95,24 @@ bool kiss_framed_logs = true;
 bool nomadnet_enabled = true;
 RNS::Destination nomadnet_destination = {RNS::Type::NONE};
 char nomadnet_name[64];
+// Site information shown on the NomadNet page (set through Provisioning)
+char site_description[161] = "";
+char site_contact[65] = "";
+double site_latitude = 0.0;
+double site_longitude = 0.0;
+double site_altitude = 0.0;
+bool site_location_public = false;
+// Interface discovery (rnstransport.discovery.interface). The app_data is
+// built by the host because its proof-of-work stamp is too costly here.
+bool discovery_enabled = false;
+RNS::Bytes discovery_app_data;
+RNS::Destination discovery_destination = {RNS::Type::NONE};
+// Periodic re-announce of the NomadNet site and the discovery destination.
+// Keep it low: public maps flag nodes announcing more than ~3 times/hour.
+uint32_t announce_interval_min = 360;
+uint32_t last_site_announce = 0;
+uint32_t last_discovery_announce = 0;
+bool discovery_announced = false;
 
 #if HAS_CONSOLE
   #include "Console.h"
@@ -599,7 +617,7 @@ void setup() {
     boot_seq();
   #endif
 
-  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_RAK3401 && BOARD_MODEL != BOARD_HELTEC_T114 && BOARD_MODEL != BOARD_TECHO && BOARD_MODEL != BOARD_T3S3 && BOARD_MODEL != BOARD_TBEAM_S_V1 && BOARD_MODEL != BOARD_HELTEC32_V4 && BOARD_MODEL != BOARD_HELTEC_TRACKER_V2
+  #if BOARD_MODEL != BOARD_MASN_HTRA62 && BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_RAK3401 && BOARD_MODEL != BOARD_HELTEC_T114 && BOARD_MODEL != BOARD_TECHO && BOARD_MODEL != BOARD_T3S3 && BOARD_MODEL != BOARD_TBEAM_S_V1 && BOARD_MODEL != BOARD_HELTEC32_V4 && BOARD_MODEL != BOARD_HELTEC_TRACKER_V2
     // Some boards need to wait until the hardware UART is set up before booting
     // the full firmware. In the case of the RAK4631, RAK3401, and Heltec T114,
     // the line below will wait until a serial connection is actually established
@@ -666,7 +684,9 @@ void setup() {
       // accepts (see sx126x.cpp MODE_TCXO_*_6X defines).
       uint8_t mode;
       if      (v >= 3.15f) mode = 0x07; // 3.3 V
-      else if (v >= 2.30f) mode = 0x06; // 2.4 / 2.7 / 3.0 V
+      else if (v >= 2.85f) mode = 0x06; // 3.0 V
+      else if (v >= 2.55f) mode = 0x05; // 2.7 V
+      else if (v >= 2.30f) mode = 0x04; // 2.4 V
       else if (v >= 2.00f) mode = 0x03; // 2.2 V
       else if (v >= 1.75f) mode = 0x02; // 1.8 V
       else if (v >= 1.65f) mode = 0x01; // 1.7 V
@@ -1114,19 +1134,44 @@ printf("[init] op_mode: %U\n", op_mode);
         // Create an IN/SINGLE destination on the NomadNet aspect, so
         // clients (like a Python NomadNet browser) can find
         // us by aspect/announce and open a Link.
+#ifdef NOMADNET_OWN_IDENTITY
+        // Give the site its own identity instead of the transport identity.
+        // Maps such as rmap.world place a service at the interface announced
+        // with the same identity, so with a shared identity the site shows up
+        // as a second marker next to the node.
+        RNS::Identity nomadnet_identity = {RNS::Type::NONE};
+        {
+          const std::string path = std::string(RNS::Reticulum::storagepath()) + "/nomadnet_identity";
+          if (RNS::Utilities::OS::file_exists(path.c_str())) {
+            nomadnet_identity = RNS::Identity::from_file(path.c_str());
+          }
+          if (!nomadnet_identity) {
+            nomadnet_identity = RNS::Identity();
+            nomadnet_identity.to_file(path.c_str());
+          }
+        }
+#else
+        const RNS::Identity& nomadnet_identity = RNS::Transport::identity();
+#endif
         nomadnet_destination = RNS::Destination(
-          RNS::Transport::identity(),
+          nomadnet_identity,
           RNS::Type::Destination::IN,
           RNS::Type::Destination::SINGLE,
           "nomadnetwork",
           "node"
         );
+        // Also send the node name in announces that answer path requests.
+        set_default_app_data_if_supported(nomadnet_destination, RNS::Bytes(nomadnet_name), 0);
 
         // Register the page handler. ALLOW_ALL because page browsing is open
         // to anyone who can reach the node, just like a Python NomadNet
         // node's default policy.
         //nomadnet_destination.register_request_handler("/page/index.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
         nomadnet_destination.register_request_handler("/page/index.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
+#ifdef NOMADNET_SIMPLE_INDEX
+        // The technical menu that the full index page shows.
+        nomadnet_destination.register_request_handler("/page/stats.mu", serve_page, RNS::Type::Destination::ALLOW_ALL);
+#endif
         nomadnet_destination.register_request_handler("/page/stack.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
         nomadnet_destination.register_request_handler("/page/device.mu", serve_page, RNS::Type::Destination::ALLOW_LIST, RNS::Transport::remote_management_allowed());
 #ifdef HAS_BME
@@ -1142,9 +1187,24 @@ printf("[init] op_mode: %U\n", op_mode);
         {
           NOTICEF("Announcing NomadNet site \"%s\" at destination <%s>", nomadnet_name, nomadnet_destination.hash().toHex().c_str());
           nomadnet_destination.announce(nomadnet_name);
+          last_site_announce = millis();
         }
       }
 #endif // URTN_STATS_PAGES
+
+      // Interface discovery destination, announced from loop() (see
+      // site_announce_job) so that a node stuck in a reboot loop does not
+      // flood the network with discovery announces.
+      if (discovery_enabled && discovery_app_data.size() > 0) {
+        discovery_destination = RNS::Destination(
+          RNS::Transport::identity(),
+          RNS::Type::Destination::IN,
+          RNS::Type::Destination::SINGLE,
+          "rnstransport",
+          "discovery.interface"
+        );
+        NOTICEF("Interface discovery enabled at destination <%s>", discovery_destination.hash().toHex().c_str());
+      }
 
       HEAD("RNS is READY!", RNS::LOG_TRACE);
       if (op_mode == MODE_TNC) {
@@ -1244,7 +1304,15 @@ inline void getPacketData(uint16_t len) {
   #endif
 }
 
+#if BOARD_MODEL == BOARD_MASN_HTRA62
+#include "MASN_Diagnostics.h"
+#endif
+
 void ISR_VECT receive_callback(int packet_size) {
+#if BOARD_MODEL == BOARD_MASN_HTRA62
+  masn_diag_rx_callbacks++;
+  if (packet_size > 0) masn_diag_rx_bytes += (uint32_t)packet_size;
+#endif
   #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
     BaseType_t int_mask;
   #endif
@@ -1963,6 +2031,11 @@ void serial_callback(uint8_t sbyte) {
     } else if (command == CMD_RANDOM) {
       kiss_indicate_random(getRandom());
     } else if (command == CMD_DETECT) {
+      #if BOARD_MODEL == BOARD_MASN_HTRA62
+      if (sbyte >= 0x60 && sbyte <= 0x6F) {
+        masn_diag_command(sbyte);  // MASN_Diagnostics.h
+      } else
+      #endif
       if (sbyte == DETECT_REQ) {
         if (bt_state != BT_STATE_CONNECTED) cable_state = CABLE_STATE_CONNECTED;
         kiss_indicate_detect();
@@ -2643,6 +2716,45 @@ void tx_queue_handler() {
 
 void work_while_waiting() { loop(); }
 
+#ifdef HAS_RNS
+// Re-announce the NomadNet site every announce_interval_min, and send the
+// interface discovery announce 2 minutes after boot and then on the same
+// interval.
+#if BOARD_MODEL == BOARD_MASN_HTRA62
+// Refresh the out-of-filesystem copy of the identity and configuration
+// (MASN_Backup.h) 90 s after boot and then every 10 minutes; a page is only
+// written when the files changed.
+void masn_backup_job() {
+  static uint32_t next_check = 90000;
+  if ((int32_t)(millis() - next_check) < 0) return;
+  next_check = millis() + 600000;
+  masn_backup_save(file);
+}
+#endif
+
+void site_announce_job() {
+  const uint32_t interval_ms = announce_interval_min * 60UL * 1000UL;
+#ifdef URTN_STATS_PAGES
+  if (nomadnet_destination && (uint32_t)(millis() - last_site_announce) >= interval_ms) {
+    NOTICEF("Re-announcing NomadNet site \"%s\"", nomadnet_name);
+    nomadnet_destination.announce(nomadnet_name);
+    last_site_announce = millis();
+  }
+#endif
+  if (discovery_destination) {
+    const bool due = discovery_announced
+      ? (uint32_t)(millis() - last_discovery_announce) >= interval_ms
+      : millis() >= 120000UL;
+    if (due) {
+      NOTICEF("Sending interface discovery announce (%u bytes)", (unsigned)discovery_app_data.size());
+      discovery_destination.announce(discovery_app_data);
+      last_discovery_announce = millis();
+      discovery_announced = true;
+    }
+  }
+}
+#endif
+
 void loop() {
 
   #if MCU_VARIANT == MCU_NATIVE
@@ -2656,11 +2768,19 @@ void loop() {
     if (native_reboot_pending()) native_reboot_perform();
   #endif
 
+#if BOARD_MODEL == BOARD_MASN_HTRA62
+  masn_radio_watchdog();  // MASN_Diagnostics.h
+#endif
+
 #ifdef HAS_RNS
   // CBA
   if (reticulum) {
     try {
       reticulum.loop();
+      site_announce_job();
+#if BOARD_MODEL == BOARD_MASN_HTRA62
+      masn_backup_job();
+#endif
     }
     catch (const std::bad_alloc&) {
       ERROR("RNS loop failed: bad_alloc - out of memory");

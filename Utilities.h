@@ -414,6 +414,14 @@ extern RNS::Reticulum reticulum;
 		void led_tx_off() { digitalWrite(pin_led_tx, LED_OFF); }
 		void led_id_on()  { }
 		void led_id_off() { }
+	#elif BOARD_MODEL == BOARD_MASN_HTRA62
+		// MASN V1.2 has no RX/TX status LEDs
+		void led_rx_on()  { }
+		void led_rx_off() { }
+		void led_tx_on()  { }
+		void led_tx_off() { }
+		void led_id_on()  { }
+		void led_id_off() { }
 	#endif
 #endif
 
@@ -1441,6 +1449,8 @@ void setTXPower() {
 		if (model == MODEL_13) LoRa->setTxPower(mapped_lora_txp, PA_OUTPUT_RFO_PIN);
 		if (model == MODEL_14) LoRa->setTxPower(mapped_lora_txp, PA_OUTPUT_RFO_PIN);
 
+		if (model == MODEL_MASN_HTRA62) LoRa->setTxPower(mapped_lora_txp, PA_OUTPUT_PA_BOOST_PIN);
+
 		if (model == MODEL_C6) LoRa->setTxPower(mapped_lora_txp, PA_OUTPUT_RFO_PIN);
     if (model == MODEL_C7) LoRa->setTxPower(mapped_lora_txp, PA_OUTPUT_RFO_PIN);
 
@@ -1528,11 +1538,20 @@ void promisc_disable() {
 }
 
 #if !HAS_EEPROM && MCU_VARIANT == MCU_NRF52
+    #include "MASN_Backup.h"
+
     bool eeprom_begin() {
         if (!InternalFS.begin()) {
             // FileSystem couldn't be initialized so fail
 			return false;
 		}
+
+        #if BOARD_MODEL == BOARD_MASN_HTRA62
+            // A missing EEPROM file after the first provisioning means the
+            // filesystem was formatted (see MASN_Backup.h): bring the
+            // identity and configuration back before anything reads them.
+            if (!InternalFS.exists(EEPROM_FILE)) masn_backup_restore();
+        #endif
 
 		if (InternalFS.exists(EEPROM_FILE)) {
 			if (file.open(EEPROM_FILE, FILE_O_WRITE)) {
@@ -1703,6 +1722,9 @@ void eeprom_write(uint8_t addr, uint8_t byte) {
 
 void eeprom_erase() {
 	#if !HAS_EEPROM && MCU_VARIANT == MCU_NRF52
+		#if BOARD_MODEL == BOARD_MASN_HTRA62
+			masn_backup_erase();
+		#endif
 		InternalFS.format();
 	#else
 		for (int addr = 0; addr < EEPROM_RESERVED; addr++) {
@@ -1739,7 +1761,7 @@ bool eeprom_product_valid() {
 	#elif PLATFORM == PLATFORM_ESP32
 	if (rval == PRODUCT_RNODE || rval == BOARD_RNODE_NG_20 || rval == BOARD_RNODE_NG_21 || rval == PRODUCT_HMBRW || rval == PRODUCT_TBEAM || rval == PRODUCT_T32_10 || rval == PRODUCT_T32_20 || rval == PRODUCT_T32_21 || rval == PRODUCT_H32_V2 || rval == PRODUCT_H32_V3 || rval == PRODUCT_H32_V4 || rval == PRODUCT_HTRACKER_V2 || rval == PRODUCT_TDECK_V1 || rval == PRODUCT_TBEAM_S_V1  || rval == PRODUCT_XIAO_S3) {
 	#elif PLATFORM == PLATFORM_NRF52
-	if (rval == PRODUCT_RAK4631 || rval == PRODUCT_HELTEC_T114 || rval == PRODUCT_TECHO || rval == PRODUCT_HMBRW) {
+	if (rval == PRODUCT_MASN_HTRA62 || rval == PRODUCT_RAK4631 || rval == PRODUCT_HELTEC_T114 || rval == PRODUCT_TECHO || rval == PRODUCT_HMBRW) {
 	#elif PLATFORM == PLATFORM_NATIVE
 	if (rval == PRODUCT_NATIVE_LINUX) {
 	#else
@@ -1796,6 +1818,8 @@ bool eeprom_model_valid() {
   if (model == MODEL_C6 || model == MODEL_C7) {
   #elif BOARD_MODEL == BOARD_RAK4631
   if (model == MODEL_11 || model == MODEL_12) {
+  #elif BOARD_MODEL == BOARD_MASN_HTRA62
+  if (model == MODEL_MASN_HTRA62) {
   #elif BOARD_MODEL == BOARD_RAK3401
   if (model == MODEL_13 || model == MODEL_14) {
 	#elif BOARD_MODEL == BOARD_HUZZAH32

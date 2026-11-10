@@ -130,6 +130,9 @@
   #define BOARD_HUZZAH32      0x34
   #define BOARD_GENERIC_ESP32 0x35
   #define BOARD_GENERIC_NRF52 0x50
+  #define PRODUCT_MASN_HTRA62 0x53
+  #define BOARD_MASN_HTRA62   0x53
+  #define MODEL_MASN_HTRA62   0x53 // MASN V1.2 - nice!nano nRF52840 + Heltec HT-RA62 (SX1262), max 22dBm
   #define MODEL_FE            0xFE // Homebrew board, max 17dBm output power
   #define MODEL_FF            0xFF // Homebrew board, max 14dBm output power
 
@@ -169,7 +172,7 @@
   #ifndef MODEM
     #if BOARD_MODEL == BOARD_RAK4631 || BOARD_MODEL == BOARD_RAK3401
       #define MODEM SX1262
-    #elif BOARD_MODEL == BOARD_GENERIC_NRF52
+    #elif BOARD_MODEL == BOARD_GENERIC_NRF52 || BOARD_MODEL == BOARD_MASN_HTRA62
       #define MODEM SX1262
     #else
       #define MODEM SX1276
@@ -1052,6 +1055,55 @@
       const int DISPLAY_CLK = PIN_T114_TFT_SCK;
       const int DISPLAY_BL_PIN = PIN_T114_TFT_BLGT;
       const int DISPLAY_RST = PIN_T114_TFT_RST;
+
+    #elif BOARD_MODEL == BOARD_MASN_HTRA62
+      // MASN V1.2 solar node: nice!nano (nRF52840) + Heltec HT-RA62 (SX1262)
+      // Pinout verified on hardware; matches Meshtastic's
+      // nrf52_promicro_diy_tcxo variant.
+      #define HAS_EEPROM false
+      #define HAS_DISPLAY false
+      #define HAS_BLUETOOTH false
+      #define HAS_BLE false
+      #define HAS_CONSOLE false
+      #define HAS_PMU false
+      #define HAS_NP false
+      #define HAS_SD false
+      #define HAS_BUSY true
+
+      #define HAS_RF_SWITCH_RX_TX true
+      #undef HAS_TCXO
+      #define HAS_TCXO true            // 1.8 V TCXO powered from DIO3
+      #define DIO2_AS_RF_SWITCH true   // DIO2 drives the TX side of the RF switch
+
+      #define CONFIG_UART_BUFFER_SIZE 6144
+      #define CONFIG_QUEUE_SIZE 6144
+      #define CONFIG_QUEUE_MAX_LENGTH 200
+
+      #define EEPROM_SIZE 296
+      #define EEPROM_OFFSET EEPROM_SIZE-EEPROM_RESERVED
+
+      // SX1262 SPI
+      const int pin_cs = 45;           // P1.13
+      const int pin_sclk = 43;         // P1.11
+      const int pin_mosi = 47;         // P1.15
+      const int pin_miso = 2;          // P0.02
+
+      // SX1262 control
+      const int pin_reset = 9;         // P0.09 (NFC1, usable as GPIO)
+      const int pin_busy = 29;         // P0.29
+      const int pin_dio = 10;          // P0.10 (NFC2, usable as GPIO)
+
+      // RF switch: RXEN by GPIO, TXEN by SX1262 DIO2
+      const int pin_rxen = 17;         // P0.17
+      const int pin_txen = -1;
+
+      // nice!nano external VCC switch, powers the HT-RA62 (must be HIGH)
+      const int pin_vext_en = 13;      // P0.13
+
+      // Peripherals
+      const int pin_tcxo_enable = -1;
+      const int pin_led_rx = -1;
+      const int pin_led_tx = -1;
 
     #else
       #error An unsupported nRF board was selected. Cannot compile RNode firmware.

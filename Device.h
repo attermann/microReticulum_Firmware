@@ -236,7 +236,15 @@ bool device_init() {
 
 #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
 bool device_init() {
-  if (bt_ready) {
+  // nRF52 boards built without Bluetooth/BLE never set bt_ready; do not
+  // let that block device init. Signature checks below still run.
+  #if MCU_VARIANT == MCU_NRF52 && !HAS_BLUETOOTH && !HAS_BLE
+    const bool device_peripherals_ready = true;
+  #else
+    const bool device_peripherals_ready = bt_ready;
+  #endif
+
+  if (device_peripherals_ready) {
     #if MCU_VARIANT == MCU_ESP32
     for (uint8_t i=0; i<EEPROM_SIG_LEN; i++){dev_eeprom_signature[i]=EEPROM.read(eeprom_addr(ADDR_SIGNATURE+i));}
     mbedtls_md_context_t ctx;
