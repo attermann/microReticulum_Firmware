@@ -184,6 +184,7 @@
   #define HAS_BLUETOOTH false
   #define HAS_BLE false
   #define HAS_WIFI false
+  #define HAS_ETHERNET false
   #define HAS_TCXO false
   #define HAS_PMU false
   #define HAS_NP false
@@ -847,6 +848,16 @@
       const int pin_led_rx = LED_BLUE;
       const int pin_led_tx = LED_GREEN;
       const int pin_tcxo_enable = -1;
+
+      // RAK13800 Ethernet module (WIZnet W5100S) in the WisBlock IO slot.
+      // Detected at runtime, so this build serves boards with and without it.
+      // The chip is on the board-default SPI (SPIM3, P0.03/P0.29/P0.30) behind
+      // the shared IO-slot chip select; the SX1262 uses spiModem (SPIM2) on
+      // the core-slot pins, so the two buses never contend.
+      #define HAS_ETHERNET true
+      #define ETH_CS_PIN   26          // WB_SPI_CS, shared with the RAK15001 flash probe
+      #define ETH_RST_PIN  21          // WB_IO3
+      #define ETH_PWR_PIN  PIN_3V3_EN  // WB_IO2, switched 3V3_S rail feeding the IO slot
 
     #elif BOARD_MODEL == BOARD_RAK3401
       #define HAS_EEPROM false
