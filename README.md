@@ -32,6 +32,33 @@ Note that at the present time, when in TNC mode this firmware does not operate l
 
 Build environment is configured for use in [VSCode](https://code.visualstudio.com/) and [PlatformIO](https://platformio.org/).
 
+## Supported Targets
+
+### ESP32
+
+- RNode NG 2.0 and 2.1
+- LilyGO T-Beam (SX1276 and SX1262)
+- LilyGO T-Beam Supreme
+- LilyGO T3-S3 (SX1262, SX127x, and SX1280+PA)
+- LilyGO T-Deck
+- LilyGO LoRa32 v1, v2, and v2.1 (including external-LED and TCXO variants)
+- Heltec WiFi LoRa V2, V3, and V4 (including the V2 external-LED variant)
+- Heltec Wireless Tracker V2
+- Adafruit Feather ESP32
+- Seeed XIAO ESP32-S3 with Wio-SX1262
+- Generic ESP32 LoRa hardware
+
+### nRF52840
+
+- RAK WisCore RAK4631
+- RAK3401 with RAK13302 SX1262
+- LilyGO T-Echo
+
+### Host builds
+
+- Linux with an SPI/GPIO-connected SX1262, SX1276, SX1278, or SX1280
+- macOS simulated-radio development build
+
 ## Building from Source
 
 Building and uploading to hardware is simple through the VSCode PlatformIO IDE
