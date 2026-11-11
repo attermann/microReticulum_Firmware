@@ -599,12 +599,19 @@ void setup() {
     boot_seq();
   #endif
 
-  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_RAK3401 && BOARD_MODEL != BOARD_HELTEC_T114 && BOARD_MODEL != BOARD_TECHO && BOARD_MODEL != BOARD_T3S3 && BOARD_MODEL != BOARD_TBEAM_S_V1 && BOARD_MODEL != BOARD_HELTEC32_V4 && BOARD_MODEL != BOARD_HELTEC_TRACKER_V2
+  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_RAK3401 && BOARD_MODEL != BOARD_HELTEC_T114 && BOARD_MODEL != BOARD_TECHO && BOARD_MODEL != BOARD_T3S3 && BOARD_MODEL != BOARD_TBEAM_S_V1 && BOARD_MODEL != BOARD_HELTEC32_V4 && BOARD_MODEL != BOARD_HELTEC_TRACKER_V2 && !(defined(ARDUINO_USB_CDC_ON_BOOT) && ARDUINO_USB_CDC_ON_BOOT)
     // Some boards need to wait until the hardware UART is set up before booting
-    // the full firmware. In the case of the RAK4631, RAK3401, and Heltec T114,
-    // the line below will wait until a serial connection is actually established
-    // with a master. Thus, it is disabled on this platform.
-    while (!Serial);
+    // the full firmware. On boards where Serial is native USB (nRF52 TinyUSB, or
+    // ESP32-S2/S3 with ARDUINO_USB_CDC_ON_BOOT), Serial only becomes true once a
+    // USB host actually opens the port, so the wait is skipped there; otherwise
+    // the device hangs at boot when powered from a charger or battery.
+    // The wait is also time-limited so it can never block boot indefinitely.
+    {
+      uint32_t serial_wait_start = millis();
+      while (!Serial && (millis() - serial_wait_start) < 2000) {
+        delay(10);
+      }
+    }
   #endif
 
   serial_interrupt_init();
