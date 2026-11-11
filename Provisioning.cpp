@@ -219,12 +219,17 @@ static void register_provisioning_namespaces() {
       )
       // Interface access code of the LoRa interface, as the ifac_netname /
       // ifac_netkey (passphrase) of a Python RNS interface: both empty =
-      // off. Applied when the persisted values are loaded at boot.
+      // off. Both fields are FF_REBOOT_REQUIRED: the setters only persist
+      // the value here, never call setup_ifac() directly. A node being
+      // configured remotely over this same LoRa interface must stay on
+      // its current IFAC until the pending commit/reboot actually lands —
+      // applying it mid-SET_STATE would drop the session carrying the
+      // rest of the request. setup_ifac() runs exactly once, after
+      // Provisioner::begin() has loaded any persisted values, in setup().
       .field_string("LoRa IFAC Network Name", PROV_GENERAL_LORA_IFAC_NAME, FF_REBOOT_REQUIRED,
           lora_ifac_netname, sizeof(lora_ifac_netname)-1,
           [](const Value& v) {
             strncpy(lora_ifac_netname, v.as_string().c_str(), sizeof(lora_ifac_netname)-1);
-            lora_interface.setup_ifac(lora_ifac_netname, lora_ifac_netkey);
             return true;
           },
           []() { return lora_ifac_netname; })
@@ -233,7 +238,6 @@ static void register_provisioning_namespaces() {
           lora_ifac_netkey, sizeof(lora_ifac_netkey)-1,
           [](const Value& v) {
             strncpy(lora_ifac_netkey, v.as_string().c_str(), sizeof(lora_ifac_netkey)-1);
-            lora_interface.setup_ifac(lora_ifac_netname, lora_ifac_netkey);
             return true;
           },
           []() { return ""; });

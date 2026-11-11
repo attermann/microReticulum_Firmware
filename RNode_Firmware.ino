@@ -1054,6 +1054,15 @@ void setup() {
       HEAD("Initializing Provisioning subsystem...", RNS::LOG_TRACE);
       init_provisioning();
       auto& prov = RNS::Provisioning::Provisioner::instance();
+
+#if defined(LORA_TRANSPORT)
+      // Apply the LoRa IFAC exactly once, now that init_provisioning() has
+      // loaded any persisted network name/passphrase into the globals above
+      // (the Provisioning setters for these two fields only persist the
+      // value — see Provisioning.cpp — so this is the only place IFAC
+      // actually takes effect, matching their FF_REBOOT_REQUIRED contract).
+      lora_interface.setup_ifac(lora_ifac_netname, lora_ifac_netkey);
+#endif
 #endif
 
       //reticulum.clear_caches();
