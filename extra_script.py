@@ -156,6 +156,8 @@ def device_provision(env):
             env.Execute("rnodeconf --product c3 --model c8 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "heltec_tracker_v2" | "heltec_tracker_v2_local":
             env.Execute("rnodeconf --product c4 --model cb --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
+        case "heltec_wireless_paper" | "heltec_wireless_paper_local":
+            env.Execute("rnodeconf --product c5 --model cd --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "rak4631" | "rak4631_local":
             env.Execute("rnodeconf --product 10 --model 12 --hwrev 1 --rom " + env.subst("$UPLOAD_PORT"))
         case "rak3401" | "rak3401_local":
@@ -187,7 +189,7 @@ def firmware_hash(source, env):
     else:
         print("source_file:", source_file)
         firmware_data = open(source_file, "rb").read()
-        if env.GetProjectOption("custom_variant") in ("heltec_tracker_v2", "heltec_tracker_v2_local"):
+        if env.GetProjectOption("custom_variant") in ("heltec_tracker_v2", "heltec_tracker_v2_local", "heltec_wireless_paper", "heltec_wireless_paper_local"):
             try:
                 calc_hash = esp_image_sha256(firmware_data)
             except ValueError as error:
