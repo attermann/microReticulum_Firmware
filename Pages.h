@@ -34,6 +34,15 @@
 extern RNS::Interface lora_interface;
 #if HAS_WIFI && defined(UDP_TRANSPORT)
 extern RNS::Interface udp_interface;
+#endif
+#if defined(TCP_TRANSPORT)
+extern RNS::Interface tcp_interface;
+extern int tcp_peer_count();
+extern uint32_t tcp_rx_frames();
+extern uint32_t tcp_tx_frames();
+extern uint8_t tcp_mode;
+extern char tcp_host[64];
+extern uint16_t tcp_port;
 extern IPAddress wr_device_ip;
 extern uint16_t udp_port;
 extern uint8_t wifi_mode;
@@ -289,6 +298,19 @@ RNS::Bytes serve_page(
           content << "    \"udp_port\": " << std::to_string(udp_port) << ",\n";
           content << "    \"wifi_ssid\": \"" << wr_ssid << "\",\n";
           add_interface_details(content, udp_interface);
+      	  content << "  },\n";
+        }
+#endif
+#if defined(TCP_TRANSPORT)
+        if (wifi_mode != WR_WIFI_OFF && tcp_interface) {
+          content << "  \"" << tcp_interface.name().c_str() << "\": {\n";
+          content << "    \"tcp_mode\": \"" << (tcp_mode == TCP_MODE_SERVER ? "server" : "client") << "\",\n";
+          content << "    \"tcp_host\": \"" << tcp_host << "\",\n";
+          content << "    \"tcp_port\": " << std::to_string(tcp_port) << ",\n";
+          content << "    \"tcp_peers\": " << std::to_string(tcp_peer_count()) << ",\n";
+          content << "    \"tcp_rx_frames\": " << std::to_string(tcp_rx_frames()) << ",\n";
+          content << "    \"tcp_tx_frames\": " << std::to_string(tcp_tx_frames()) << ",\n";
+          add_interface_details(content, tcp_interface);
       	  content << "  },\n";
         }
 #endif

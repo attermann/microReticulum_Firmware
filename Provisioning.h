@@ -40,6 +40,12 @@
 //
 // NOTE: **NEVER** change these values once they are in production. Only additions can be made.
 // ---------------------------------------------------------------------------
+// TCP interface operating mode (PROV_NET_TCP_MODE). Defined here rather than
+// in TCPInterface.h so Provisioning.cpp can name them without pulling in the
+// interface header (which defines globals and is included once by the .ino).
+#define TCP_MODE_CLIENT 0   // Connect out to a Reticulum TCPServerInterface
+#define TCP_MODE_SERVER 1   // Listen for inbound TCPClientInterface peers
+
 #define PROV_NS_GENERAL         100
 #define PROV_NS_RADIO           101
 #define PROV_NS_NETWORK         102
@@ -49,6 +55,7 @@
 #define PROV_NS_IFACE_UDP       106
 #define PROV_NS_METRICS_ADDRS   107
 #define PROV_NS_METRICS_DEV     108
+#define PROV_NS_IFACE_TCP       109
 
 #define PROV_GENERAL_KISS_LOG        1
 #define PROV_GENERAL_LORA_MODE       2
@@ -57,6 +64,7 @@
 #define PROV_GENERAL_NOMADNET_NAME   5
 #define PROV_GENERAL_GPIO0           6
 #define PROV_GENERAL_GPIO1           7
+#define PROV_GENERAL_TCP_MODE        8
 
 #define PROV_METRICS_TRANS_ID   1
 #define PROV_METRICS_PROBE_DST  2
@@ -84,6 +92,12 @@
 #define PROV_METRICS_UDP_PORT   2
 #define PROV_METRICS_WIFI_SSID  3
 
+#define PROV_METRICS_TCP_HOST   1
+#define PROV_METRICS_TCP_PORT   2
+#define PROV_METRICS_TCP_PEERS  3
+#define PROV_METRICS_TCP_RX     4
+#define PROV_METRICS_TCP_TX     5
+
 #define PROV_RADIO_OP_MODE      1
 #define PROV_RADIO_FREQ         2
 #define PROV_RADIO_BW           3
@@ -98,6 +112,9 @@
 #define PROV_NET_PORT           2
 #define PROV_NET_SSID           3
 #define PROV_NET_MODE           4
+#define PROV_NET_TCP_MODE       5
+#define PROV_NET_TCP_HOST       6
+#define PROV_NET_TCP_PORT       7
 
 // Set true once Provisioning::Provisioner::begin() has run.
 extern bool provisioning_started;

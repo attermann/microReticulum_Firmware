@@ -71,6 +71,15 @@ extern uint16_t udp_port;
 extern uint8_t wifi_mode;
 extern char wr_ssid[33];
 #endif
+#if defined(TCP_TRANSPORT)
+extern RNS::Interface tcp_interface;
+extern int tcp_peer_count();
+extern uint32_t tcp_rx_frames();
+extern uint32_t tcp_tx_frames();
+extern uint8_t tcp_mode;
+extern char tcp_host[64];
+extern uint16_t tcp_port;
+#endif
 extern bool kiss_framed_logs;
 extern bool nomadnet_enabled;
 extern RNS::Destination nomadnet_destination;
@@ -248,6 +257,36 @@ static void register_provisioning_namespaces() {
   }
 #endif
 
+#if defined(TCP_TRANSPORT)
+  if (tcp_interface) {
+    general
+      .field_enum(
+          "TCP Interface Mode", PROV_GENERAL_TCP_MODE, FF_LIVE_APPLY, static_cast<fint_t>(tcp_interface.mode()),
+          /* values   */ {
+            RNS::Type::Interface::MODE_GATEWAY,
+            RNS::Type::Interface::MODE_FULL,
+            RNS::Type::Interface::MODE_POINT_TO_POINT,
+            RNS::Type::Interface::MODE_ACCESS_POINT,
+            RNS::Type::Interface::MODE_ROAMING,
+            RNS::Type::Interface::MODE_BOUNDARY,
+          },
+          /* labels   */ {
+            "gateway",
+            "full",
+            "point-to-point",
+            "access-point",
+            "roaming",
+            "boundary" },
+          /* setter   */ [](const Value& v) {
+            tcp_interface.mode(static_cast<RNS::Type::Interface::modes>(v.as_int())); return true;
+          },
+          /* getter   */ []() {
+            return static_cast<fint_t>(tcp_interface.mode());
+          }
+      );
+  }
+#endif
+
   general
     .end();   // close "General"
 
@@ -317,6 +356,18 @@ static void register_provisioning_namespaces() {
         .metric_string("ip_addr", PROV_METRICS_UDP_ADDR, []() { return wr_device_ip.toString().c_str(); })
         .metric_int("udp_port", PROV_METRICS_UDP_PORT, []() { return udp_port; })
         .metric_string("wifi_ssid", PROV_METRICS_WIFI_SSID, []() { return wr_ssid; })
+        .end();
+  }
+#endif
+#if defined(TCP_TRANSPORT)
+  if (tcp_interface) {
+    metrics_ifaces
+      .register_namespace(tcp_interface.name().c_str(), PROV_NS_IFACE_TCP)
+        .metric_string("tcp_host", PROV_METRICS_TCP_HOST, []() { return tcp_host; })
+        .metric_int("tcp_port", PROV_METRICS_TCP_PORT, []() { return tcp_port; })
+        .metric_int("tcp_peers", PROV_METRICS_TCP_PEERS, []() { return (fint_t)tcp_peer_count(); })
+        .metric_int("tcp_rx_frames", PROV_METRICS_TCP_RX, []() { return (fint_t)tcp_rx_frames(); })
+        .metric_int("tcp_tx_frames", PROV_METRICS_TCP_TX, []() { return (fint_t)tcp_tx_frames(); })
         .end();
   }
 #endif
@@ -411,6 +462,21 @@ static void register_provisioning_namespaces() {
         .field_string("WiFi Mode", PROV_NET_MODE, FF_REBOOT_REQUIRED,
           std::to_string(wifi_mode).c_str(), 0,
           [](const Value& v) { return true; })
+#if defined(TCP_TRANSPORT)
+        // Consumed by TCPInterface::start(), which runs after
+        // init_provisioning() has applied these on boot.
+        .field_enum("TCP Mode", PROV_NET_TCP_MODE, FF_REBOOT_REQUIRED, (fint_t)tcp_mode,
+          /* values */ { TCP_MODE_CLIENT, TCP_MODE_SERVER },
+          /* labels */ { "client", "server" },
+          [](const Value& v) { tcp_mode = (uint8_t)v.as_int(); return true; },
+          []() { return (fint_t)tcp_mode; })
+        .field_string("TCP Host", PROV_NET_TCP_HOST, FF_REBOOT_REQUIRED,
+          tcp_host, sizeof(tcp_host) - 1,
+          [](const Value& v) { strncpy(tcp_host, v.as_string().c_str(), sizeof(tcp_host) - 1); tcp_host[sizeof(tcp_host) - 1] = '\0'; return true; })
+        .field_int("TCP Port", PROV_NET_TCP_PORT, FF_REBOOT_REQUIRED,
+          (fint_t)tcp_port, (fint_t)1, (fint_t)65535,
+          [](const Value& v) { tcp_port = (uint16_t)v.as_int(); return true; })
+#endif
       .end();
   //}
 #endif
