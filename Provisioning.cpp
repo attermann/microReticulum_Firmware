@@ -75,6 +75,15 @@ extern bool kiss_framed_logs;
 extern bool nomadnet_enabled;
 extern RNS::Destination nomadnet_destination;
 extern char nomadnet_name[64];
+extern char site_description[161];
+extern char site_contact[65];
+extern double site_latitude;
+extern double site_longitude;
+extern double site_altitude;
+extern bool site_location_public;
+extern bool discovery_enabled;
+extern RNS::Bytes discovery_app_data;
+extern uint32_t announce_interval_min;
 extern float battery_voltage;
 extern float battery_percent;
 extern uint8_t battery_state;
@@ -130,8 +139,39 @@ static void register_provisioning_namespaces() {
         []() { return nomadnet_enabled; })
       .field_string("NomadNet Name", PROV_GENERAL_NOMADNET_NAME, FF_REBOOT_REQUIRED, nomadnet_name, sizeof(nomadnet_name)-1,
         [](const Value& v) { strncpy(nomadnet_name, v.as_string().c_str(), sizeof(nomadnet_name)); return true; },
-        []() { return nomadnet_name; });
+        []() { return nomadnet_name; })
+      .field_string("Site Description", PROV_GENERAL_SITE_DESC, FF_LIVE_APPLY, site_description, sizeof(site_description)-1,
+        [](const Value& v) { strncpy(site_description, v.as_string().c_str(), sizeof(site_description)-1); return true; },
+        []() { return site_description; })
+      .field_string("Site Contact", PROV_GENERAL_SITE_CONTACT, FF_LIVE_APPLY, site_contact, sizeof(site_contact)-1,
+        [](const Value& v) { strncpy(site_contact, v.as_string().c_str(), sizeof(site_contact)-1); return true; },
+        []() { return site_contact; })
+      .field_bool("Show Location", PROV_GENERAL_LOC_PUBLIC, FF_LIVE_APPLY, site_location_public,
+        [](const Value& v) { site_location_public = v.as_bool(); return true; },
+        []() { return site_location_public; });
 #endif
+  // Node location and interface discovery (shown on maps such as rmap.world).
+  // The discovery announce app_data, including its proof-of-work stamp, is
+  // built by the host (masn/masn_setup.py) and only re-sent by the node.
+  general
+    .field_float("Latitude", PROV_GENERAL_LOC_LAT, FF_LIVE_APPLY, site_latitude, -90.0, 90.0,
+      [](const Value& v) { site_latitude = v.as_float(); return true; },
+      []() { return site_latitude; })
+    .field_float("Longitude", PROV_GENERAL_LOC_LON, FF_LIVE_APPLY, site_longitude, -180.0, 180.0,
+      [](const Value& v) { site_longitude = v.as_float(); return true; },
+      []() { return site_longitude; })
+    .field_float("Altitude", PROV_GENERAL_LOC_ALT, FF_LIVE_APPLY, site_altitude, -500.0, 10000.0,
+      [](const Value& v) { site_altitude = v.as_float(); return true; },
+      []() { return site_altitude; })
+    .field_bool("Discovery Enabled", PROV_GENERAL_DISCOVERY, FF_REBOOT_REQUIRED, discovery_enabled,
+      [](const Value& v) { discovery_enabled = v.as_bool(); return true; },
+      []() { return discovery_enabled; })
+    .field_bytes("Discovery Data", PROV_GENERAL_DISCOVERY_DATA, FF_REBOOT_REQUIRED, discovery_app_data, 320,
+      [](const Value& v) { discovery_app_data = v.as_bytes(); return true; },
+      []() { return discovery_app_data; })
+    .field_int("Announce Interval", PROV_GENERAL_ANNOUNCE_INT, FF_LIVE_APPLY, (fint_t)announce_interval_min, (fint_t)30, (fint_t)1440,
+      [](const Value& v) { announce_interval_min = (uint32_t)v.as_int(); return true; },
+      []() { return (fint_t)announce_interval_min; });
 
 #ifdef HAS_GPIO
     general
