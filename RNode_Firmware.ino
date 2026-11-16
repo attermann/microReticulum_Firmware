@@ -1128,6 +1128,11 @@ printf("[init] op_mode: %U\n", op_mode);
           "nomadnetwork",
           "node"
         );
+        // Path responses are announces without app_data, which fall back to
+        // the destination's default app_data. Set it to the node name too,
+        // or clients that learn the node from a path response list it as
+        // "Peer <hash>".
+        nomadnet_destination.set_default_app_data(nomadnet_name);
 
         // Register the page handler. ALLOW_ALL because page browsing is open
         // to anyone who can reach the node, just like a Python NomadNet
