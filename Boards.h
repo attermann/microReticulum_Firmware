@@ -105,6 +105,11 @@
   #define BOARD_HELTEC_TRACKER_V2 0x45
   #define MODEL_CB            0xCB // Heltec Wireless Tracker V2, 863-928 MHz, 28dBm
 
+  #define PRODUCT_HWPAPER     0xC5
+  #define BOARD_HELTEC_WIRELESS_PAPER 0x46
+  #define MODEL_CC            0xCC // Heltec Wireless Paper, 470-510 MHz
+  #define MODEL_CD            0xCD // Heltec Wireless Paper, 863-928 MHz
+
   #define PRODUCT_HELTEC_T114 0xC2 // Heltec Mesh Node T114
   #define BOARD_HELTEC_T114   0x3C
   #define MODEL_C6            0xC6 // Heltec Mesh Node T114, 470-510 MHz
@@ -527,6 +532,58 @@
       #define PA_GAIN_VALUES 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 13, 13, 13, 12, 12, 11, 10, 9, 8, 7
 
       // Onboard SX1262 SPI and control pins.
+      const int pin_cs = 8;
+      const int pin_busy = 13;
+      const int pin_dio = 14;
+      const int pin_reset = 12;
+      const int pin_mosi = 10;
+      const int pin_miso = 11;
+      const int pin_sclk = 9;
+
+    #elif BOARD_MODEL == BOARD_HELTEC_WIRELESS_PAPER
+      #define IS_ESP32S3 true
+      #define HAS_DISPLAY true
+      #define HAS_BLUETOOTH false
+      #define HAS_BLE true
+      #define HAS_WIFI true
+      #define HAS_PMU true
+      #define HAS_CONSOLE true
+      #define HAS_EEPROM true
+      #define HAS_INPUT true
+      #define HAS_SLEEP true
+      #define PIN_WAKEUP GPIO_NUM_0
+      #define WAKEUP_LEVEL 0
+      #define OCP_TUNED 0x28
+
+      // Vext powers the e-paper panel. On the Wireless Paper the high-side
+      // switch is driven directly, so GPIO45 is active LOW.
+      #define Vext GPIO_NUM_45
+      #define VEXT_ON LOW
+      #define VEXT_OFF HIGH
+
+      const int pin_btn_usr1 = 0;
+
+      // Single white user LED on GPIO18, shared between RX and TX activity.
+      const int pin_led_rx = 18;
+      const int pin_led_tx = 18;
+
+      #define MODEM SX1262
+      #define HAS_TCXO true
+      const int pin_tcxo_enable = -1;
+      #define HAS_BUSY true
+      #define DIO2_AS_RF_SWITCH true
+
+      // 2.13" e-paper panel on its own SPI controller. The panel type
+      // (LCMEN2R13EFC1 or E0213A367) is detected at boot, see WirelessPaperEPD.h.
+      // The 64x64 UI canvases are drawn at twice their size to fill the panel.
+      #define DISPLAY_SCALE 2
+      const int pin_disp_cs = 4;
+      const int pin_disp_dc = 5;
+      const int pin_disp_reset = 6;
+      const int pin_disp_busy = 7;
+      const int pin_disp_sck = 3;
+      const int pin_disp_mosi = 2;
+
       const int pin_cs = 8;
       const int pin_busy = 13;
       const int pin_dio = 14;
@@ -1109,6 +1166,12 @@
 
   #ifndef DISPLAY_SCALE
     #define DISPLAY_SCALE 1
+  #endif
+
+  #if BOARD_MODEL == BOARD_TECHO || BOARD_MODEL == BOARD_HELTEC_WIRELESS_PAPER
+    #define HAS_EPD true
+  #else
+    #define HAS_EPD false
   #endif
 
   #ifndef HAS_RF_SWITCH_RX_TX

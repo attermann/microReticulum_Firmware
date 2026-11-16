@@ -83,8 +83,8 @@ pio run -e heltec-wireless-tracker-v2 -t package
 pio run -e wiscore_rak4631 -t package
 ```
 
-On erased EEPROM, the Heltec Wireless Tracker V2 enables BLE and explicitly
-disables Wi-Fi; later user choices are preserved. Radio parameters remain unset
+On erased EEPROM, the Heltec Wireless Tracker V2 and Wireless Paper enable BLE
+and explicitly disable Wi-Fi; later user choices are preserved. Radio parameters remain unset
 until a user selects region-appropriate values.
 
 Build all environments (boards):

@@ -16,7 +16,7 @@
 #include "Graphics.h"
 #include <Adafruit_GFX.h>
 
-#if BOARD_MODEL != BOARD_TECHO
+#if !HAS_EPD
   #if BOARD_MODEL == BOARD_TDECK
     #include <Adafruit_ST7789.h>
   #elif BOARD_MODEL == BOARD_HELTEC_T114
@@ -40,6 +40,9 @@
   #define SSD1306_WHITE GxEPD_WHITE
   #include <GxEPD2_BW.h>
   #include <SPI.h>
+  #if BOARD_MODEL == BOARD_HELTEC_WIRELESS_PAPER
+    #include "WirelessPaperEPD.h"
+  #endif
 #endif
 
 #include "Fonts/Org_01.h"
@@ -101,6 +104,10 @@
   #define DISP_W 128
   #define DISP_H 64
   #define DISP_ADDR -1
+#elif BOARD_MODEL == BOARD_HELTEC_WIRELESS_PAPER
+  SPIClass displaySPI = SPIClass(HSPI);
+  #define DISP_ADDR -1
+  #define DISP_CUSTOM_ADDR false
 #elif BOARD_MODEL == BOARD_TBEAM_S_V1
   #define DISP_RST -1
   #define DISP_ADDR 0x3C
@@ -145,6 +152,14 @@
   uint32_t last_epd_refresh = 0;
   uint32_t last_epd_full_refresh = 0;
   #define REFRESH_PERIOD 300000
+#elif BOARD_MODEL == BOARD_HELTEC_WIRELESS_PAPER
+  WirelessPaperEPD display(pin_disp_cs, pin_disp_dc, pin_disp_reset, pin_disp_busy, displaySPI);
+  uint32_t last_epd_refresh = 0;
+  uint32_t last_epd_full_refresh = 0;
+  uint32_t epd_frame_hash = 0;
+  uint8_t epd_fast_refresh_count = 0;
+  #define REFRESH_PERIOD 300000
+  #define EPD_MAX_FAST_REFRESHES 10
 #else
   Adafruit_SSD1306 display(DISP_W, DISP_H, &Wire, DISP_RST);
 #endif
@@ -241,6 +256,18 @@ void update_area_positions() {
       p_as_x = 64;
       p_as_y = 0;
     }
+  #elif BOARD_MODEL == BOARD_HELTEC_WIRELESS_PAPER
+    if (disp_mode == DISP_MODE_PORTRAIT) {
+      p_ad_x = -3;
+      p_ad_y = 0;
+      p_as_x = -3;
+      p_as_y = 122;
+    } else {
+      p_ad_x = -5;
+      p_ad_y = -3;
+      p_as_x = -5+128;
+      p_as_y = -3;
+    }
   #else
     if (disp_mode == DISP_MODE_PORTRAIT) {
       p_ad_x = 0 * DISPLAY_SCALE;
@@ -273,6 +300,8 @@ uint8_t display_contrast = 0x00;
     if (value == 0) { analogWrite(pin_backlight, 0); }
     else            { analogWrite(pin_backlight, value); }
   }
+#elif BOARD_MODEL == BOARD_HELTEC_WIRELESS_PAPER
+  void set_contrast(WirelessPaperEPD *display, uint8_t value) { }
 #elif BOARD_MODEL == BOARD_TDECK
   void set_contrast(Adafruit_ST7789 *display, uint8_t value) {
     static uint8_t level = 0;
@@ -363,6 +392,21 @@ bool display_init() {
         pinMode(pin_backlight, OUTPUT);
         analogWrite(pin_backlight, 0);
       #endif
+    #elif BOARD_MODEL == BOARD_HELTEC_WIRELESS_PAPER
+      pinMode(Vext, OUTPUT);
+      digitalWrite(Vext, VEXT_ON);
+      delay(100);
+      // SPIClass::begin() is a no-op once the bus is up, so pinning the pins
+      // here is not undone by the driver's own begin() call.
+      displaySPI.begin(pin_disp_sck, -1, pin_disp_mosi, pin_disp_cs);
+      if (display.begin()) {
+        printf("[init] Wireless Paper e-paper panel: %s\n", display.panel_name());
+        display.init(0);
+        display.setFullWindow();
+      }
+      epd_update_interval = 1000/epd_update_fps;
+      disp_target_fps = 1;
+      disp_update_interval = 1000/disp_target_fps;
     #elif BOARD_MODEL == BOARD_TBEAM_S_V1
       Wire.begin(SDA_OLED, SCL_OLED);
     #elif BOARD_MODEL == BOARD_XIAO_S3
@@ -412,6 +456,8 @@ bool display_init() {
     #if BOARD_MODEL == BOARD_TECHO
     // Don't check if display is actually connected
     if(false) {
+    #elif BOARD_MODEL == BOARD_HELTEC_WIRELESS_PAPER
+    if (!display.ready()) {
     #elif BOARD_MODEL == BOARD_TDECK
     display.init(240, 320);
     display.setSPISpeed(80e6);
@@ -433,11 +479,21 @@ bool display_init() {
     } else {
       set_contrast(&display, display_contrast);
       if (display_rotation != 0xFF) {
-        if (display_rotation == 0 || display_rotation == 2) {
-          disp_mode = DISP_MODE_LANDSCAPE;
-        } else {
-          disp_mode = DISP_MODE_PORTRAIT;
-        }
+        #if BOARD_MODEL == BOARD_HELTEC_WIRELESS_PAPER
+          // The 122x250 panel is portrait in its native orientation, so
+          // rotations 1 and 3 are the landscape ones here.
+          if (display_rotation == 1 || display_rotation == 3) {
+            disp_mode = DISP_MODE_LANDSCAPE;
+          } else {
+            disp_mode = DISP_MODE_PORTRAIT;
+          }
+        #else
+          if (display_rotation == 0 || display_rotation == 2) {
+            disp_mode = DISP_MODE_LANDSCAPE;
+          } else {
+            disp_mode = DISP_MODE_PORTRAIT;
+          }
+        #endif
         display.setRotation(display_rotation);
       } else {
         #if BOARD_MODEL == BOARD_RNODE_NG_20
@@ -485,6 +541,12 @@ bool display_init() {
         #elif BOARD_MODEL == BOARD_TECHO
           disp_mode = DISP_MODE_PORTRAIT;
           display.setRotation(3);
+        #elif BOARD_MODEL == BOARD_HELTEC_WIRELESS_PAPER
+          // The board is normally held upright with the panel taller than
+          // wide, so stack the two areas. Rotation 2 flips it if the USB
+          // connector ends up at the top.
+          disp_mode = DISP_MODE_PORTRAIT;
+          display.setRotation(0);
         #else
           disp_mode = DISP_MODE_PORTRAIT;
           display.setRotation(3);
@@ -1075,17 +1137,43 @@ void display_recondition() {
 }
 
 bool epd_blanked = false;
-#if BOARD_MODEL == BOARD_TECHO
+#if HAS_EPD
   void epd_blank(bool full_update = true) {
     display.setFullWindow();
     display.fillScreen(SSD1306_WHITE);
     display.display(full_update);
+    #if BOARD_MODEL == BOARD_HELTEC_WIRELESS_PAPER
+      last_epd_full_refresh = millis();
+      epd_fast_refresh_count = 0;
+      epd_frame_hash = 0;
+    #endif
   }
 
   void epd_black(bool full_update = true) {
     display.setFullWindow();
     display.fillScreen(SSD1306_BLACK);
     display.display(full_update);
+  }
+#endif
+
+#if BOARD_MODEL == BOARD_HELTEC_WIRELESS_PAPER
+  bool epd_frame_changed() {
+    uint32_t hash = 2166136261u;
+    auto mix = [&hash](const uint8_t* data, size_t len) {
+      for (size_t i = 0; i < len; i++) { hash ^= data[i]; hash *= 16777619u; }
+    };
+    mix(stat_area.getBuffer(), ((stat_area.width()+7)/8) * stat_area.height());
+    mix(disp_area.getBuffer(), ((disp_area.width()+7)/8) * disp_area.height());
+    uint8_t flags = (disp_mode & 0x03)
+                  | (device_init_done ? 0x04 : 0x00)
+                  | (console_active ? 0x08 : 0x00)
+                  | (disp_ext_fb ? 0x10 : 0x00)
+                  | (firmware_update_mode ? 0x20 : 0x00)
+                  | (recondition_display ? 0x40 : 0x00);
+    mix(&flags, 1);
+    if (hash == epd_frame_hash) return false;
+    epd_frame_hash = hash;
+    return true;
   }
 #endif
 
@@ -1117,7 +1205,7 @@ void update_display(bool blank = false) {
         set_contrast(&display, display_contrast);
       }
 
-      #if BOARD_MODEL == BOARD_TECHO
+      #if HAS_EPD
         if (!epd_blanked) {
           epd_blank();
           epd_blanked = true;
@@ -1130,7 +1218,7 @@ void update_display(bool blank = false) {
         digitalWrite(PIN_T114_TFT_BLGT, HIGH);
       #elif BOARD_MODEL == BOARD_HELTEC_TRACKER_V2
         display.fillScreen(SSD1306_BLACK);
-      #elif BOARD_MODEL != BOARD_TDECK && BOARD_MODEL != BOARD_TECHO
+      #elif BOARD_MODEL != BOARD_TDECK && !HAS_EPD
         display.clearDisplay();
         display.display();
       #else
@@ -1151,7 +1239,7 @@ void update_display(bool blank = false) {
       #if BOARD_MODEL == BOARD_HELTEC_T114
         display.clear();
         digitalWrite(PIN_T114_TFT_BLGT, LOW);
-      #elif BOARD_MODEL != BOARD_TDECK && BOARD_MODEL != BOARD_TECHO && BOARD_MODEL != BOARD_HELTEC_TRACKER_V2
+      #elif BOARD_MODEL != BOARD_TDECK && !HAS_EPD && BOARD_MODEL != BOARD_HELTEC_TRACKER_V2
         display.clearDisplay();
       #endif
 
@@ -1160,19 +1248,41 @@ void update_display(bool blank = false) {
         disp_update_interval = 1000/disp_target_fps;
         display_recondition();
       } else {
-        #if BOARD_MODEL == BOARD_TECHO
+        #if HAS_EPD
           display.setFullWindow();
           display.fillScreen(SSD1306_WHITE);
         #endif
 
-        update_stat_area();
-        update_disp_area();
+        #if BOARD_MODEL == BOARD_HELTEC_WIRELESS_PAPER
+          // Stat area last, so its frame wins where the two areas overlap.
+          update_disp_area();
+          update_stat_area();
+        #else
+          update_stat_area();
+          update_disp_area();
+        #endif
       }
       
       #if BOARD_MODEL == BOARD_TECHO
         if (current-last_epd_refresh >= epd_update_interval) {
           if (current-last_epd_full_refresh >= REFRESH_PERIOD) { display.display(false); last_epd_full_refresh = millis(); }
           else { display.display(true); }
+          last_epd_refresh = millis();
+          epd_blanked = false;
+        }
+      #elif BOARD_MODEL == BOARD_HELTEC_WIRELESS_PAPER
+        // Push a frame only when something changed, never faster than the
+        // e-paper interval, and periodically as a full refresh to clear the
+        // ghosting that fast refreshes leave behind.
+        if (current-last_epd_refresh >= epd_update_interval && (epd_frame_changed() || epd_blanked)) {
+          if (current-last_epd_full_refresh >= REFRESH_PERIOD || epd_fast_refresh_count >= EPD_MAX_FAST_REFRESHES) {
+            display.display(false);
+            last_epd_full_refresh = millis();
+            epd_fast_refresh_count = 0;
+          } else {
+            display.display(true);
+            epd_fast_refresh_count++;
+          }
           last_epd_refresh = millis();
           epd_blanked = false;
         }
