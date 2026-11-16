@@ -61,7 +61,7 @@ The Console only depends on the browser's Web Serial, Web Bluetooth, and WebSock
    - **Bluetooth** sub-tab: pair / unpair, set PIN if you plan to use the BLE transport.
    - **Display** sub-tab: intensity, blanking, rotation, NeoPixel intensity.
 4. Open the **Transport Config** tab.
-   - **General** namespace: turn on `kiss_framed_logs` if you want log frames in KISS format. Set `nomadnet_name` and toggle `nomadnet_enabled` if NomadNet stats pages are wanted.
+   - **General** namespace: turn on `kiss_framed_logs` if you want log frames in KISS format. Set `nomadnet_name` and toggle `nomadnet_enabled` if NomadNet stats pages are wanted. `Site Description`, `Site Contact` and `Show Location` add a header with that information (plus radio parameters, battery, when the board measures it, and uptime) to the NomadNet index page. `Latitude` / `Longitude` / `Altitude` hold the node location. `Announce Interval` (minutes, default 360) sets how often the NomadNet site is re-announced; without it the site was only announced at boot.
    - **Reticulum / Transport** namespaces (provided by microReticulum itself): identity, transport-enabled state, remote management allow-list, etc.
    - **Interfaces** sub-namespaces: pick the LoRa / UDP interface modes (`gateway`, `full`, `point-to-point`, `access-point`, `roaming`, `boundary`).
 5. Click **Save** on each namespace that has edits. The toolbar shows a draft indicator. If any field had the `REBOOT_REQUIRED` flag, a banner appears at the top of the Console: click **Reboot now**.

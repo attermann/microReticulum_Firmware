@@ -57,6 +57,15 @@
 #define PROV_GENERAL_NOMADNET_NAME   5
 #define PROV_GENERAL_GPIO0           6
 #define PROV_GENERAL_GPIO1           7
+// 8-19 left free: ids 8-9 are proposed by other open PRs (#114, #117).
+#define PROV_GENERAL_SITE_DESC      20   // NomadNet site description
+#define PROV_GENERAL_SITE_CONTACT   21   // NomadNet site operator contact
+#define PROV_GENERAL_LOC_LAT        22   // Node latitude (deg)
+#define PROV_GENERAL_LOC_LON        23   // Node longitude (deg)
+#define PROV_GENERAL_LOC_ALT        24   // Node altitude (m)
+#define PROV_GENERAL_LOC_PUBLIC     25   // Show location on the NomadNet page
+// 26-27 kept free for interface discovery (under discussion).
+#define PROV_GENERAL_ANNOUNCE_INT   28   // Re-announce interval (minutes)
 
 #define PROV_METRICS_TRANS_ID   1
 #define PROV_METRICS_PROBE_DST  2
