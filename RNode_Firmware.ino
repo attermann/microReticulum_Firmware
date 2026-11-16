@@ -95,6 +95,17 @@ bool kiss_framed_logs = true;
 bool nomadnet_enabled = true;
 RNS::Destination nomadnet_destination = {RNS::Type::NONE};
 char nomadnet_name[64];
+// Site information shown on the NomadNet page (set through Provisioning)
+char site_description[161] = "";
+char site_contact[65] = "";
+double site_latitude = 0.0;
+double site_longitude = 0.0;
+double site_altitude = 0.0;
+bool site_location_public = false;
+// Periodic re-announce of the NomadNet site. Keep it low: public maps flag
+// nodes announcing more than ~3 times/hour.
+uint32_t announce_interval_min = 360;
+uint32_t last_site_announce = 0;
 
 #if HAS_CONSOLE
   #include "Console.h"
@@ -1149,6 +1160,7 @@ printf("[init] op_mode: %U\n", op_mode);
         {
           NOTICEF("Announcing NomadNet site \"%s\" at destination <%s>", nomadnet_name, nomadnet_destination.hash().toHex().c_str());
           nomadnet_destination.announce(nomadnet_name);
+          last_site_announce = millis();
         }
       }
 #endif // URTN_STATS_PAGES
@@ -2650,6 +2662,21 @@ void tx_queue_handler() {
 
 void work_while_waiting() { loop(); }
 
+#ifdef HAS_RNS
+// Re-announce the NomadNet site every announce_interval_min. It is only
+// announced at boot otherwise.
+void site_announce_job() {
+  const uint32_t interval_ms = announce_interval_min * 60UL * 1000UL;
+#ifdef URTN_STATS_PAGES
+  if (nomadnet_destination && (uint32_t)(millis() - last_site_announce) >= interval_ms) {
+    NOTICEF("Re-announcing NomadNet site \"%s\"", nomadnet_name);
+    nomadnet_destination.announce(nomadnet_name);
+    last_site_announce = millis();
+  }
+#endif
+}
+#endif
+
 void loop() {
 
   #if MCU_VARIANT == MCU_NATIVE
@@ -2668,6 +2695,7 @@ void loop() {
   if (reticulum) {
     try {
       reticulum.loop();
+      site_announce_job();
     }
     catch (const std::bad_alloc&) {
       ERROR("RNS loop failed: bad_alloc - out of memory");
