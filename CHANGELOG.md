@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **RAK4631 Ethernet host transport** — KISS over TCP (port 7633) through the RAK13800 WisBlock module (WIZnet W5100S). The module is detected at runtime, so the regular RAK4631 image serves boards with and without it. Based on the work in #48.
+
 ### Changed
 
 - **Provisioning wire format** — reworked the wire protocol for lower LoRa airtime and fewer round-trips. Breaking change from the previous format:

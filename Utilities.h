@@ -85,6 +85,10 @@ uint8_t eeprom_read(uint32_t mapped_addr);
   #include "Remote.h"
 #endif
 
+#if HAS_ETHERNET == true
+  #include "EthernetRemote.h"
+#endif
+
 #if HAS_PMU == true
   #include "Power.h"
 #endif
@@ -854,6 +858,18 @@ int8_t  led_standby_direction = 0;
 	#endif
 #endif
 
+// Host output while no Bluetooth host is attached: a connected WiFi or
+// Ethernet remote takes precedence over USB serial.
+static inline void serial_write_wired(uint8_t byte) {
+	#if HAS_WIFI
+		if (wifi_host_is_connected()) { wifi_remote_write(byte); return; }
+	#endif
+	#if HAS_ETHERNET == true
+		if (eth_host_is_connected())  { eth_remote_write(byte); return; }
+	#endif
+	Serial.write(byte);
+}
+
 void serial_write(uint8_t byte) {
 	#if MCU_VARIANT == MCU_NATIVE
 		// KISS-over-TCP transport. On native the embedded "Serial" channel
@@ -863,12 +879,7 @@ void serial_write(uint8_t byte) {
 		native_kiss_tcp::write(byte);
 	#elif HAS_BLUETOOTH || HAS_BLE == true
 		if (bt_state != BT_STATE_CONNECTED) {
-			#if HAS_WIFI
-				if (wifi_host_is_connected()) { wifi_remote_write(byte); }
-				else                          { Serial.write(byte); }
-			#else
-				Serial.write(byte);
-			#endif
+			serial_write_wired(byte);
 		} else {
 			SerialBT.write(byte);
       #if MCU_VARIANT == MCU_NRF52 && HAS_BLE
@@ -879,7 +890,7 @@ void serial_write(uint8_t byte) {
       #endif
 		}
 	#else
-		Serial.write(byte);
+		serial_write_wired(byte);
 	#endif
 
 	// WebSocket fan-out: every outbound KISS byte is also offered to the
